@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.85.9] - 2026-04-19
+
+### Added
+- **Branding: company logo upload** — Admin UI Branding tab now has an **Upload Image** button alongside the existing URL field and a live preview. The new `POST /api/admin/tenant-portal/branding/{cp_id}/logo` endpoint accepts PNG, JPEG, GIF, WebP, or SVG files up to 512 KB; the filename is sanitised with a strict `[A-Za-z0-9_-]` regex to prevent path traversal, and `logo_url` is automatically upserted in `tenant_portal_branding`. Per-tenant logos are supported via an optional `?project_id=` query parameter. `GET /api/admin/tenant-portal/branding-logo/{filename}` serves uploaded logos (public, no auth, 24-hour cache). Mount the `branding_logos/` directory into both `pf9_api` and `tenant_portal` containers.
+
+### Fixed
+- **Monitoring "No metrics collected yet" — 3 `docker-compose.yml` bugs fixed**:
+  - `MONITORING_SERVICE_URL: http://monitoring:8001` → `http://pf9_monitoring:8001` (wrong Docker-network DNS name; HTTP fallback always returned a connection error)
+  - `PF9_HOSTS: ${PF9_HOSTS:-localhost}` → `${PF9_HOSTS:-}` (empty default now lets the startup auto-discovery routine query the DB for hypervisor IPs instead of scraping localhost)
+  - `tenant_portal` service now mounts `./monitoring/cache:/app/monitoring/cache:ro` so the file-based metrics cache is directly accessible without an HTTP round-trip
+- **VM detail "Current Usage" shows dashes** — transitively fixed by the monitoring docker-compose fixes above
+
+### Note
+- `quota_threshold_check` returning 0 items and `vm_rightsizing` returning 0 items are **correct** in this environment — no projects exceed the 80 % quota threshold and all VMs are already at the minimum flavor size (1 vCPU).
+
 ## [1.85.8] - 2026-04-18
 
 ### Fixed

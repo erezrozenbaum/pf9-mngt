@@ -423,6 +423,30 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
     }
   };
 
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!cpId.trim()) { setError("Select a Control Plane first"); return; }
+    clearMessages();
+    setLoading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const qs = brandingProjectId ? `?project_id=${encodeURIComponent(brandingProjectId)}` : "";
+      const result = await apiFetch<{ logo_url: string }>(
+        `/api/admin/tenant-portal/branding/${encodeURIComponent(cpId)}/logo${qs}`,
+        { method: "POST", body: form },
+      );
+      setBranding((b) => ({ ...b, logo_url: result.logo_url }));
+      setSuccess("Logo uploaded successfully");
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+      e.target.value = "";
+    }
+  };
+
   const handleKillSession = async (keystoneUserId: string) => {
     if (!window.confirm(`Terminate all sessions for ${keystoneUserId}?`)) return;
     clearMessages();
@@ -775,7 +799,6 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
             {(
               [
                 { key: "company_name",   label: "Company Name",    type: "text" },
-                { key: "logo_url",       label: "Logo URL",         type: "url"  },
                 { key: "favicon_url",    label: "Favicon URL",      type: "url"  },
                 { key: "primary_color",  label: "Primary Colour",   type: "text", placeholder: "#1A73E8" },
                 { key: "accent_color",   label: "Accent Colour",    type: "text", placeholder: "#F29900" },
@@ -794,6 +817,55 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
                 />
               </label>
             ))}
+          </div>
+
+          {/* ── Company Logo — URL field + upload button + preview ── */}
+          <div style={{ marginTop: "0.75rem", fontSize: "0.85rem" }}>
+            <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Company Logo</span>
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                type="url"
+                placeholder="https://example.com/logo.png"
+                value={branding.logo_url ?? ""}
+                onChange={(e) => setBranding((b) => ({ ...b, logo_url: e.target.value || null }))}
+                style={{ flex: 1, minWidth: 220, padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)" }}
+              />
+              <label
+                style={{
+                  cursor: loading ? "not-allowed" : "pointer",
+                  padding: "0.35rem 0.75rem",
+                  borderRadius: 6,
+                  background: "var(--pf9-accent, #1A73E8)",
+                  color: "#fff",
+                  fontSize: "0.82rem",
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  opacity: loading ? 0.6 : 1,
+                }}
+              >
+                Upload Image
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+                  style={{ display: "none" }}
+                  disabled={loading || !cpId.trim()}
+                  onChange={handleLogoUpload}
+                />
+              </label>
+            </div>
+            {branding.logo_url && (
+              <div style={{ marginTop: "0.5rem" }}>
+                <img
+                  src={branding.logo_url}
+                  alt="Logo preview"
+                  style={{ maxHeight: 56, maxWidth: 240, objectFit: "contain", border: "1px solid var(--pf9-border)", borderRadius: 4, background: "#fff", padding: 4 }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+              </div>
+            )}
+            <span style={{ fontSize: "0.75rem", color: "var(--pf9-text-muted)" }}>
+              PNG, JPEG, GIF, WebP or SVG · max 512 KB · each tenant org can have its own logo
+            </span>
           </div>
 
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem", marginTop: "0.75rem" }}>

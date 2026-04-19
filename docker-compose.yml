@@ -154,6 +154,7 @@ services:
       - ./api/static:/app/static
       - ./notifications/templates:/app/notification_templates:ro
       - ./docs:/app/docs:ro
+      - ./branding_logos:/app/branding_logos
     depends_on:
       db:
         condition: service_healthy   # wait for init.sql to finish
@@ -222,8 +223,9 @@ services:
       context: ./monitoring
     container_name: pf9_monitoring
     environment:
-      # Comma-separated list of PF9 host IPs to scrape metrics from
-      PF9_HOSTS: ${PF9_HOSTS:-localhost}
+      # Comma-separated list of PF9 host IPs to scrape metrics from.
+      # Leave empty to auto-discover from the admin API /internal/prometheus-targets.
+      PF9_HOSTS: ${PF9_HOSTS:-}
       # Cache TTL in seconds for metrics collection
       METRICS_CACHE_TTL: ${METRICS_CACHE_TTL:-60}
       # Logging
@@ -740,9 +742,12 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TENANT_RESTORE_ENABLED: ${TENANT_RESTORE_ENABLED:-true}
-      MONITORING_SERVICE_URL: http://monitoring:8001
+      MONITORING_SERVICE_URL: http://pf9_monitoring:8001
       # tenant_portal_db_password and jwt_secret are read from /run/secrets/ when files exist;
       # env vars above are used as fallback in dev with empty secret files.
+    volumes:
+      - "./monitoring/cache:/app/monitoring/cache:ro"
+      - "./branding_logos:/app/branding_logos:ro"
     secrets:
       - tenant_portal_db_password
       - jwt_secret

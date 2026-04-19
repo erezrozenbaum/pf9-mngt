@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.85.8  
-**Last Updated**: April 18, 2026  
+**Version**: 1.85.9  
+**Last Updated**: April 19, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.85.9 — Branding Logo Upload + Monitoring Docker-Compose Fixes (✅ Complete)
+
+- **Branding: logo upload added** — Admin UI Branding tab now shows an **Upload Image** button, a live preview, and the existing manual URL field. New `POST /api/admin/tenant-portal/branding/{cp_id}/logo` endpoint (PNG/JPEG/GIF/WebP/SVG, max 512 KB, path-traversal-safe filename sanitisation; optional `?project_id=` for per-tenant logos). `GET /api/admin/tenant-portal/branding-logo/{filename}` serves uploaded files with a 24-hour cache header (no auth required). Both `pf9_api` and `tenant_portal` services must mount the `branding_logos/` directory (added to `docker-compose.yml`).
+- **Monitoring "No metrics collected yet" — 3 `docker-compose.yml` bugs fixed**:
+  1. `MONITORING_SERVICE_URL: http://monitoring:8001` → `http://pf9_monitoring:8001` (wrong Docker-network DNS name — HTTP fallback always failed with a connection error)
+  2. `PF9_HOSTS: ${PF9_HOSTS:-localhost}` → `${PF9_HOSTS:-}` (empty default now lets the startup auto-discovery routine query the DB for hypervisor IPs instead of scraping `localhost`)
+  3. `tenant_portal` service now mounts `./monitoring/cache:/app/monitoring/cache:ro` — file-based cache is directly readable without the HTTP round-trip
+- **VM detail "Current Usage" shows dashes** — transitively fixed by the monitoring docker-compose fixes above.
 
 ### v1.85.8 — Quota Usage, Runbook VM Selector, Monitoring Host Discovery (✅ Complete)
 

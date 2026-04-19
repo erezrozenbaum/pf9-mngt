@@ -27,11 +27,14 @@ Endpoints:
 
 import json
 import logging
+import os
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 
 import redis as redis_lib
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field, field_validator
 
@@ -754,9 +757,117 @@ async def upsert_branding(
 
 
 # ---------------------------------------------------------------------------
-# MFA management — admin reset for a specific user
+# Branding logo upload / serve
 # ---------------------------------------------------------------------------
 
+_BRANDING_LOGOS_DIR = os.getenv("BRANDING_LOGOS_DIR", "/app/branding_logos")
+_LOGO_MAX_BYTES = 512 * 1024  # 512 KB
+_LOGO_ALLOWED_TYPES: dict = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+}
+_LOGO_EXT_MEDIA = {v: k for k, v in _LOGO_ALLOWED_TYPES.items()}
+
+
+@router.post("/branding/{cp_id}/logo", summary="Upload a logo image for a branding config")
+async def upload_branding_logo(
+    cp_id: str,
+    file: UploadFile = File(...),
+    project_id: str = Query(default="", description="Keystone project UUID; empty = global CP default"),
+    request: Request = None,  # type: ignore[assignment]
+    current_user: User = Depends(_require_admin),
+):
+    """Upload a logo image (PNG/JPEG/GIF/WebP/SVG, max 512 KB).
+
+    Saves the file to the branding_logos volume and upserts logo_url in
+    tenant_portal_branding so the tenant portal immediately picks it up.
+    Returns the public URL at which the logo is now accessible.
+    """
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    if ct not in _LOGO_ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ct}'. Allowed: PNG, JPEG, GIF, WebP, SVG",
+        )
+
+    ext = _LOGO_ALLOWED_TYPES[ct]
+
+    # Sanitize cp_id and project_id to safe filesystem names (alphanumeric, dash, underscore)
+    safe_cp = re.sub(r"[^A-Za-z0-9_-]", "_", cp_id)[:64]
+    if project_id:
+        safe_proj = re.sub(r"[^A-Za-z0-9_-]", "_", project_id)[:64]
+        filename = f"{safe_cp}__{safe_proj}{ext}"
+    else:
+        filename = f"{safe_cp}{ext}"
+
+    content = await file.read()
+    if len(content) > _LOGO_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum logo size is {_LOGO_MAX_BYTES // 1024} KB",
+        )
+
+    os.makedirs(_BRANDING_LOGOS_DIR, exist_ok=True)
+    dest = os.path.join(_BRANDING_LOGOS_DIR, filename)
+    with open(dest, "wb") as fh:
+        fh.write(content)
+
+    logo_url = f"/api/admin/tenant-portal/branding-logo/{filename}"
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tenant_portal_branding
+                    (control_plane_id, project_id, logo_url, updated_at)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (control_plane_id, project_id) DO UPDATE SET
+                    logo_url   = EXCLUDED.logo_url,
+                    updated_at = now()
+                """,
+                [cp_id, project_id, logo_url],
+            )
+
+    logger.info(
+        "Logo uploaded for CP %s / project '%s' by %s → %s",
+        cp_id,
+        project_id or "(global)",
+        current_user.username,
+        filename,
+    )
+    return {"logo_url": logo_url, "filename": filename}
+
+
+@router.get(
+    "/branding-logo/{filename}",
+    summary="Serve an uploaded branding logo",
+    include_in_schema=False,
+)
+async def serve_branding_logo(filename: str):
+    """Serve a previously-uploaded logo file (no auth required — logos are public assets)."""
+    # Only allow safe filenames: alphanumeric, dash, underscore + allowed extension
+    if not re.fullmatch(r"[A-Za-z0-9_-]+\.(png|jpg|gif|webp|svg)", filename):
+        raise HTTPException(status_code=404, detail="not_found")
+
+    path = os.path.join(_BRANDING_LOGOS_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="not_found")
+
+    ext = os.path.splitext(filename)[1]
+    media_type = _LOGO_EXT_MEDIA.get(ext, "application/octet-stream")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# MFA management — admin reset for a specific user
+# ---------------------------------------------------------------------------
 @router.delete(
     "/mfa/{cp_id}/{keystone_user_id}",
     summary="Admin: reset (delete) MFA enrollment for a specific user",
