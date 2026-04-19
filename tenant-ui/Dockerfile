@@ -40,10 +40,17 @@ RUN rm /etc/nginx/conf.d/default.conf \
     && chown nginx:nginx /run/nginx.pid
 
 # Simple SPA serving config — nginx just serves static files and
-# falls back to /index.html for client-side routing
-COPY nginx.conf /etc/nginx/conf.d/tenant-ui.conf
+# falls back to /index.html for client-side routing.
+# nginx.conf uses TENANT_PORTAL_UPSTREAM placeholder which is substituted
+# at container startup via envsubst so the same image works in both
+# Docker Compose (tenant_portal:8010) and Kubernetes (pf9-tenant-portal:8010).
+COPY nginx.conf /etc/nginx/conf.d/tenant-ui.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
 USER nginx
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
+# envsubst replaces TENANT_PORTAL_UPSTREAM then starts nginx.
+# Default value is "tenant_portal:8010" (Docker Compose) so no env var
+# is needed in docker-compose; Kubernetes deployments set it to
+# "pf9-tenant-portal:8010" via the Helm template.
+CMD ["/bin/sh", "-c", "TENANT_PORTAL_UPSTREAM=${TENANT_PORTAL_UPSTREAM:-tenant_portal:8010} envsubst '${TENANT_PORTAL_UPSTREAM}' < /etc/nginx/conf.d/tenant-ui.conf.template > /etc/nginx/conf.d/tenant-ui.conf && nginx -g 'daemon off;'"]

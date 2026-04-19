@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.85.11-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.85.12-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -608,7 +608,9 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🔧 Tenant Portal Bug-Fixes — v1.85.5–v1.85.11
+### 🔧 Tenant Portal Bug-Fixes — v1.85.5–v1.85.12
+
+**[v1.85.12](CHANGELOG.md)** — K8s CrashLoopBackOff hotfix (tenant-ui nginx + monitoring httpx): `pf9-tenant-ui` crashed on v1.85.11 because `nginx.conf` hardcoded `proxy_pass http://tenant_portal:8010` (Docker Compose service name), which fails DNS resolution in Kubernetes (service is `pf9-tenant-portal`). Fixed using an envsubst template — same image works in Docker Compose (default `tenant_portal:8010`) and Kubernetes (`TENANT_PORTAL_UPSTREAM=pf9-tenant-portal:8010` via Helm). `pf9-monitoring` crashed because `_bootstrap_cache_from_api()` imports `httpx` at the function level (outside `try`) but `httpx` was absent from `monitoring/requirements.txt` — CI-built image raised `ModuleNotFoundError` on startup. Added `httpx==0.27.2`. 538 tests, 0 HIGH bandit findings.
 
 **[v1.85.11](CHANGELOG.md)** — Tenant portal fully operational + branding logo + `[object Object]` error fix + Restore Center (MANUAL_IP / result panel / email): **Tenant portal was completely broken in production** — `tenant-ui` nginx had no proxy for `/tenant/*` so every API call returned `index.html`; fixed by adding `location /tenant/` proxy block. Branding logos uploaded via the admin UI (file-path `logo_url` in DB) now convert to inline base64 data URLs at read time — no nginx re-routing required. Admin UI no longer shows `[object Object]` on API validation errors (`apiFetch` in `pf9-ui` now unwraps FastAPI 422 array `detail` into readable messages). Restore Center gains `MANUAL_IP` network/IP strategy, post-restore result panel (new VM name, error details accordion), email summary button, and expandable history rows. Monitoring bootstrap always runs on startup. 538 tests, 0 HIGH bandit findings.
 
@@ -741,4 +743,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Tests**: 538 passed, 25 skipped | **Version**: 1.85.10 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Tests**: 538 passed, 25 skipped | **Version**: 1.85.12 | **Last Updated**: April 2026

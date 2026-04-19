@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.85.11  
+**Version**: 1.85.12  
 **Last Updated**: April 19, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.85.12 — K8s CrashLoopBackOff Hotfix: tenant-ui nginx hostname + monitoring httpx (✅ Complete)
+
+- **`pf9-tenant-ui` CrashLoopBackOff in K8s — fixed**: `nginx.conf` added in v1.85.11 hardcoded `proxy_pass http://tenant_portal:8010` (Docker Compose service name). In Kubernetes the service is `pf9-tenant-portal`, so nginx failed DNS resolution at startup. Fixed with an `envsubst` template: the nginx config now contains `${TENANT_PORTAL_UPSTREAM}` which is substituted at container startup. Dockerfile CMD defaults to `tenant_portal:8010`; the Helm `tenant-ui` Deployment sets `TENANT_PORTAL_UPSTREAM=pf9-tenant-portal:8010`.
+- **`pf9-monitoring` CrashLoopBackOff in K8s — fixed**: `_bootstrap_cache_from_api()` (added in v1.85.11) imports `httpx` inside the function body but outside the `try` block. `httpx` was missing from `monitoring/requirements.txt`, so the CI-built container raised `ModuleNotFoundError` at startup, propagating through `_lifespan()` and crashing FastAPI. Added `httpx==0.27.2` to `monitoring/requirements.txt`.
 
 ### v1.85.11 — Tenant Portal Production Fix + Branding Logo + [object Object] Error + Restore Center (✅ Complete)
 

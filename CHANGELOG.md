@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.85.12] - 2026-04-19
+
+### Fixed
+- **K8s `pf9-tenant-ui` CrashLoopBackOff** — `nginx.conf` introduced in v1.85.11 hardcoded `proxy_pass http://tenant_portal:8010` (the Docker Compose service name). In Kubernetes the service is named `pf9-tenant-portal`, so nginx failed DNS resolution at startup and crashed. Fixed by replacing the hostname with a `${TENANT_PORTAL_UPSTREAM}` envsubst placeholder in the template; the Dockerfile CMD supplies the Docker Compose default (`tenant_portal:8010`) and the Helm deployment now sets `TENANT_PORTAL_UPSTREAM=pf9-tenant-portal:8010`. The same image works in both environments without any other changes.
+- **K8s `pf9-monitoring` CrashLoopBackOff** — `_bootstrap_cache_from_api()` added in v1.85.11 imports `httpx` at the function body level (outside the `try` block). `httpx` was absent from `monitoring/requirements.txt`, so the CI-built container image raised `ModuleNotFoundError` on startup, propagated through `_lifespan()`, and crashed FastAPI. Added `httpx==0.27.2` to `monitoring/requirements.txt`.
+
 ## [1.85.11] - 2026-04-20
 
 ### Fixed

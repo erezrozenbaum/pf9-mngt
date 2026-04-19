@@ -1,6 +1,6 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.85.11  
+**Version**: 1.85.12  
 **Last Updated**: April 19, 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 

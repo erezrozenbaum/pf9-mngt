@@ -29,6 +29,9 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          env:
+            - name: TENANT_PORTAL_UPSTREAM
+              value: "pf9-tenant-portal:{{ .Values.tenantPortal.service.port }}"
           readinessProbe:
             httpGet:
               path: /

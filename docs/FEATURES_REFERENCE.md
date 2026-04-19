@@ -212,7 +212,7 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
 - **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.11)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.12)*
 
 **For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning and security group management — without exposing the admin panel.**
 
@@ -224,6 +224,7 @@ A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolat
 - **Network & SG Management** *(v1.85.0)*: `GET /tenant/networks` (subnets, CIDRs, shared/external); `GET /tenant/security-groups/{id}` (rules); `POST/DELETE /tenant/security-groups/{id}/rules` (add/delete rules via Neutron + local DB sync). Internal endpoints: `POST /internal/sg-rule`, `DELETE /internal/sg-rule/{id}`.
 - **Dependency Graph** *(v1.85.0, expanded v1.85.3)*: `GET /tenant/resource-graph` returns VM, network, subnet, SG, and volume nodes with 4 edge types (`vm_network`, `vm_sg`, `network_subnet`, `vm_volume`). Rendered as a 5-column SVG layout with colored nodes and legend.
 - **VM Provisioning** *(v1.85.0, enhanced v1.85.3)*: `POST /tenant/vms` → `POST /internal/tenant-provision-vm` → `create_boot_volume` + `create_server_bfv`. RFC-1123 name validation, fixed IP picker (subnet CIDR hint), cloud-init user/password fields, boot volume size display. New *New VM* screen (🚀) in the tenant portal nav.
+- **K8s crash hotfix** *(v1.85.12)*: `pf9-tenant-ui` nginx config hardcoded Docker Compose service name `tenant_portal` → K8s DNS fails → CrashLoopBackOff. Fixed with envsubst template; Helm sets `TENANT_PORTAL_UPSTREAM=pf9-tenant-portal:8010`. `pf9-monitoring` missing `httpx` in requirements → `ModuleNotFoundError` at startup → CrashLoopBackOff. Added `httpx==0.27.2`.
 - **Production fix + branding + error messages + Restore Center** *(v1.85.11)*: `tenant-ui` nginx now proxies `/tenant/*` to `tenant_portal` (was missing — entire portal broken in prod). Branding logo served as base64 data URL for legacy file-path `logo_url` values. `apiFetch` 422 detail-array unwrapped (eliminates `[object Object]` error messages in admin UI). Restore Center: `MANUAL_IP` network/IP selection, post-restore result panel, email summary, expandable history.
 - **K8s stability (v1.85.7)**: `apiFetch` no-retry-on-HTTP; quota CP ID slug support; snapshot calendar today-cell highlight; `apiExecuteRunbook` normalised + `RiskBadge`/`statusBadge` null-guarded; monitoring `cache_available` flag in API response + improved empty-state.
 - **Per-tenant branding** *(v1.85.6)*: `tenant_portal_branding` table gains `project_id` column (empty = CP-level default); admin scope dropdown to select per-tenant override; `useBranding` re-fetches after login.
