@@ -2863,7 +2863,8 @@ INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort
     ((SELECT id FROM nav_groups WHERE key='metering_reporting'), 'reports',              'Reports',       '📊', '/reports',              'reports',       3),
     ((SELECT id FROM nav_groups WHERE key='metering_reporting'), 'resource_management',  'Resources',     '🔧', '/resource_management',  'resources',     4),
     ((SELECT id FROM nav_groups WHERE key='metering_reporting'), 'tenant_health',        'Tenant Health', '🏥', '/tenant_health',        'tenant_health', 5),
-    ((SELECT id FROM nav_groups WHERE key='metering_reporting'), 'monitoring',           'Monitoring',    '',   '/monitoring',           'monitoring',    6)
+    ((SELECT id FROM nav_groups WHERE key='metering_reporting'), 'monitoring',           'Monitoring',    '',   '/monitoring',           'monitoring',    6),
+    ((SELECT id FROM nav_groups WHERE key='metering_reporting'), 'insights',             'Insights',      '🔍', '/insights',             'intelligence',  7)
 ON CONFLICT (key) DO NOTHING;
 
 -- Admin Tools group

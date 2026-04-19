@@ -661,6 +661,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.86.1 — Kubernetes Hotfix: Redis env vars in Helm values (✅ Complete)
+
+- **`pf9-sla-worker` CrashLoopBackOff + `pf9-intelligence-worker` Error in K8s — fixed**: Both worker Helm Deployments inject `REDIS_HOST` and `REDIS_PORT` from `{{ .Values.redis.host | quote }}` / `{{ .Values.redis.port | quote }}`. The keys `redis.host` and `redis.port` were absent from `values.yaml` (only `redis.url` was defined), so both env vars arrived as empty strings in the container. Each worker's `main.py` calls `int(os.getenv("REDIS_PORT", "6379"))` — when the env var is set but empty, `os.getenv` returns `""` rather than the default, raising `ValueError: invalid literal for int() with base 10: ''` at startup. Fixed by adding `redis.host: pf9-redis` and `redis.port: "6379"` to `values.yaml`. Root cause: Docker Compose injects `REDIS_HOST`/`REDIS_PORT` from the `.env` file (so local dev always worked); Kubernetes injects them exclusively via Helm values.
+- **`insights` tab missing from grouped navigation — fixed**: `migrate_v1_85_0_intelligence.sql` added RBAC permissions but did not insert the Insights tab into `nav_items` or seed `department_nav_items`. The grouped nav system builds the nav tree from `nav_items` joined to `department_nav_items` — if the row is absent the tab is simply not returned for any department. Fixed by adding `insights` to the `metering_reporting` nav group in `db/init.sql` (new installs) and in migration `db/migrate_v1_86_1_insights_nav.sql` with a blanket `CROSS JOIN departments` seed (existing installs). The legacy flat-bar nav (used for unassigned users) already showed the tab via `DEFAULT_TAB_ORDER` in `App.tsx` — only the department-filtered grouped nav was affected.
+- **Helm chart version not incremented during v1.86.0 release — fixed**: `Chart.yaml` `version` and `appVersion` were still `1.85.7`. Bumped to `1.86.1`.
+
 ### v1.86.0 — SLA Compliance Tracking + Operational Intelligence Feed (✅ Complete)
 
 - **SLA Compliance Tracking**: `sla_tier_templates` (bronze/silver/gold/custom), `sla_commitments` (per-tenant date-ranged contracts), `sla_compliance_monthly` (monthly KPI rows: uptime %, RTO, RPO, MTTA, MTTR, backup success). `sla_worker` recomputes KPIs every 4 hours, raises breach/at-risk `sla_risk` insights, and generates ReportLab PDF compliance reports via `POST /api/sla/compliance/report/{tenant_id}`.

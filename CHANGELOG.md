@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.86.1] - 2026-04-19
+
+### Fixed
+
+- **Helm: `redis.host` and `redis.port` missing from `values.yaml`** — `sla-worker` and `intelligence-worker` Deployments inject `REDIS_HOST`/`REDIS_PORT` via `{{ .Values.redis.host | quote }}` and `{{ .Values.redis.port | quote }}`. These keys were absent from `values.yaml` (only `redis.url` was defined), causing both env vars to resolve to empty strings. `int("")` raised `ValueError: invalid literal for int() with base 10: ''` at startup, putting `pf9-sla-worker` into `CrashLoopBackOff` and `pf9-intelligence-worker` into `Error` state on the v1.86.0 Kubernetes deployment. Added `redis.host: pf9-redis` and `redis.port: "6379"` to `values.yaml`.
+- **`insights` nav item missing from navigation catalog** — `migrate_v1_85_0_intelligence.sql` added RBAC permissions for `intelligence` and `sla` resources but did not insert the Insights tab into `nav_items` or seed `department_nav_items`. The grouped navigation system relies entirely on the nav catalog — without an entry the tab is invisible to all departments. Added `insights` to `nav_items` under the `metering_reporting` group in `db/init.sql` (new installs) and via new migration `db/migrate_v1_86_1_insights_nav.sql` with a full department-visibility seed (existing installs).
+- **Helm chart version not incremented during v1.86.0 release** — `Chart.yaml` `version` and `appVersion` were still `1.85.7`. Bumped to `1.86.1`.
+
 ## [1.86.0] - 2026-04-19
 
 ### Added
