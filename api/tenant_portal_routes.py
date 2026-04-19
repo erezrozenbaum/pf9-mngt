@@ -646,7 +646,11 @@ class BrandingUpsertRequest(BaseModel):
         if v is None:
             return v
         import re
-        if not re.match(r"^https?://", str(v)):
+        s = str(v)
+        # Allow relative paths for logos uploaded via the admin branding-logo endpoint
+        if s.startswith("/api/admin/tenant-portal/branding-logo/"):
+            return v
+        if not re.match(r"^https?://", s):
             raise ValueError("URL must start with https:// or http://")
         return v
 
@@ -788,10 +792,20 @@ async def upload_branding_logo(
     """
     ct = (file.content_type or "").split(";")[0].strip().lower()
     if ct not in _LOGO_ALLOWED_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{ct}'. Allowed: PNG, JPEG, GIF, WebP, SVG",
-        )
+        # Fallback: derive type from the uploaded filename extension
+        # (nginx ingress can strip content-type from multipart parts)
+        orig_name = (file.filename or "").lower()
+        _ext_to_ct = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                      ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml"}
+        for _suffix, _guessed_ct in _ext_to_ct.items():
+            if orig_name.endswith(_suffix):
+                ct = _guessed_ct
+                break
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type '{ct}'. Allowed: PNG, JPEG, GIF, WebP, SVG",
+            )
 
     ext = _LOGO_ALLOWED_TYPES[ct]
 

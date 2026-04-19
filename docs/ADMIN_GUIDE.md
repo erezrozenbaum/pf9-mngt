@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.85.9  
+**Version**: 1.85.10  
 **Last Updated**: April 19, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,16 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.85.10 — Branding Save 422, Monitoring Empty-Hosts, Runbook Diagnostics (✅ Complete)
+
+- **Branding save 422 after logo upload (K8s) — fixed**: `BrandingUpsertRequest.safe_url` validator rejected any `logo_url` not starting with `https?://`, which is exactly the path returned by the logo-upload endpoint (`/api/admin/tenant-portal/branding-logo/{filename}`). Validator now also accepts the `/api/admin/tenant-portal/branding-logo/` prefix while still blocking `javascript:`, `data:`, and other dangerous schemes.
+- **Branding logo upload 400 in Kubernetes — fixed**: When the nginx ingress strips `Content-Type` from individual multipart parts, `file.content_type` arrives as `None` or `application/octet-stream`. Upload endpoint now falls back to file-extension detection (`.png` → `image/png`, etc.) before rejecting.
+- **Monitoring "No metrics collected yet" — empty-hosts bug — fixed**: `PrometheusClient` was module-level-initialised with `"".split(",")` = `[""]` (one empty-string host) when `PF9_HOSTS` was empty. Host list now filters blank entries: empty `PF9_HOSTS` → `[]`, so scraping never starts against a blank hostname.
+- **Monitoring startup race in Kubernetes — fixed**: Single auto-discovery attempt could fail if `pf9-api` wasn't ready yet, permanently disabling collection. Now retries **5×** with 5-second gaps.
+- **K8s Helm: `branding_logos` volume missing on `pf9-api` pod — fixed**: Added `emptyDir` volume mount at `/app/branding_logos`; logo uploads and serves work within pod lifetime. Configure a PVC for production persistence.
+- **Runbook diagnostics**: `security_group_audit`, `quota_threshold_check`, and `vm_rightsizing` now return `items_scanned` counts and a `summary` string so operators can confirm the runbook ran over real data even when it finds 0 actionable items (e.g. _"Scanned 47 security groups; found 0 overly-permissive rules"_).
+- **Security**: SQL injection B608 fixed in `capacity_forecast` engine (`make_interval` parameterised); 13 bandit false-positives annotated with `# nosec` and justification comments; 0 medium/high bandit issues in changed files.
 
 ### v1.85.9 — Branding Logo Upload + Monitoring Docker-Compose Fixes (✅ Complete)
 

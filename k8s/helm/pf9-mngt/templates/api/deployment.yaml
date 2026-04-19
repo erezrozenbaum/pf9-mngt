@@ -308,6 +308,8 @@ spec:
               mountPath: /app/logs
             - name: reports
               mountPath: /mnt/reports
+            - name: branding-logos
+              mountPath: /app/branding_logos
       volumes:
         - name: app-logs
           emptyDir: {}
@@ -318,3 +320,5 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: branding-logos
+          emptyDir: {}

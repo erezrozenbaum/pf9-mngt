@@ -113,45 +113,35 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-# Global Prometheus client
+# Global Prometheus client.
+# Initialise with an explicit empty list when PF9_HOSTS is unset so that
+# auto-discovery in startup_event can set the real hosts before collection
+# starts.  A module-level split(",") on an empty string produces [""] which
+# causes scrape attempts against an empty hostname — guarded here.
+_pf9_hosts_env_init = os.getenv("PF9_HOSTS", "").strip()
+_initial_hosts: list = (
+    [h.strip() for h in _pf9_hosts_env_init.split(",") if h.strip()]
+    if _pf9_hosts_env_init
+    else []
+)
 prometheus_client = PrometheusClient(
-    hosts=os.getenv("PF9_HOSTS", "localhost").split(","),
+    hosts=_initial_hosts,
     cache_ttl=int(os.getenv("METRICS_CACHE_TTL", "60"))
 )
 
-async def startup_event():
-    """Initialize the application"""
-    from container_watchdog import start_watchdog
-    start_watchdog()
-    logger.info("PF9 Monitoring Service started", extra={"context": {"cache": "/tmp/cache/metrics_cache.json"}})
-    
-    # Ensure we have a cache file with some default data if none exists
-    import os
-    os.makedirs("/tmp/cache", exist_ok=True)
-    if not os.path.exists("/tmp/cache/metrics_cache.json"):
-        default_cache = {
-            "vms": [],
-            "hosts": [],
-            "alerts": [],
-            "summary": {"total_vms": 0, "total_hosts": 0, "last_update": None},
-            "timestamp": None
-        }
-        try:
-            with open("/tmp/cache/metrics_cache.json", "w") as f:
-                json.dump(default_cache, f)
-            logger.info("Created default cache file", extra={"context": {"path": "/tmp/cache/metrics_cache.json"}})
-        except Exception as e:
-            logger.error("Could not create cache file", extra={"context": {"error": str(e)}})
+async def _discover_hosts_with_retry(max_attempts: int = 5, delay_s: float = 5.0) -> list:
+    """Attempt to fetch Prometheus targets from the admin API with retries.
 
-    # Start background metrics collection from PF9 host Prometheus endpoints.
-    # If PF9_HOSTS is not configured, attempt to discover hypervisor IPs from
-    # the admin API's /internal/prometheus-targets endpoint.
-    pf9_hosts_env = os.getenv("PF9_HOSTS", "").strip()
-    if not pf9_hosts_env:
+    Returns the list of host IPs discovered, or [] if all attempts fail.
+    In Kubernetes the admin API pod may not be ready when the monitoring pod
+    starts; retrying avoids a permanent empty-host situation.
+    """
+    import asyncio
+    import httpx as _httpx
+    _api_url = os.getenv("API_BASE_URL", "http://pf9-api:8000")
+    _secret = os.getenv("INTERNAL_SERVICE_SECRET", "")
+    for attempt in range(1, max_attempts + 1):
         try:
-            import httpx as _httpx
-            _api_url = os.getenv("API_BASE_URL", "http://pf9-api:8000")
-            _secret = os.getenv("INTERNAL_SERVICE_SECRET", "")
             _r = _httpx.get(
                 f"{_api_url}/internal/prometheus-targets",
                 headers={"X-Internal-Secret": _secret},
@@ -160,18 +150,63 @@ async def startup_event():
             if _r.status_code == 200:
                 _targets = _r.json().get("targets", [])
                 if _targets:
-                    # Extract just host IPs from host:port strings
                     _ips = [t.split(":")[0] for t in _targets if t]
-                    prometheus_client.hosts = _ips
                     logger.info(
-                        "Auto-discovered hypervisor hosts from admin API",
+                        "Auto-discovered hypervisor hosts from admin API (attempt %d)",
+                        attempt,
                         extra={"context": {"hosts": _ips, "count": len(_ips)}},
                     )
+                    return _ips
+                else:
+                    logger.info(
+                        "Admin API returned no Prometheus targets yet (attempt %d/%d)",
+                        attempt, max_attempts,
+                    )
+            else:
+                logger.warning("Admin API /internal/prometheus-targets → HTTP %d (attempt %d)", _r.status_code, attempt)
         except Exception as _e:
             logger.warning(
-                "Could not auto-discover Prometheus targets from admin API: %s", _e,
-                extra={"context": {"error": str(_e)}},
+                "Could not reach admin API for host discovery (attempt %d/%d): %s",
+                attempt, max_attempts, _e,
             )
+        if attempt < max_attempts:
+            await asyncio.sleep(delay_s)
+    logger.warning("Host auto-discovery failed after %d attempts — monitoring will start with no hosts", max_attempts)
+    return []
+
+async def startup_event():
+    """Initialize the application"""
+    from container_watchdog import start_watchdog
+    start_watchdog()
+    logger.info("PF9 Monitoring Service started", extra={"context": {"cache": "/tmp/cache/metrics_cache.json"}})  # nosec B108
+    
+    # Ensure we have a cache file with some default data if none exists
+    import os
+    os.makedirs("/tmp/cache", exist_ok=True)  # nosec B108 — container-internal volume /tmp/cache
+    if not os.path.exists("/tmp/cache/metrics_cache.json"):  # nosec B108
+        default_cache = {
+            "vms": [],
+            "hosts": [],
+            "alerts": [],
+            "summary": {"total_vms": 0, "total_hosts": 0, "last_update": None},
+            "timestamp": None
+        }
+        try:
+            with open("/tmp/cache/metrics_cache.json", "w") as f:  # nosec B108
+                json.dump(default_cache, f)
+            logger.info("Created default cache file", extra={"context": {"path": "/tmp/cache/metrics_cache.json"}})  # nosec B108
+        except Exception as e:
+            logger.error("Could not create cache file", extra={"context": {"error": str(e)}})
+
+    # Start background metrics collection from PF9 host Prometheus endpoints.
+    # If PF9_HOSTS is not configured, attempt to discover hypervisor IPs from
+    # the admin API's /internal/prometheus-targets endpoint (with retries so
+    # a K8s startup race between pods does not permanently disable collection).
+    pf9_hosts_env = os.getenv("PF9_HOSTS", "").strip()
+    if not pf9_hosts_env:
+        _discovered = await _discover_hosts_with_retry(max_attempts=5, delay_s=5.0)
+        if _discovered:
+            prometheus_client.hosts = _discovered
     await prometheus_client.start_collection()
 
 async def shutdown_event():
@@ -182,7 +217,7 @@ async def shutdown_event():
 def load_cache_data() -> Dict[str, Any]:
     """Load metrics from cache file"""
     try:
-        with open("/tmp/cache/metrics_cache.json", "r") as f:
+        with open("/tmp/cache/metrics_cache.json", "r") as f:  # nosec B108
             return json.load(f)
     except FileNotFoundError:
         return {
@@ -223,7 +258,7 @@ async def auto_setup():
     """
     try:
         # Check if auto-setup is needed
-        setup_needed = os.path.exists("/tmp/need_monitoring_setup")
+        setup_needed = os.path.exists("/tmp/need_monitoring_setup")  # nosec B108
         cache_data = load_cache_data()
         hosts_count = len(cache_data.get("hosts", []))
         
@@ -364,4 +399,4 @@ async def refresh_metrics():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8001)  # nosec B104 — monitoring container must bind all interfaces

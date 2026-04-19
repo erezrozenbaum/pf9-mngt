@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.85.10] - 2026-04-19
+
+### Fixed
+- **Branding save 422 after logo upload (Kubernetes)** — `BrandingUpsertRequest.safe_url` validator rejected any `logo_url` that did not start with `https?://`, which is exactly the shape the logo-upload endpoint returns (`/api/admin/tenant-portal/branding-logo/{filename}`). Branding saves now raise 422 only for dangerous schemes (`javascript:`, `data:`, bare paths, etc.) while explicitly allowing the server-relative `/api/admin/tenant-portal/branding-logo/` prefix.
+- **Branding logo upload 400 in Kubernetes** — when the nginx ingress controller strips the `Content-Type` from individual multipart parts (a known behaviour in some K8s ingress configs), `file.content_type` arrives as `None` or `application/octet-stream`. The upload endpoint now falls back to file-extension detection (`.png` → `image/png`, `.jpg`/`.jpeg` → `image/jpeg`, etc.) before returning 400, so standard image files upload cleanly even when the ingress drops the part content-type.
+- **Monitoring "No metrics collected yet" — empty-hosts bug** — `PrometheusClient` was initialised at module load time with `os.getenv("PF9_HOSTS", "localhost").split(",")`. With `PF9_HOSTS=""` (correct for auto-discovery) `"".split(",")` produces `[""]` — a list containing one empty string — causing scrape attempts against a blank hostname that all fail silently. The module-level init now filters empty strings: `PF9_HOSTS=""` → `[]`, so collection never starts with phantom hosts.
+- **Monitoring startup race in Kubernetes** — the single auto-discovery attempt at startup could fail if `pf9-api` wasn't yet ready, permanently leaving the monitoring service with no hosts. `startup_event` now retries auto-discovery up to **5 times** with 5-second gaps before giving up, eliminating the race condition without an `initContainer`.
+- **K8s Helm: no branding_logos volume on `pf9-api` pod** — the `pf9-api` Deployment template had no volume mount for `/app/branding_logos`, so logo uploads would fail (or succeed but be invisible to the serve endpoint). An `emptyDir` volume is now mounted at `/app/branding_logos` so uploads work within the pod's lifetime. (A PVC is recommended for production persistence; the directory survives pod restarts only when a PVC is configured.)
+
+### Changed
+- **Runbook results now include `items_scanned` and `summary`** — `security_group_audit`, `quota_threshold_check`, and `vm_rightsizing` all return a `summary` string and expose scanned-object counts (`security_groups_scanned`, `projects_scanned`, `vms_with_metering_data`) in their `result` payloads. Operators can now immediately see how much data was examined even when the runbook finds zero actionable items (e.g. "Scanned 47 security groups; found 0 overly-permissive rules" is unambiguous evidence the runbook ran correctly).
+
+### Fixed (Security)
+- **B608 SQL injection (runbook capacity_forecast engine)** — `hypervisors_history` query used Python `%`-string formatting to embed `window_days` into an INTERVAL expression (`INTERVAL '%s days' % window_days`). Although `window_days` was already cast to `int`, this pattern is flagged by OWASP static analysis. Replaced with a fully parameterised PostgreSQL `make_interval(days => %s)` call.
+- **B113 false-positive suppressed with justification** — `requests.post(...)` in the webhook/integration call already had an explicit `timeout` parameter; added `# nosec B113` with explanation.
+- **B608 false-positives annotated** — dynamic-`WHERE` clauses in `list_executions` / `my_executions` embed only hardcoded column names with `%s` placeholders for all user-supplied values; annotated with `# nosec B608`.
+- **B108 / B104 annotated in monitoring service** — container-internal `/tmp/cache/` volume paths and the `0.0.0.0` bind address are intentional; all occurrences annotated with `# nosec B108` / `# nosec B104` and justification comments. Bandit medium+high issue count on changed files: **0**.
+
+### Tests
+- **42 unit tests** in `tests/test_v18510_fixes.py` — validator, content-type fallback, monitoring hosts, and runbook result-schema shape tests.
+- **28 integration tests** in `tests/test_runbook_engines_integration.py` — actually call the real engine functions (`_engine_sg_audit`, `_engine_quota_check`, `_engine_vm_rightsizing`) with mocked OpenStack API responses and controlled DB rows:
+  - `TestSGAuditEngine` (13 tests): zero SGs, no violations / N scanned, port-22 / RDP / DB-port detection, IPv6 all-open, custom flag-ports, egress-rule exclusion, project-name resolution, target-project filter, human-readable summary.
+  - `TestQuotaThresholdCheckEngine` (10 tests): zero projects, 3-project scan, 80%/95% alert thresholds, below-threshold no-alert, multi-project partial hit, target-project filter, unlimited-quota exclusion, summary count, read-only assertion.
+  - `TestVmRightsizingEngineMetering` (5 tests): no-metering-data → `vms_with_metering_data=0` with diagnostic summary (root cause of user-reported "returns 0"), candidate detected from idle VM, high-CPU not a candidate, ghost-VM skipped, summary mentions metering count.
+- **Suite total**: 538 passed, 25 skipped (all live-stack integration tests skipped in CI).
+
 ## [1.85.9] - 2026-04-19
 
 ### Added

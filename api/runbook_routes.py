@@ -204,7 +204,7 @@ def _call_billing_gate(
             json=payload,
             headers=headers,
             verify=bool(integration.get("verify_ssl", True)),
-            timeout=int(integration.get("timeout_seconds", 10)),
+            timeout=int(integration.get("timeout_seconds", 10)),  # nosec B113 — timeout is set
         )
         resp.raise_for_status()
         data = resp.json()
@@ -862,10 +862,12 @@ def _engine_sg_audit(params: dict, dry_run: bool, actor: str) -> dict:
                     "description": rule.get("description", ""),
                 })
 
+    scanned = len(sgs) if not target_project else sum(1 for sg in sgs if not target_project or sg.get("project_id") == target_project)
     return {
-        "result": {"violations": violations},
+        "result": {"violations": violations, "security_groups_scanned": scanned},
         "items_found": len(violations),
         "items_actioned": 0,  # audit is read-only
+        "summary": f"Scanned {scanned} security group(s); found {len(violations)} overly-permissive rule(s)",
     }
 
 
@@ -925,9 +927,11 @@ def _engine_quota_check(params: dict, dry_run: bool, actor: str) -> dict:
             logger.warning(f"Quota check failed for project {pname}: {e}")
 
     return {
-        "result": {"alerts": alerts, "warning_pct": warning_pct, "critical_pct": critical_pct},
+        "result": {"alerts": alerts, "warning_pct": warning_pct, "critical_pct": critical_pct,
+                   "projects_scanned": len(projects)},
         "items_found": len(alerts),
         "items_actioned": 0,
+        "summary": f"Scanned {len(projects)} project(s); {len(alerts)} quota alert(s) at >{warning_pct}% threshold",
     }
 
 
@@ -3108,9 +3112,11 @@ def _engine_vm_rightsizing(params: dict, dry_run: bool, actor: str) -> dict:
                 "mode": "dry_run" if dry_run else "scan",
                 "resized": [],
                 "errors": [],
+                "vms_with_metering_data": len(usage_map),
             },
             "items_found": len(candidates),
             "items_actioned": 0,
+            "summary": f"Analysed {len(usage_map)} VM(s) with metering data; {len(candidates)} rightsizing candidate(s) saving ~{total_savings:.2f} {currency}/month",
         }
 
     # ── 5. Actual resize ───────────────────────────────────────────────────
@@ -3210,9 +3216,11 @@ def _engine_vm_rightsizing(params: dict, dry_run: bool, actor: str) -> dict:
             "currency": currency,
             "analysis_days": analysis_days,
             "mode": "executed",
+            "vms_with_metering_data": len(usage_map),
         },
         "items_found": len(candidates),
         "items_actioned": items_actioned,
+        "summary": f"Analysed {len(usage_map)} VM(s); resized {items_actioned}/{len(candidates)} candidate(s)",
     }
 
 
@@ -4916,10 +4924,10 @@ def _engine_cluster_capacity_planner(params: dict, dry_run: bool, actor: str) ->
                         SUM((raw_json::json->>'memory_mb_used')::int) AS used_ram_mb
                     FROM hypervisors_history
                     WHERE state = 'up'
-                      AND recorded_at >= now() - INTERVAL '%s days'
+                      AND recorded_at >= now() - make_interval(days => %s)
                     GROUP BY DATE_TRUNC('day', recorded_at)
                     ORDER BY day
-                """ % window_days)
+                """, (window_days,))
                 rows = [dict(r) for r in cur.fetchall()]
     except Exception as e:
         logger.warning("cluster_capacity_planner: history query failed: %s", e)
@@ -5557,10 +5565,10 @@ async def list_executions(
                 {where}
                 ORDER BY e.created_at DESC
                 LIMIT %s OFFSET %s
-            """, params_list + [limit, offset])
+            """, params_list + [limit, offset])  # nosec B608 — {where} uses only %s placeholders
             rows = cur.fetchall()
 
-            cur.execute(f"SELECT COUNT(*) FROM runbook_executions e {where}", params_list)
+            cur.execute(f"SELECT COUNT(*) FROM runbook_executions e {where}", params_list)  # nosec B608
             total = cur.fetchone()["count"]
 
     return {"executions": [dict(r) for r in rows], "total": total}
@@ -5599,10 +5607,10 @@ async def my_executions(
                 {where}
                 ORDER BY e.created_at DESC
                 LIMIT %s OFFSET %s
-            """, params_list + [limit, offset])
+            """, params_list + [limit, offset])  # nosec B608 — {where} uses only %s placeholders
             rows = cur.fetchall()
 
-            cur.execute(f"SELECT COUNT(*) FROM runbook_executions e {where}", params_list)
+            cur.execute(f"SELECT COUNT(*) FROM runbook_executions e {where}", params_list)  # nosec B608
             total = cur.fetchone()["count"]
 
     return {"executions": [dict(r) for r in rows], "total": total}
