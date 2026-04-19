@@ -13,6 +13,8 @@ reduce DB round-trips on the login page.
 
 import logging
 import os
+import base64
+import mimetypes
 import time
 from typing import Any, Dict, Optional
 
@@ -50,6 +52,39 @@ _DEFAULTS: Dict[str, Any] = {
 # ---------------------------------------------------------------------------
 _CACHE: Dict[str, Any] = {}
 _CACHE_TTL = 60  # seconds
+
+# Directory where logo files are stored (mounted read-only from the admin API)
+_LOGO_DIR = os.getenv("BRANDING_LOGOS_DIR", "/app/branding_logos")
+# Old admin-API logo URL prefix that must be rewritten to a data URL
+_ADMIN_LOGO_PREFIX = "/api/admin/tenant-portal/branding-logo/"
+
+
+def _resolve_logo_url(logo_url: Optional[str]) -> Optional[str]:
+    """Convert legacy admin-path logo URLs to inline base64 data URLs.
+
+    The tenant-ui nginx cannot proxy to the admin API, so any logo stored as
+    a ``/api/admin/tenant-portal/branding-logo/<filename>`` path must be read
+    from the shared branding_logos volume and returned as a data URL instead.
+    """
+    if not logo_url or not logo_url.startswith(_ADMIN_LOGO_PREFIX):
+        return logo_url
+    filename = logo_url[len(_ADMIN_LOGO_PREFIX):]
+    # Reject path-traversal attempts
+    if "/" in filename or ".." in filename:
+        return None
+    file_path = os.path.join(_LOGO_DIR, filename)
+    if not os.path.isfile(file_path):
+        logger.info("Legacy logo file not found: %s", file_path)
+        return None
+    try:
+        mime, _ = mimetypes.guess_type(file_path)
+        mime = mime or "image/png"
+        with open(file_path, "rb") as fh:
+            b64 = base64.b64encode(fh.read()).decode()
+        return f"data:{mime};base64,{b64}"
+    except OSError as exc:
+        logger.warning("Could not read logo file %s: %s", file_path, exc)
+        return None
 
 
 def _get_cached_branding(cache_key: str) -> Dict[str, Any] | None:
@@ -125,6 +160,10 @@ async def get_branding(
         else:
             logger.info("No branding row for CP %s — returning defaults", _CP_ID)
             data = dict(_DEFAULTS)
+
+        # Rewrite legacy admin-path logo URLs to inline base64 data URLs so
+        # the tenant-ui can render them without needing a proxy to the admin API.
+        data["logo_url"] = _resolve_logo_url(data.get("logo_url"))
 
         _set_cached_branding(cache_key, data)
         return data

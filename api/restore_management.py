@@ -102,6 +102,7 @@ class RestorePlanRequest(BaseModel):
     new_vm_name: Optional[str] = None
     ip_strategy: str = Field(default="NEW_IPS", pattern="^(NEW_IPS|TRY_SAME_IPS|SAME_IPS_OR_FAIL|MANUAL_IP)$")
     manual_ips: Optional[Dict[str, str]] = None  # {network_id: "desired_ip"} for MANUAL_IP strategy
+    network_override_id: Optional[str] = None  # Override all VM ports to use this network instead
     security_group_ids: Optional[list] = None  # List of security group UUIDs to attach to restored VM ports
     cleanup_old_storage: bool = Field(default=False, description="Delete original VM's orphaned volume after REPLACE restore")
     delete_source_snapshot: bool = Field(default=False, description="Delete the source snapshot after a successful restore")
@@ -642,7 +643,7 @@ class RestorePlanner:
                     new_vm_name = f"{original_name}-restored-{timestamp}"
 
             # 8. Build network plan
-            network_plan = self._build_network_plan(network_config, req.ip_strategy, req.manual_ips)
+            network_plan = self._build_network_plan(network_config, req.ip_strategy, req.manual_ips, getattr(req, 'network_override_id', None))
 
             # 9. Build action steps
             actions = self._build_actions(
@@ -843,7 +844,7 @@ class RestorePlanner:
 
         return "BOOT_FROM_IMAGE"
 
-    def _build_network_plan(self, network_config: list, ip_strategy: str, manual_ips: Optional[Dict[str, str]] = None) -> list:
+    def _build_network_plan(self, network_config: list, ip_strategy: str, manual_ips: Optional[Dict[str, str]] = None, network_override_id: Optional[str] = None) -> list:
         plan = []
         for port_info in network_config:
             # Parse existing IPs
@@ -862,21 +863,32 @@ class RestorePlanner:
                 if not subnet and port_info.get("subnets"):
                     subnet = port_info["subnets"][0].get("subnet_id")
 
+                # Apply network override: replace this port's network with the requested one
+                effective_network_id = network_override_id if network_override_id else port_info["network_id"]
+                effective_network_name = None if network_override_id else port_info.get("network_name")
+                effective_subnet = None if network_override_id else subnet
+                effective_original_ip = None if network_override_id else ip_addr
+
                 entry = {
-                    "network_id": port_info["network_id"],
-                    "network_name": port_info.get("network_name"),
-                    "subnet_id": subnet,
+                    "network_id": effective_network_id,
+                    "network_name": effective_network_name,
+                    "subnet_id": effective_subnet,
                     "original_port_id": port_info["port_id"],
-                    "original_fixed_ip": ip_addr,
+                    "original_fixed_ip": effective_original_ip,
                     "will_request_fixed_ip": False,
                     "requested_ip": None,
                     "note": "",
                 }
 
-                if ip_strategy == "NEW_IPS":
+                # When network is overridden, force NEW_IPS unless a manual_ip is provided
+                resolved_strategy = ip_strategy
+                if network_override_id and ip_strategy not in ("MANUAL_IP",):
+                    resolved_strategy = "NEW_IPS"
+
+                if resolved_strategy == "NEW_IPS":
                     entry["note"] = "Allocating new IP (auto-assign)"
-                elif ip_strategy == "MANUAL_IP":
-                    net_id = port_info["network_id"]
+                elif resolved_strategy == "MANUAL_IP":
+                    net_id = effective_network_id
                     manual_ip = (manual_ips or {}).get(net_id)
                     if manual_ip:
                         entry["will_request_fixed_ip"] = True
@@ -884,11 +896,11 @@ class RestorePlanner:
                         entry["note"] = f"Manual IP: {manual_ip}"
                     else:
                         entry["note"] = "No manual IP specified; allocating new IP (auto-assign)"
-                elif ip_strategy in ("TRY_SAME_IPS", "SAME_IPS_OR_FAIL"):
-                    if ip_addr:
+                elif resolved_strategy in ("TRY_SAME_IPS", "SAME_IPS_OR_FAIL"):
+                    if effective_original_ip:
                         entry["will_request_fixed_ip"] = True
-                        entry["requested_ip"] = ip_addr
-                        entry["note"] = f"Will attempt to assign {ip_addr}"
+                        entry["requested_ip"] = effective_original_ip
+                        entry["note"] = f"Will attempt to assign {effective_original_ip}"
                     else:
                         entry["note"] = "No original IP found; allocating new IP"
 
@@ -1841,6 +1853,8 @@ class _InternalTenantPlanBody(BaseModel):
     mode: str = "NEW"        # "NEW" (side-by-side) or "REPLACE" (in-place)
     pre_restore_snapshot: bool = True  # NEW mode: optional pre-restore safety snapshot
     ip_strategy: str = "NEW_IPS"      # IP allocation strategy passed through to planner
+    manual_ips: Optional[dict] = None  # {network_id: "desired_ip"} for MANUAL_IP strategy
+    network_override_id: Optional[str] = None  # Override all VM ports to use this network
     security_group_ids: Optional[list] = None  # security groups for restored VM ports
     cleanup_old_storage: bool = False   # delete orphaned root volume after REPLACE
     delete_source_snapshot: bool = False  # delete source snapshot after restore
@@ -2900,6 +2914,8 @@ def setup_restore_routes(app):
             new_vm_name=req.new_vm_name,
             # For NEW: assign fresh IPs; for REPLACE: try to keep same IPs
             ip_strategy=req.ip_strategy if mode == "NEW" else (req.ip_strategy if req.ip_strategy != "NEW_IPS" else "TRY_SAME_IPS"),
+            manual_ips=req.manual_ips or {},
+            network_override_id=req.network_override_id,
             security_group_ids=req.security_group_ids or [],
             # SAFETY: safety snapshot — mandatory for REPLACE, opt-in for NEW
             safety_snapshot_before_replace=(mode == "REPLACE") or req.pre_restore_snapshot,

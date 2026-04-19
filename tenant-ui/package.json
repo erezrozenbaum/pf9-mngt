@@ -1,7 +1,7 @@
 {
   "name": "tenant-ui",
   "private": true,
-  "version": "1.84.4",
+  "version": "1.85.11",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.85.10  
+**Version**: 1.85.11  
 **Last Updated**: April 19, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,17 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.85.11 — Tenant Portal Production Fix + Branding Logo + [object Object] Error + Restore Center (✅ Complete)
+
+- **Tenant portal completely broken in production — fixed**: `tenant-ui` nginx.conf had no proxy for `/tenant/*` — all API calls silently returned `index.html` with HTTP 200, making every tenant portal action fail in production. Added `location /tenant/ { proxy_pass http://tenant_portal:8010/tenant/; }` to `tenant-ui/nginx.conf`.
+- **Branding logo not visible in tenant portal — fixed**: Logos uploaded via the Admin UI were stored as admin-API paths (`/api/admin/tenant-portal/branding-logo/<filename>`). The tenant-ui nginx cannot proxy to the admin API. `branding_routes.py` `GET /tenant/branding` now detects legacy-path `logo_url` values, reads the file from the shared `branding_logos` volume, and returns an inline base64 data URL — no nginx changes or DB migration required.
+- **Admin UI shows `[object Object]` on validation errors — fixed**: `apiFetch` in `pf9-ui/src/lib/api.ts` passed FastAPI `detail` directly to `new Error()`. FastAPI 422 errors have `detail` as an array of `{loc, msg, type}` objects; `new Error([{…}])` stringifies as `"[object Object]"`. Fix extracts `.msg` from array elements (joined by `'; '`) and falls back to `JSON.stringify` for non-string shapes.
+- **Restore Center — MANUAL_IP strategy**: Tenant portal restore dialog now exposes a network dropdown (from `GET /tenant/restore/networks`) and per-NIC IP dropdowns (from `GET /tenant/restore/networks/{id}/available-ips`) when `MANUAL_IP` is selected. `network_override_id` + `manual_ips` are forwarded to the admin restore plan API.
+- **Restore Center — post-restore result panel**: After a job reaches a terminal state (`completed`/`failed`/`cancelled`), a result panel shows `new_vm_name`, `new_vm_id`, `restore_point_name`, error message, and a JSON detail accordion.
+- **Restore Center — email summary**: **Send Summary Email** button in the result panel calls `POST /tenant/restore/jobs/{id}/send-summary-email` to dispatch a structured report to any tenant-entered address.
+- **Restore Center — expandable history**: Completed jobs list in a collapsible section; each row expands inline to show the full result panel.
+- **Monitoring bootstrap**: `_bootstrap_cache_from_api()` now runs unconditionally on startup (not only when hosts list is empty).
 
 ### v1.85.10 — Branding Save 422, Monitoring Empty-Hosts, Runbook Diagnostics (✅ Complete)
 

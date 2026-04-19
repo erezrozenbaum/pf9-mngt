@@ -526,6 +526,15 @@ export interface RestorePoint {
   size_gb: number | null;
 }
 
+export interface RestorePlanNetworkEntry {
+  network_id: string | null;
+  network_name: string | null;
+  original_fixed_ip: string | null;
+  will_request_fixed_ip: boolean;
+  requested_ip: string | null;
+  note: string;
+}
+
 export interface RestorePlan {
   plan_id: string;
   vm_id: string;
@@ -535,6 +544,7 @@ export interface RestorePlan {
   mode: string;
   safety_snapshot: boolean;
   status: string;
+  network_plan?: RestorePlanNetworkEntry[];
 }
 
 export interface RestoreJob {
@@ -551,9 +561,12 @@ export interface RestoreJob {
   region_display_name: string;
   error_message: string | null;
   failure_reason: string | null;
+  result: { new_vm_id?: string; new_ips?: string[] } | null;
+  restore_point_name: string | null;
 }
 
 function _normaliseJob(r: Record<string, unknown>): RestoreJob {
+  const rawResult = r.result as Record<string, unknown> | null | undefined;
   return {
     job_id:              String(r.job_id ?? r.id ?? ""),
     vm_id:               String(r.vm_id ?? ""),
@@ -568,6 +581,8 @@ function _normaliseJob(r: Record<string, unknown>): RestoreJob {
     region_display_name: String(r.region_display_name ?? ""),
     error_message:       (r.error_message ?? r.failure_reason ?? null) as string | null,
     failure_reason:      (r.failure_reason ?? null) as string | null,
+    result:              rawResult ? { new_vm_id: String(rawResult.new_vm_id ?? "") || undefined, new_ips: Array.isArray(rawResult.new_ips) ? rawResult.new_ips as string[] : [] } : null,
+    restore_point_name:  (r.restore_point_name ?? null) as string | null,
   };
 }
 
@@ -592,7 +607,9 @@ export async function apiRestorePlan(body: {
   new_vm_name?: string;
   mode?: "NEW" | "REPLACE";
   pre_restore_snapshot?: boolean;
-  ip_strategy?: "NEW_IPS" | "TRY_SAME_IPS";
+  ip_strategy?: "NEW_IPS" | "TRY_SAME_IPS" | "MANUAL_IP";
+  manual_ips?: Record<string, string>;
+  network_override_id?: string;
   security_group_ids?: string[];
   cleanup_old_storage?: boolean;
   delete_source_snapshot?: boolean;
@@ -628,6 +645,36 @@ export async function apiRestoreCancel(jobId: string): Promise<{ message: string
   return tenantFetch(`/tenant/restore/jobs/${encodeURIComponent(jobId)}/cancel`, {
     method: "POST",
   });
+}
+
+export interface AvailableSubnet {
+  subnet_id: string;
+  subnet_name: string;
+  cidr: string;
+  gateway_ip: string | null;
+  available_ips: string[];
+  available_count: number;
+}
+
+export interface AvailableIpsResponse {
+  network_id: string;
+  subnets: AvailableSubnet[];
+}
+
+export async function apiRestoreAvailableIps(networkId: string): Promise<AvailableIpsResponse> {
+  return tenantFetch<AvailableIpsResponse>(
+    `/tenant/restore/networks/${encodeURIComponent(networkId)}/available-ips`,
+  );
+}
+
+export async function apiRestoreSendEmail(
+  jobId: string,
+  email: string,
+): Promise<{ message: string }> {
+  return tenantFetch(
+    `/tenant/restore/jobs/${encodeURIComponent(jobId)}/send-summary-email`,
+    { method: "POST", body: JSON.stringify({ email }) },
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -149,6 +149,9 @@ When restoring a VM, you can control how network ports and IP addresses are hand
 | `NEW_IPS` | Creates new ports with DHCP-assigned IPs | Safe default, avoids IP conflicts |
 | `TRY_SAME_IPS` | Attempts to reserve the original IPs; falls back to DHCP if unavailable | Best effort to keep same IPs |
 | `SAME_IPS_OR_FAIL` | Requires the exact original IPs; fails if any are taken | Strict IP preservation |
+| `MANUAL_IP` | Tenant selects a specific network and manually assigns IPs from a pool of available addresses | Explicit control over destination network and IP |
+
+**`MANUAL_IP` details**: The tenant portal's Restore Center exposes a network dropdown (populated from `GET /tenant/restore/networks`) and per-NIC IP dropdowns (populated from `GET /tenant/restore/networks/{id}/available-ips`). The selected `network_override_id` and `manual_ips` map are forwarded to the admin restore plan API which substitutes the original network with the chosen one.
 
 **Note**: `TRY_SAME_IPS` and `SAME_IPS_OR_FAIL` require the original networks to still exist. If a network has been deleted, those strategies will fail for ports on that network.
 
@@ -182,6 +185,8 @@ The restore feature uses the standard RBAC system with four permission levels:
 
 ## UI Wizard Walkthrough
 
+### Admin UI (Management Portal)
+
 The Restore tab in the management UI provides a 3-screen guided wizard:
 
 ### Screen 1: Select VM
@@ -203,6 +208,26 @@ The Restore tab in the management UI provides a 3-screen guided wizard:
 3. Click "Execute" to start the restore
 4. Watch real-time progress as each step completes
 5. Final status: COMPLETED, FAILED, or DRY_RUN
+
+---
+
+### Tenant Portal — Restore Center
+
+Tenants access the Restore Center from their portal dashboard. The workflow is self-service:
+
+1. **Select VM** — pick a VM from the tenant's project
+2. **Select restore point** — choose a snapshot from the available list (newest first)
+3. **Network / IP strategy** — choose `ORIGINAL` to keep the same network, or `MANUAL_IP` to:
+   - Pick a replacement network from the dropdown
+   - Assign specific IPs per NIC from the list of available addresses in that subnet
+4. **Generate Plan** — the system validates resources and builds the step list
+5. **Execute** — starts the async restore; a live progress bar polls for step updates
+6. **Result Panel** — once the job reaches a terminal state, a panel shows:
+   - New VM name and ID (on success)
+   - Restore point name used
+   - Error message and detail accordion (on failure)
+   - **Send Summary Email** button — dispatches a restore report to any address entered by the tenant (calls `POST /tenant/restore/jobs/{id}/send-summary-email`)
+7. **History** — completed jobs are listed in a collapsible section; each row expands to show the full result panel
 
 ---
 

@@ -345,6 +345,35 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
 
   const doTrigger = async () => {
     if (!triggerModal) return;
+
+    // Validate required fields before submitting
+    const required: string[] = triggerModal.parameters_schema?.required || [];
+    for (const key of required) {
+      const val = triggerParams[key];
+      const isEmpty =
+        val === undefined || val === null || val === "" ||
+        (Array.isArray(val) && val.length === 0);
+      if (isEmpty) {
+        const schema = (triggerModal.parameters_schema?.properties || {})[key] as any;
+        const rawLookup: string | undefined = schema?.["x-lookup"];
+        if (rawLookup) {
+          const lt = rawLookup.replace("_optional", "").replace("_multi", "");
+          const available = lookupData[lt] || [];
+          if (available.length === 0) {
+            showToast(
+              `⚠️ Could not load ${lt} list — check OpenStack connectivity. Cannot trigger without selecting a ${lt.replace(/s$/, "")}.`,
+              "error"
+            );
+          } else {
+            showToast(`⚠️ Please select a ${key.replace(/_/g, " ")}`, "error");
+          }
+        } else {
+          showToast(`⚠️ Required field "${key.replace(/_/g, " ")}" must not be empty`, "error");
+        }
+        return;
+      }
+    }
+
     setTriggering(true);
     try {
       const result = await apiFetch<Execution>("/api/runbooks/trigger", {
@@ -1792,6 +1821,8 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
                         <option value="">
                           {loading
                             ? "Loading…"
+                            : options.length === 0
+                            ? `⚠ No ${isVms ? "VMs" : "items"} available`
                             : isOptional
                             ? `— All ${isVms ? "VMs" : "projects"} —`
                             : `Select ${isVms ? "a VM" : "a project"}…`}
@@ -1810,6 +1841,16 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
                           ))}
                     </select>
                   );
+                  if (!loading && options.length === 0) {
+                    field = (
+                      <>
+                        {field}
+                        <div className="rb-hint" style={{ color: "#e74c3c" }}>
+                          ⚠ Failed to load {lt} list from OpenStack. Check connectivity and try again.
+                        </div>
+                      </>
+                    );
+                  }
                   }
                 } else if (schema.enum) {
                   field = (

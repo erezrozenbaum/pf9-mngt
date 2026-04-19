@@ -5,7 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.85.10] - 2026-04-19
+## [1.85.11] - 2026-04-20
+
+### Fixed
+- **Tenant portal completely broken in production** — the `tenant-ui` nginx.conf served only static files with an SPA fallback but had no proxy block for `/tenant/*`. Every API call from the tenant portal (login, VM list, branding, restore, etc.) silently returned `index.html` instead of the backend response, breaking the entire portal in production. Added a `location /tenant/ { proxy_pass http://tenant_portal:8010/tenant/; }` block so all API calls are correctly forwarded to the `tenant_portal` backend.
+- **Branding logo not visible in tenant portal** — logos uploaded via the admin UI were stored in the database as admin-API paths (`/api/admin/tenant-portal/branding-logo/<filename>`). The tenant portal (`GET /tenant/branding`) returned these paths unchanged, but the tenant-ui nginx cannot proxy to the admin API, so all `<img src="...">` requests 404'd. `branding_routes.py` now detects legacy-path `logo_url` values at read time, reads the file from the shared `branding_logos` volume, and returns an inline base64 data URL instead — no extra nginx rules or migration required.
+- **Admin UI shows `[object Object]` on API validation errors** — `apiFetch` in `pf9-ui/src/lib/api.ts` cast the FastAPI error body as `{ detail?: string }` and passed it directly to `new Error(err.detail)`. FastAPI 422 validation errors return `detail` as an **array** of `{loc, msg, type}` objects; `new Error([{…}])` creates an Error whose `.message` is `"[object Object]"`. The fix extracts individual `.msg` strings from array details (joined with `'; '`) and falls back to `JSON.stringify` for non-string, non-array shapes — any validation failure now shows a readable message.
+
+### Added (Restore Center — tenant portal)
+- **Network / IP strategy selection** — restore plan dialog now lets tenants choose between `ORIGINAL` (keep the original network) and `MANUAL_IP` (override). When `MANUAL_IP` is selected, a network dropdown (populated from `GET /tenant/restore/networks`) appears, followed by per-NIC IP dropdowns (populated from `GET /tenant/restore/networks/{id}/available-ips`).
+- **Post-restore result panel** — after a restore job reaches a terminal status (`completed`, `failed`, `cancelled`), a result panel surfaces `new_vm_name`, `new_vm_id`, `restore_point_name`, `error_message`, and a JSON detail accordion. Previously there was no in-UI feedback once a job finished.
+- **Email restore summary** — a **Send Summary Email** button in the result panel calls `POST /tenant/restore/jobs/{id}/send-summary-email` to dispatch a structured restore report to any address the tenant enters, without requiring a pre-configured notification preference.
+- **Expandable completed-jobs history** — past restore jobs are now listed in a collapsible section; each row expands inline to show the full result panel, making it easy to review outcomes without navigating away.
+- **Monitoring bootstrap fix** — `_bootstrap_cache_from_api()` in `monitoring/main.py` now runs unconditionally on startup (not only when the hosts list is empty), guaranteeing that the metrics cache is populated from the API even when `PF9_HOSTS` is pre-set.
+
+### Tests
+- **538 passed, 25 skipped** — full suite green (same count as v1.85.10; new backend code paths are covered by existing integration tests and in-container smoke checks).
+
+
 
 ### Fixed
 - **Branding save 422 after logo upload (Kubernetes)** — `BrandingUpsertRequest.safe_url` validator rejected any `logo_url` that did not start with `https?://`, which is exactly the shape the logo-upload endpoint returns (`/api/admin/tenant-portal/branding-logo/{filename}`). Branding saves now raise 422 only for dangerous schemes (`javascript:`, `data:`, bare paths, etc.) while explicitly allowing the server-relative `/api/admin/tenant-portal/branding-logo/` prefix.

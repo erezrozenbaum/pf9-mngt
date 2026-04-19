@@ -117,8 +117,16 @@ export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> 
 
       if (!res.ok) {
         isHttpError = true;
-        const err = await res.json().catch(() => ({})) as { detail?: string };
-        throw new Error(err.detail ?? `API error ${res.status}`);
+        const err = await res.json().catch(() => ({})) as { detail?: unknown };
+        const rawDetail = err.detail;
+        const detailStr = Array.isArray(rawDetail)
+          ? rawDetail.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join('; ')
+          : typeof rawDetail === 'string'
+            ? rawDetail
+            : rawDetail != null
+              ? JSON.stringify(rawDetail)
+              : null;
+        throw new Error(detailStr ?? `API error ${res.status}`);
       }
 
       // Successful response — notify if we recovered from an offline state

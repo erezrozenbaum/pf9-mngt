@@ -46,6 +46,8 @@ _METRICS_CACHE_PATHS = [
 
 # Internal monitoring service URL (same cluster, no auth required — not exposed externally)
 _MONITORING_SERVICE_URL = os.getenv("MONITORING_SERVICE_URL", "http://pf9-monitoring:8001")
+# Internal admin API URL (same cluster)
+_INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://pf9-api:8000")
 
 
 def _load_metrics_cache() -> Optional[Dict[str, Any]]:
@@ -58,21 +60,58 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
             except Exception as exc:
                 logger.warning("Could not read metrics cache %s: %s", path, exc)
 
-    # 2. Fallback: call the monitoring service HTTP API (works in K8s where there is no shared volume)
+    # 2. Try the monitoring service HTTP API (works in K8s where there is no shared volume)
     try:
         import httpx  # already in requirements via restore_routes
         with httpx.Client(timeout=5.0) as client:
             resp = client.get(f"{_MONITORING_SERVICE_URL}/metrics/vms")
             resp.raise_for_status()
             data = resp.json()
-            # Normalise to the same shape the file cache uses: {"vms": [...], "timestamp": ...}
-            # Monitoring service returns {"vms": [...]} (not "data").
-            return {
-                "vms": data.get("vms", data.get("data", [])),
-                "timestamp": data.get("timestamp"),
-            }
+            vms = data.get("data", data.get("vms", []))
+            if vms:
+                return {
+                    "vms": vms,
+                    "timestamp": data.get("timestamp"),
+                }
+            # Monitoring service responded but has no VMs — fall through to API fallback
     except Exception as exc:
         logger.warning("Could not fetch metrics from monitoring service %s: %s", _MONITORING_SERVICE_URL, exc)
+
+    # 3. Fallback: call the main API's DB-backed metrics endpoint.
+    #    This returns allocation-based resource data derived from servers + flavors + hypervisors
+    #    when no Prometheus exporters are configured on the hypervisor nodes.
+    try:
+        import httpx
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(f"{_INTERNAL_API_URL}/monitoring/vm-metrics")
+            resp.raise_for_status()
+            data = resp.json()
+            api_vms = data.get("data", [])
+            if api_vms:
+                # Normalise admin API shape → monitoring cache shape
+                cache_vms = []
+                for v in api_vms:
+                    cache_vms.append({
+                        "vm_id": v.get("vm_id"),
+                        "vm_name": v.get("vm_name"),
+                        "cpu_usage_percent": v.get("cpu_usage_percent"),
+                        "memory_usage_percent": v.get("memory_usage_percent"),
+                        "storage_total_gb": v.get("storage_total_gb"),
+                        "storage_used_gb": v.get("storage_used_gb"),
+                        "storage_usage_percent": v.get("storage_usage_percent"),
+                        "last_updated": data.get("timestamp"),
+                    })
+                logger.info(
+                    "Loaded %d VM metrics from admin API DB fallback (no Prometheus data available)",
+                    len(cache_vms),
+                )
+                return {
+                    "vms": cache_vms,
+                    "timestamp": data.get("timestamp"),
+                    "source": "database",
+                }
+    except Exception as exc:
+        logger.warning("Could not fetch metrics from admin API %s: %s", _INTERNAL_API_URL, exc)
     return None
 
 

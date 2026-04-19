@@ -209,6 +209,76 @@ async def startup_event():
             prometheus_client.hosts = _discovered
     await prometheus_client.start_collection()
 
+    # Always bootstrap the cache from the admin API's DB endpoints at startup.
+    # This seeds the UI with allocation-based metrics immediately.
+    # If Prometheus exporters are reachable, the background collection task
+    # will overwrite the cache with real measured values.
+    # This also handles the case where PF9_HOSTS is configured but the
+    # Prometheus exporters are not installed on the hypervisors.
+    await _bootstrap_cache_from_api()
+
+
+async def _bootstrap_cache_from_api():
+    """Populate the metrics cache from the admin API DB endpoints.
+
+    Called when no Prometheus exporters are reachable.  The admin API's
+    /monitoring/vm-metrics endpoint derives CPU/RAM allocation share from
+    the servers + flavors + hypervisors tables, giving the UI something
+    meaningful to display without requiring node/libvirt exporters.
+    """
+    import httpx as _httpx
+
+    _api_url = os.getenv("API_BASE_URL", "http://pf9-api:8000")
+    try:
+        async with _httpx.AsyncClient(timeout=15.0) as client:
+            vm_r = await client.get(f"{_api_url}/monitoring/vm-metrics")
+        if vm_r.status_code != 200:
+            logger.warning(
+                "Admin API /monitoring/vm-metrics returned HTTP %d — skipping cache bootstrap",
+                vm_r.status_code,
+            )
+            return
+        vm_data = vm_r.json()
+        api_vms = vm_data.get("data", [])
+        if not api_vms:
+            logger.info("Admin API returned 0 VMs — cache bootstrap skipped (no VMs in DB yet)")
+            return
+
+        cache_vms = [
+            {
+                "vm_id": v.get("vm_id"),
+                "vm_name": v.get("vm_name"),
+                "cpu_usage_percent": v.get("cpu_usage_percent"),
+                "memory_usage_percent": v.get("memory_usage_percent"),
+                "storage_total_gb": v.get("storage_total_gb"),
+                "storage_used_gb": v.get("storage_used_gb"),
+                "storage_usage_percent": v.get("storage_usage_percent"),
+                "last_updated": vm_data.get("timestamp"),
+            }
+            for v in api_vms
+        ]
+
+        cache = load_cache_data()
+        cache["vms"] = cache_vms
+        cache["timestamp"] = vm_data.get("timestamp")
+        cache["source"] = "database"
+        cache["summary"]["total_vms"] = len(cache_vms)
+
+        with open("/tmp/cache/metrics_cache.json", "w") as f:  # nosec B108
+            json.dump(cache, f)
+
+        logger.info(
+            "Metrics cache bootstrapped from admin API DB: %d VMs (allocation-based estimates)",
+            len(cache_vms),
+            extra={"context": {"source": "database", "vm_count": len(cache_vms)}},
+        )
+    except Exception as exc:
+        logger.warning(
+            "Could not bootstrap metrics cache from admin API: %s",
+            exc,
+            extra={"context": {"api_url": _api_url}},
+        )
+
 async def shutdown_event():
     """Stop background metrics collection gracefully."""
     await prometheus_client.stop_collection()

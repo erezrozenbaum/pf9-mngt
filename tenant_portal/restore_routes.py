@@ -112,6 +112,8 @@ def _call_admin_plan(
     mode: str = "NEW",
     pre_restore_snapshot: bool = True,
     ip_strategy: str = "NEW_IPS",
+    manual_ips: Optional[dict] = None,
+    network_override_id: Optional[str] = None,
     security_group_ids: Optional[list] = None,
     cleanup_old_storage: bool = False,
     delete_source_snapshot: bool = False,
@@ -122,24 +124,29 @@ def _call_admin_plan(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="restore_not_configured",
         )
+    payload: dict = {
+        "vm_id": vm_id,
+        "snapshot_id": snapshot_id,
+        "project_id": project_id,
+        "region_id": region_id,
+        "created_by": created_by,
+        "new_vm_name": new_vm_name,
+        "mode": mode,
+        "pre_restore_snapshot": pre_restore_snapshot,
+        "ip_strategy": ip_strategy,
+        "security_group_ids": security_group_ids or [],
+        "cleanup_old_storage": cleanup_old_storage,
+        "delete_source_snapshot": delete_source_snapshot,
+    }
+    if manual_ips:
+        payload["manual_ips"] = manual_ips
+    if network_override_id:
+        payload["network_override_id"] = network_override_id
     try:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(
                 f"{INTERNAL_API_URL}/internal/tenant-restore/plan",
-                json={
-                    "vm_id": vm_id,
-                    "snapshot_id": snapshot_id,
-                    "project_id": project_id,
-                    "region_id": region_id,
-                    "created_by": created_by,
-                    "new_vm_name": new_vm_name,
-                    "mode": mode,
-                    "pre_restore_snapshot": pre_restore_snapshot,
-                    "ip_strategy": ip_strategy,
-                    "security_group_ids": security_group_ids or [],
-                    "cleanup_old_storage": cleanup_old_storage,
-                    "delete_source_snapshot": delete_source_snapshot,
-                },
+                json=payload,
                 headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
             )
     except httpx.HTTPError as exc:
@@ -199,6 +206,14 @@ class TenantRestorePlanRequest(BaseModel):
         "NEW_IPS",
         description="IP allocation strategy: NEW_IPS (safest), TRY_SAME_IPS (best-effort), MANUAL_IP",
     )
+    manual_ips: Optional[dict] = Field(
+        None,
+        description="{network_id: \"desired_ip\"} mapping for MANUAL_IP strategy",
+    )
+    network_override_id: Optional[str] = Field(
+        None,
+        description="Override the VM's original network — restore on this network instead",
+    )
     security_group_ids: Optional[list] = Field(
         None,
         description="Security group UUIDs to attach to the restored VM's ports (defaults to project default)",
@@ -210,6 +225,10 @@ class TenantRestorePlanRequest(BaseModel):
     delete_source_snapshot: bool = Field(
         False,
         description="Delete the source snapshot after a successful restore",
+    )
+    notify_email: Optional[str] = Field(
+        None,
+        description="Email address to notify when the restore job completes (success or failure)",
     )
 
 
@@ -269,7 +288,8 @@ def _check_job_ownership(cur, job_id: str, ctx: TenantContext) -> dict:
         """
         SELECT id, project_id, vm_id, vm_name, status, mode,
                created_by, created_at, started_at, finished_at,
-               failure_reason
+               failure_reason, requested_name, restore_point_id,
+               restore_point_name, result_json
         FROM restore_jobs
         WHERE id = %s
           AND project_id = ANY(%s)
@@ -285,16 +305,24 @@ def _check_job_ownership(cur, job_id: str, ctx: TenantContext) -> dict:
 
 def _serialize_job(job: dict) -> dict:
     """Serialize a restore_jobs row for tenant API response (strip internal fields)."""
+    result_json = job.get("result_json") or {}
     out = {
         "job_id": str(job["id"]),
         "vm_id": job.get("vm_id"),
         "vm_name": job.get("vm_name"),
+        "new_vm_name": job.get("requested_name"),
+        "restore_point_id": job.get("restore_point_id"),
+        "restore_point_name": job.get("restore_point_name"),
         "status": job.get("status"),
         "mode": job.get("mode"),
         "created_at": job["created_at"].isoformat() if job.get("created_at") else None,
         "started_at": job["started_at"].isoformat() if job.get("started_at") else None,
         "finished_at": job["finished_at"].isoformat() if job.get("finished_at") else None,
         "failure_reason": job.get("failure_reason"),
+        "result": {
+            "new_vm_id": result_json.get("new_server_id"),
+            "new_ips": result_json.get("new_ips") or [],
+        } if result_json else None,
     }
     return out
 
@@ -441,6 +469,10 @@ async def create_restore_plan(
                 details={"snapshot_id": req.snapshot_id, "mode": mode},
             )
 
+    # Validate ip_strategy — pass through MANUAL_IP to backend
+    allowed_strategies = ("NEW_IPS", "TRY_SAME_IPS", "MANUAL_IP")
+    ip_strategy = req.ip_strategy if req.ip_strategy in allowed_strategies else "NEW_IPS"
+
     # 2. Call admin API to build the full plan (OpenStack quota check, etc.)
     plan = _call_admin_plan(
         vm_id=req.vm_id,
@@ -451,11 +483,27 @@ async def create_restore_plan(
         new_vm_name=req.new_vm_name,
         mode=mode,
         pre_restore_snapshot=req.pre_restore_snapshot,
-        ip_strategy=req.ip_strategy if req.ip_strategy in ("NEW_IPS", "TRY_SAME_IPS") else "NEW_IPS",
+        ip_strategy=ip_strategy,
+        manual_ips=req.manual_ips,
+        network_override_id=req.network_override_id,
         security_group_ids=req.security_group_ids or [],
         cleanup_old_storage=req.cleanup_old_storage if mode == "REPLACE" else False,
         delete_source_snapshot=req.delete_source_snapshot,
     )
+
+    # Build tenant-safe network_plan (strip internal port IDs)
+    raw_net_plan = plan.get("network_plan") or []
+    safe_net_plan = [
+        {
+            "network_id": n.get("network_id"),
+            "network_name": n.get("network_name"),
+            "original_fixed_ip": n.get("original_fixed_ip"),
+            "will_request_fixed_ip": n.get("will_request_fixed_ip", False),
+            "requested_ip": n.get("requested_ip"),
+            "note": n.get("note", ""),
+        }
+        for n in raw_net_plan
+    ]
 
     # 3. Strip internal fields before returning to tenant
     return {
@@ -476,6 +524,7 @@ async def create_restore_plan(
         "new_vm_name": plan.get("new_vm_name"),
         "eligible": plan.get("eligible", True),
         "warnings": plan.get("warnings", []),
+        "network_plan": safe_net_plan,
     }
 
 
@@ -555,7 +604,8 @@ async def list_restore_jobs(
             query = """
                 SELECT id, project_id, vm_id, vm_name, status, mode,
                        created_by, created_at, started_at, finished_at,
-                       failure_reason
+                       failure_reason, requested_name, restore_point_id,
+                       restore_point_name, result_json
                 FROM restore_jobs
                 WHERE project_id = ANY(%s)
                   AND created_by = %s
@@ -690,3 +740,154 @@ async def cancel_restore_job(
         "status": "CANCELED",
         "message": "Cancellation requested.",
     }
+
+
+# ---------------------------------------------------------------------------
+# GET /tenant/restore/networks/{network_id}/available-ips
+# Proxy to admin API — returns free IPs per subnet for tenant network
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/tenant/restore/networks/{network_id}/available-ips",
+    summary="List available IPs on a network (for manual IP restore)",
+)
+async def get_restore_available_ips(
+    network_id: str,
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Proxy the admin API's available-IPs endpoint for a specific network.
+    Used by the tenant restore UI when MANUAL_IP strategy is selected."""
+    if not TENANT_RESTORE_ENABLED:
+        raise HTTPException(503, "restore_disabled")
+    if not INTERNAL_SERVICE_SECRET:
+        raise HTTPException(503, "restore_not_configured")
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(
+                f"{INTERNAL_API_URL}/restore/networks/{network_id}/available-ips",
+                headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
+            )
+    except httpx.HTTPError as exc:
+        logger.error("Admin API call failed (available-ips): %s", exc)
+        raise HTTPException(503, "restore_backend_unavailable")
+    if resp.status_code == 404:
+        raise HTTPException(404, "network_not_found")
+    if resp.status_code != 200:
+        raise HTTPException(502, "upstream_error")
+    return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Request model for send-summary-email
+# ---------------------------------------------------------------------------
+
+class TenantSendEmailRequest(BaseModel):
+    email: str = Field(..., description="Email address to send the restore summary to")
+
+
+# ---------------------------------------------------------------------------
+# POST /tenant/restore/jobs/{job_id}/send-summary-email
+# Send a completion summary to the provided email address
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/tenant/restore/jobs/{job_id}/send-summary-email",
+    summary="Send a restore completion summary by email",
+)
+async def send_restore_summary_email(
+    job_id: str,
+    req: TenantSendEmailRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Send a restore job summary email. Only allowed after the job reaches a terminal state."""
+    if not TENANT_RESTORE_ENABLED:
+        raise HTTPException(503, "restore_disabled")
+
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            job = _check_job_ownership(cur, job_id, ctx)
+
+    terminal = ("SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED")
+    if job["status"] not in terminal:
+        raise HTTPException(400, "job_not_yet_complete")
+
+    result_json = job.get("result_json") or {}
+    new_ips = result_json.get("new_ips") or []
+    new_vm_id = result_json.get("new_server_id", "")
+    new_vm_name = job.get("requested_name") or job.get("vm_name") or ""
+    finished_at = job.get("finished_at")
+    duration = ""
+    if job.get("started_at") and finished_at:
+        secs = int((finished_at - job["started_at"]).total_seconds())
+        duration = f"{secs // 60}m {secs % 60}s"
+
+    succeeded = job["status"] == "SUCCEEDED"
+    subject = (
+        f"Restore completed: {job.get('vm_name', '')} ✓"
+        if succeeded
+        else f"Restore failed: {job.get('vm_name', '')} ✗"
+    )
+
+    if succeeded:
+        body_html = (
+            f"<h2>Restore Completed Successfully</h2>"
+            f"<p><strong>Source VM:</strong> {job.get('vm_name', '')}</p>"
+            f"<p><strong>New VM name:</strong> {new_vm_name}</p>"
+            f"<p><strong>New VM ID:</strong> {new_vm_id}</p>"
+            f"<p><strong>IP(s) assigned:</strong> {', '.join(new_ips) if new_ips else '—'}</p>"
+            f"<p><strong>Duration:</strong> {duration}</p>"
+            f"<p><strong>Mode:</strong> {job.get('mode', '')}</p>"
+            f"<p><strong>Restore point:</strong> {job.get('restore_point_name') or job.get('restore_point_id', '')}</p>"
+        )
+    else:
+        body_html = (
+            f"<h2>Restore {job['status'].title()}</h2>"
+            f"<p><strong>Source VM:</strong> {job.get('vm_name', '')}</p>"
+            f"<p><strong>Status:</strong> {job['status']}</p>"
+            f"<p><strong>Failure reason:</strong> {job.get('failure_reason') or 'Unknown'}</p>"
+            f"<p><strong>Duration:</strong> {duration}</p>"
+            f"<p><strong>Job ID:</strong> {job_id}</p>"
+        )
+
+    # Attempt to send using smtp_helper if available in the same Python env
+    try:
+        import sys, importlib
+        _smtp = importlib.import_module("smtp_helper") if "smtp_helper" in sys.modules else None
+        if not _smtp:
+            # Try direct import (tenant portal shares PYTHONPATH with api/)
+            try:
+                _smtp = importlib.import_module("smtp_helper")
+            except ImportError:
+                _smtp = None
+        if _smtp:
+            _smtp.send_email(req.email, subject, body_html)
+        else:
+            # Fallback: minimal SMTP using env vars
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            smtp_host = os.getenv("SMTP_HOST", "")
+            smtp_port = int(os.getenv("SMTP_PORT", "587"))
+            smtp_user = os.getenv("SMTP_USER", "")
+            smtp_pass = os.getenv("SMTP_PASSWORD", "")
+            smtp_from = os.getenv("SMTP_FROM", smtp_user)
+            if not smtp_host:
+                raise HTTPException(503, "smtp_not_configured")
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = smtp_from
+            msg["To"] = req.email
+            msg.attach(MIMEText(body_html, "html"))
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                if smtp_user and smtp_pass:
+                    server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_from, [req.email], msg.as_string())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to send restore summary email to %s: %s", req.email, exc)
+        raise HTTPException(502, "email_send_failed")
+
+    return {"message": "Summary email sent.", "job_id": job_id}

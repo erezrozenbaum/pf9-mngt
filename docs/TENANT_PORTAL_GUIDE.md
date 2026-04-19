@@ -1,7 +1,7 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.85.7  
-**Last Updated**: April 18, 2026  
+**Version**: 1.85.11  
+**Last Updated**: April 19, 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 
 ---
@@ -227,7 +227,7 @@ Sessions are automatically invalidated when:
 | Field | Type | Notes |
 |-------|------|-------|
 | `company_name` | string | Displayed in the portal title bar and login screen |
-| `logo_url` | URL string or null | HTTPS recommended; displayed top-left in tenant-ui |
+| `logo_url` | URL string or null | HTTPS URL or base64 data URL; displayed top-left in tenant-ui. Logos uploaded via the admin UI's **Upload Image** button are stored as inline data URLs and are self-contained. Legacy file-path values (created before v1.85.9) are automatically converted to data URLs by `GET /tenant/branding` using the shared `branding_logos` volume. |
 | `favicon_url` | URL string or null | Optional; falls back to pf9-mngt default favicon |
 | `primary_color` | `#rrggbb` | Primary UI colour (default `#1A73E8`) |
 | `accent_color` | `#rrggbb` | Accent colour for highlights and buttons (default `#F29900`); validated as hex |
@@ -236,9 +236,9 @@ Sessions are automatically invalidated when:
 | `welcome_message` | string or null | Shown on the portal login/dashboard screen |
 | `footer_text` | string or null | Displayed in the tenant-ui footer |
 
-The branding endpoint (`GET /tenant/branding`) is **unauthenticated** — it must be accessible before login so the login page can display customer branding. The 60-second Redis cache prevents DB pressure during high traffic.
+The branding endpoint (`GET /tenant/branding`) is **unauthenticated** — it must be accessible before login so the login page can display customer branding. The 60-second in-process cache prevents DB pressure during high traffic.
 
-The admin UI's **Branding** sub-tab provides a form with fields for all branding properties. Save with the **Save Branding** button.
+The admin UI's **Branding** sub-tab provides a form with fields for all branding properties plus an **Upload Image** button for logo uploads. Save with the **Save Branding** button.
 
 ---
 
