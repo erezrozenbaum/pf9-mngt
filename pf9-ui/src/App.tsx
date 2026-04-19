@@ -33,6 +33,7 @@ import { RegionSelector } from "./components/RegionSelector";
 import ClusterManagement from "./components/ClusterManagement";
 import TenantPortalTab from "./components/TenantPortalTab";
 import RunbooksTab from "./components/RunbooksTab";
+import InsightsTab from "./components/InsightsTab";
 import DocsTab from "./components/DocsTab";
 import TicketsTab from "./components/TicketsTab";
 import MigrationPlannerTab from "./components/MigrationPlannerTab";
@@ -412,7 +413,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -464,6 +465,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "reports",              label: "📊 Reports",             adminOnly: true, actionStyle: true },
   { id: "resource_management",  label: "🔧 Resources",           adminOnly: true, actionStyle: true },
   { id: "runbooks",              label: "📋 Runbooks",            adminOnly: false, actionStyle: true },
+  { id: "insights",              label: "🔍 Insights",            adminOnly: false, actionStyle: true },
   { id: "docs",                  label: "📚 Docs",               adminOnly: false, actionStyle: false },
   { id: "keypairs",              label: "🔑 Keypairs" },
   { id: "aggregates",            label: "🏗️ Aggregates" },
@@ -3125,6 +3127,7 @@ const App: React.FC = () => {
     "search",
     "resource_management",
     "runbooks",
+    "insights",
     "system_metadata",
     "tickets",
     "my_queue",
@@ -3369,6 +3372,8 @@ const App: React.FC = () => {
             ? "Ops Assistant · full-text search · similarity · smart report suggestions"
             : activeTab === "runbooks"
             ? "Policy-as-code operational runbooks · select and trigger with dry-run"
+            : activeTab === "insights"
+            ? "Operational Intelligence · insights feed · risk & capacity · SLA compliance"
             : activeTab === "docs"
             ? "Operational documentation · guides · runbook references · quick reference"
             : activeTab === "tickets"
@@ -6311,6 +6316,11 @@ const App: React.FC = () => {
           {/* Runbooks */}
           {activeTab === "runbooks" && (
             <RunbooksTab userRole={authUser?.role || ""} />
+          )}
+
+          {/* Insights Feed + SLA */}
+          {activeTab === "insights" && (
+            <InsightsTab userRole={authUser?.role || ""} />
           )}
 
           {/* Docs Viewer */}

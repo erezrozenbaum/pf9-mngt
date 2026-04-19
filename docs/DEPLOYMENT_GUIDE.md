@@ -782,6 +782,24 @@ METERING_RETENTION_DAYS=90
 
 > **Note**: The metering worker runs as a separate container (`pf9_metering_worker`). It collects resource usage, snapshot, restore, API usage, and efficiency metrics from the monitoring service, API, and database. vCPU data is resolved from the flavors table. Configure cost model via the unified multi-category pricing system (flavors auto-synced from system, storage/snapshot/restore/volume/network pricing with hourly + monthly rates). Toggle metering via the 📊 Metering tab in the UI (superadmin only). When `METERING_ENABLED=false`, the worker starts but does not collect data.
 
+#### SLA Worker Configuration (v1.86.0)
+
+```bash
+# Poll interval in seconds — how often the worker re-computes monthly KPIs (default: 14400 = 4h)
+SLA_POLL_INTERVAL=14400
+```
+
+> **Note**: `sla_worker` iterates all tenants with an active SLA commitment, computes uptime %, RTO, RPO, MTTA, MTTR, and backup success rate, upserts the row in `sla_compliance_monthly`, and raises a `sla_risk` operational insight when a KPI is breached or at-risk (within 10% of threshold with ≥ 5 days remaining in the month).
+
+#### Intelligence Worker Configuration (v1.86.0)
+
+```bash
+# Poll interval in seconds — how often the intelligence engines run (default: 900 = 15 min)
+INTELLIGENCE_INTERVAL_SECONDS=900
+```
+
+> **Note**: `intelligence_worker` runs three engine families — Capacity (linear-regression storage trend per tenant), Waste (idle VMs ≥ 6 days, unattached volumes > 14 days, stale snapshots > 60 days), Risk (snapshot gap, health decline, unacknowledged critical drift). All insights are de-duplicated via a partial unique index on `(type, entity_type, entity_id) WHERE status IN ('open','acknowledged','snoozed')`. Resolved conditions auto-suppress existing insights.
+
 #### Multi-Region Worker Configuration
 
 When multiple Platform9 regions are registered, the scheduler and snapshot workers process each region concurrently. These variables control the concurrency and timeout behaviour:

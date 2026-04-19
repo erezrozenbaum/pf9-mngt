@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.86.0] - 2026-04-19
+
+### Added
+
+#### SLA Compliance Tracking
+- **`sla_tier_templates` table** — seeded bronze / silver / gold / custom tiers with uptime, RTO, RPO, MTTA, MTTR, and backup-frequency targets.
+- **`sla_commitments` table** — per-tenant, date-ranged commitment records (FK → projects).
+- **`sla_compliance_monthly` table** — monthly KPI measurements per tenant including uptime_pct, rto_worst_hours, rpo_worst_hours, mtta_hours, mttr_hours, backup_success_pct, breach flags, at-risk flags.
+- **`sla_worker/`** — new background service (4-hour poll by default) that computes all KPIs for every tenant with an active commitment and upserts monthly compliance rows. Breach detection fires an `sla_risk` operational insight.
+- **API: `GET /api/sla/tiers`** — return tier templates ordered gold → bronze.
+- **API: `GET/PUT /api/sla/commitments/{tenant_id}`** — read and upsert active SLA commitment.
+- **API: `GET /api/sla/compliance/{tenant_id}`** — historical monthly compliance (up to 12 months).
+- **API: `GET /api/sla/compliance/summary`** — portfolio-wide current-month status for all tenants.
+- **API: `POST /api/sla/compliance/report/{tenant_id}`** — PDF compliance report (ReportLab): cover, KPI scorecard, 12-month history table, attestation line.
+
+#### Operational Intelligence Feed
+- **`operational_insights` table** — de-duplicated insight feed (type + entity dedup index while status is open/acknowledged/snoozed); severity, metadata JSONB, full lifecycle status (open → acknowledged / snoozed → resolved).
+- **`intelligence_worker/`** — new background service (15-minute poll) running three engine families:
+  - **Capacity engine** — linear-regression storage trend per tenant; fires at critical / high / medium when projected to hit 90 % quota in ≤ 30 days.
+  - **Waste engine** — idle VMs (≥ 6 days idle/poor efficiency), unattached volumes (> 14 days), stale snapshots (> 60 days, ≥ 3 per project).
+  - **Risk engine** — snapshot gap (servers with volumes but no snapshot > 7 days), health-score decline (≥ 15-point drop), unacknowledged critical drift events (< 48 h old).
+- **API: `GET /api/intelligence/insights`** — filterable, paginated list (status, severity, type, entity_type, tenant_id).
+- **API: `GET /api/intelligence/insights/summary`** — count by severity and type for dashboard widget.
+- **API: `GET /api/intelligence/insights/{id}`** — single insight detail.
+- **API: `POST /api/intelligence/insights/{id}/acknowledge`** — set status = acknowledged, record actor and timestamp.
+- **API: `POST /api/intelligence/insights/{id}/snooze`** — snooze until a future datetime.
+- **API: `POST /api/intelligence/insights/{id}/resolve`** — manually resolve.
+- **API: `GET /api/intelligence/insights/entity/{entity_type}/{entity_id}`** — all insights for a specific entity.
+
+#### UI
+- **Insights tab** (`🔍 Insights`) — three sub-views: Insights Feed (filterable table with ack / snooze / resolve actions + pagination), Risk & Capacity (pivoted by entity with worst-severity highlight), SLA Summary (portfolio table with tier badge and per-KPI columns).
+- **Intelligence Insights dashboard widget** — severity pill grid on the landing dashboard with a direct link to the Insights tab.
+- RBAC: `intelligence:read` (viewer+), `intelligence:write` (admin+), `sla:read` (viewer+), `sla:write` (admin+).
+
+### Infrastructure
+- `sla_worker` and `intelligence_worker` added to `docker-compose.yml` (dev) and `docker-compose.prod.yml` (prod image overrides).
+- Helm templates `k8s/helm/pf9-mngt/templates/workers/sla-worker.yaml` and `intelligence-worker.yaml` added.
+- `values.yaml` updated with `slaWorker` and `intelligenceWorker` sections.
+- Migration files: `db/migrate_v1_85_0_sla.sql` and `db/migrate_v1_85_0_intelligence.sql`.
+
+### Tests
+- `tests/test_sla.py` — SLA API tests (tiers, summary, auth guard, 404 for unknown tenant).
+- `tests/test_intelligence.py` — Intelligence API tests (list, summary, filter, lifecycle ack→snooze→resolve, entity endpoint, auth guard).
+
 ## [1.85.12] - 2026-04-19
 
 ### Fixed

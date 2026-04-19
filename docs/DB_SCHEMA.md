@@ -636,6 +636,96 @@ CREATE TABLE runbook_project_tags (
 );
 ```
 
+---
+
+## Intelligence & SLA (v1.86.0)
+
+### operational_insights
+De-duplicated operational insight feed populated by the `intelligence_worker` and `sla_worker`.
+```sql
+CREATE TABLE operational_insights (
+    id              BIGSERIAL PRIMARY KEY,
+    type            TEXT NOT NULL,           -- capacity_storage | waste_idle_vm | waste_unattached_volume |
+                                             --   waste_old_snapshots | risk_snapshot_gap | risk_health_decline |
+                                             --   risk_unack_drift | sla_risk
+    severity        TEXT NOT NULL,           -- critical | high | medium | low
+    entity_type     TEXT NOT NULL,           -- tenant | vm | volume | snapshot | project
+    entity_id       TEXT NOT NULL,
+    entity_name     TEXT,
+    title           TEXT NOT NULL,
+    message         TEXT NOT NULL,
+    metadata        JSONB NOT NULL DEFAULT '{}',
+    status          TEXT NOT NULL DEFAULT 'open',  -- open | acknowledged | snoozed | resolved | suppressed
+    acknowledged_by TEXT,
+    acknowledged_at TIMESTAMPTZ,
+    snooze_until    TIMESTAMPTZ,
+    resolved_at     TIMESTAMPTZ,
+    detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- De-duplication: only one active insight per (type, entity_type, entity_id)
+CREATE UNIQUE INDEX idx_insights_active_dedup
+    ON operational_insights (type, entity_type, entity_id)
+    WHERE status IN ('open','acknowledged','snoozed');
+```
+
+### sla_tier_templates
+Pre-defined SLA tier templates (bronze / silver / gold / custom).
+```sql
+CREATE TABLE sla_tier_templates (
+    tier                TEXT PRIMARY KEY,    -- bronze | silver | gold | custom
+    display_name        TEXT NOT NULL,
+    uptime_pct          NUMERIC(6,3),        -- e.g. 99.9
+    rto_hours           NUMERIC(8,2),        -- Recovery Time Objective
+    rpo_hours           NUMERIC(8,2),        -- Recovery Point Objective
+    mtta_hours          NUMERIC(8,2),        -- Mean Time To Acknowledge
+    mttr_hours          NUMERIC(8,2),        -- Mean Time To Resolve
+    backup_freq_hours   NUMERIC(8,2)         -- Max hours between backups
+);
+```
+
+### sla_commitments
+Per-tenant SLA commitment with date range (NULL `effective_to` = currently active).
+```sql
+CREATE TABLE sla_commitments (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    tier            TEXT NOT NULL REFERENCES sla_tier_templates(tier),
+    uptime_pct      NUMERIC(6,3),
+    rto_hours       NUMERIC(8,2),
+    rpo_hours       NUMERIC(8,2),
+    mtta_hours      NUMERIC(8,2),
+    mttr_hours      NUMERIC(8,2),
+    backup_freq_hours NUMERIC(8,2),
+    effective_from  DATE NOT NULL DEFAULT CURRENT_DATE,
+    effective_to    DATE,
+    notes           TEXT,
+    created_by      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, effective_from)
+);
+```
+
+### sla_compliance_monthly
+Monthly SLA KPI measurements per tenant. `region_id = ''` (empty string) is the all-region aggregate row.
+```sql
+CREATE TABLE sla_compliance_monthly (
+    tenant_id           TEXT NOT NULL,
+    month               DATE NOT NULL,           -- First day of the month
+    region_id           TEXT NOT NULL DEFAULT '', -- '' = all-region aggregate
+    uptime_pct          NUMERIC(6,3),
+    rto_worst_hours     NUMERIC(8,2),
+    rpo_worst_hours     NUMERIC(8,2),
+    mtta_hours          NUMERIC(8,2),
+    mttr_hours          NUMERIC(8,2),
+    backup_success_pct  NUMERIC(6,3),
+    breached_fields     TEXT[],                  -- e.g. ARRAY['uptime_pct','rto_worst_hours']
+    at_risk_fields      TEXT[],
+    computed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, month, region_id)
+);
+```
+
 ### tenant_cp_view
 Safe projection of `pf9_control_planes` — hides `username`, `password_enc`, and internal credentials. Grants `SELECT` to `tenant_portal_role`.
 ```sql

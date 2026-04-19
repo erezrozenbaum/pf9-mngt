@@ -453,6 +453,32 @@ workers:
         cpu: "100m"
         memory: "128Mi"
 
+  slaWorker:
+    image:
+      repository: pf9-mngt-sla-worker
+      tag: ""
+    pollInterval: "14400"
+    resources:
+      limits:
+        cpu: "250m"
+        memory: "128Mi"
+      requests:
+        cpu: "25m"
+        memory: "32Mi"
+
+  intelligenceWorker:
+    image:
+      repository: pf9-mngt-intelligence-worker
+      tag: ""
+    intervalSeconds: "900"
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+
 # ---------------------------------------------------------------------------
 # Reports shared storage (RVTools Excel exports — shared between API and scheduler)
 # ---------------------------------------------------------------------------

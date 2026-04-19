@@ -1,0 +1,519 @@
+/*
+ * InsightsTab.tsx  —  Operational Intelligence + SLA feed
+ * =========================================================
+ * Views:
+ *   1. Insights Feed — filterable list of active insights with ack/snooze/resolve actions
+ *   2. Risk & Capacity — pivot table: risk insights by project, capacity forecast by tenant
+ *   3. SLA Summary    — portfolio-wide SLA compliance at a glance
+ *
+ * v1.85.0
+ */
+import { useState, useEffect, useCallback } from "react";
+import { apiFetch } from "../lib/api";
+import "../styles/InsightsTab.css";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface Insight {
+  id: number;
+  type: string;
+  severity: string;
+  entity_type: string;
+  entity_id: string;
+  entity_name?: string;
+  title: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  status: string;
+  acknowledged_by?: string;
+  acknowledged_at?: string;
+  snooze_until?: string;
+  resolved_at?: string;
+  detected_at: string;
+  last_seen_at: string;
+}
+
+interface InsightSummary {
+  by_severity: { critical: number; high: number; medium: number; low: number };
+  by_type: { type: string; count: number }[];
+  total_open: number;
+}
+
+interface SlaSummaryRow {
+  project_id: string;
+  project_name: string;
+  tier?: string;
+  uptime_pct?: number;
+  rto_worst_hours?: number;
+  rpo_worst_hours?: number;
+  backup_success_pct?: number;
+  overall_status: string;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const TYPE_ICONS: Record<string, string> = {
+  capacity_storage:      "💾",
+  waste_idle_vm:         "🖥️",
+  waste_unattached_volume: "📦",
+  waste_old_snapshots:   "📸",
+  risk_snapshot_gap:     "⚠️",
+  risk_health_decline:   "📉",
+  risk_unack_drift:      "🔀",
+  sla_risk:              "📋",
+};
+
+function typeIcon(type: string): string {
+  return TYPE_ICONS[type] ?? "🔔";
+}
+
+function fmtTs(iso?: string): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString();
+}
+
+function sevClass(sev: string): string {
+  return `sev-badge sev-${sev}`;
+}
+
+function statusClass(s: string): string {
+  return `status-badge status-${s}`;
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+interface InsightsTabProps {
+  userRole?: string;
+}
+
+type InnerTab = "feed" | "risk" | "sla";
+
+export default function InsightsTab({ userRole }: InsightsTabProps) {
+  const [innerTab, setInnerTab] = useState<InnerTab>("feed");
+
+  // Feed state
+  const [insights, setInsights]   = useState<Insight[]>([]);
+  const [summary, setSummary]     = useState<InsightSummary | null>(null);
+  const [total, setTotal]         = useState(0);
+  const [page, setPage]           = useState(1);
+  const PAGE_SIZE = 50;
+
+  // Filters
+  const [filterStatus,   setFilterStatus]   = useState("");
+  const [filterSeverity, setFilterSeverity] = useState("");
+  const [filterType,     setFilterType]     = useState("");
+
+  // SLA Summary
+  const [slaSummary, setSlaSummary] = useState<SlaSummaryRow[]>([]);
+  const [slaLoading, setSlaLoading] = useState(false);
+
+  // Snooze modal
+  const [snoozeTarget, setSnoozeTarget] = useState<number | null>(null);
+  const [snoozeUntil,  setSnoozeUntil]  = useState("");
+
+  const canWrite = userRole === "admin" || userRole === "superadmin";
+
+  // ------- Fetch insights + summary -------
+
+  const loadInsights = useCallback(async (p: number = 1) => {
+    const params = new URLSearchParams({ page: String(p), page_size: String(PAGE_SIZE) });
+    if (filterStatus)   params.set("status",      filterStatus);
+    if (filterSeverity) params.set("severity",     filterSeverity);
+    if (filterType)     params.set("type",         filterType);
+    const data = await apiFetch<{ insights: Insight[]; total: number }>(
+      `/api/intelligence/insights?${params}`
+    );
+    setInsights(data.insights);
+    setTotal(data.total);
+    setPage(p);
+  }, [filterStatus, filterSeverity, filterType]);
+
+  const loadSummary = useCallback(async () => {
+    const data = await apiFetch<InsightSummary>("/api/intelligence/insights/summary");
+    setSummary(data);
+  }, []);
+
+  const loadSlaSummary = useCallback(async () => {
+    setSlaLoading(true);
+    try {
+      const data = await apiFetch<{ projects: SlaSummaryRow[] }>("/api/sla/compliance/summary");
+      setSlaSummary(data.projects);
+    } finally {
+      setSlaLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadInsights(1); }, [filterStatus, filterSeverity, filterType]);
+  useEffect(() => { loadSummary(); }, []);
+  useEffect(() => { if (innerTab === "sla") loadSlaSummary(); }, [innerTab]);
+
+  // ------- Lifecycle actions -------
+
+  async function doAcknowledge(id: number) {
+    await apiFetch(`/api/intelligence/insights/${id}/acknowledge`, { method: "POST" });
+    loadInsights(page);
+    loadSummary();
+  }
+
+  async function doResolve(id: number) {
+    await apiFetch(`/api/intelligence/insights/${id}/resolve`, { method: "POST" });
+    loadInsights(page);
+    loadSummary();
+  }
+
+  async function doSnooze() {
+    if (!snoozeTarget || !snoozeUntil) return;
+    await apiFetch(`/api/intelligence/insights/${snoozeTarget}/snooze`, {
+      method: "POST",
+      body: JSON.stringify({ snooze_until: snoozeUntil }),
+    });
+    setSnoozeTarget(null);
+    setSnoozeUntil("");
+    loadInsights(page);
+    loadSummary();
+  }
+
+  // ------- Render helpers -------
+
+  function renderSummaryBar() {
+    if (!summary) return null;
+    const { by_severity, total_open } = summary;
+    return (
+      <div className="insights-summary-bar">
+        {(["critical","high","medium","low"] as const).map((s) => (
+          <span
+            key={s}
+            className={`sev-pill ${s}`}
+            style={{ cursor: "pointer" }}
+            onClick={() => setFilterSeverity(filterSeverity === s ? "" : s)}
+          >
+            {s}: {by_severity[s]}
+          </span>
+        ))}
+        <span style={{ marginLeft: "auto", fontSize: "0.82rem", color: "var(--text-secondary,#6b7280)" }}>
+          {total_open} active insight{total_open !== 1 ? "s" : ""}
+        </span>
+      </div>
+    );
+  }
+
+  function renderFeed() {
+    return (
+      <>
+        {renderSummaryBar()}
+        <div className="insights-filters">
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+            <option value="">All statuses</option>
+            <option value="open">Open</option>
+            <option value="acknowledged">Acknowledged</option>
+            <option value="snoozed">Snoozed</option>
+            <option value="resolved">Resolved</option>
+          </select>
+          <select value={filterSeverity} onChange={(e) => setFilterSeverity(e.target.value)}>
+            <option value="">All severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+            <option value="">All types</option>
+            <option value="capacity_storage">Capacity</option>
+            <option value="waste_idle_vm">Idle VM</option>
+            <option value="waste_unattached_volume">Unattached Volume</option>
+            <option value="waste_old_snapshots">Stale Snapshots</option>
+            <option value="risk_snapshot_gap">Snapshot Gap</option>
+            <option value="risk_health_decline">Health Decline</option>
+            <option value="risk_unack_drift">Unack Drift</option>
+            <option value="sla_risk">SLA Risk</option>
+          </select>
+          {(filterStatus || filterSeverity || filterType) && (
+            <button className="insights-filter-reset" onClick={() => {
+              setFilterStatus(""); setFilterSeverity(""); setFilterType("");
+            }}>
+              Clear filters
+            </button>
+          )}
+        </div>
+
+        <div className="insights-feed">
+          {insights.length === 0 ? (
+            <div className="insights-empty">
+              <div className="insights-empty-icon">✅</div>
+              <p className="insights-empty-text">No insights match your filters.</p>
+            </div>
+          ) : (
+            <table className="insights-table">
+              <thead>
+                <tr>
+                  <th>Severity</th>
+                  <th>Type</th>
+                  <th>Entity</th>
+                  <th>Title</th>
+                  <th>Status</th>
+                  <th>Detected</th>
+                  {canWrite && <th>Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {insights.map((ins) => (
+                  <tr key={ins.id}>
+                    <td><span className={sevClass(ins.severity)}>{ins.severity}</span></td>
+                    <td>
+                      <span className="type-icon">{typeIcon(ins.type)}</span>
+                      <span style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)" }}>
+                        {ins.type.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>
+                        {ins.entity_name || ins.entity_id}
+                      </div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-secondary,#6b7280)" }}>
+                        {ins.entity_type}
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ maxWidth: 280 }}>
+                        <div style={{ fontWeight: 500, fontSize: "0.88rem" }}>{ins.title}</div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)", marginTop: 2 }}>
+                          {ins.message}
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span className={statusClass(ins.status)}>{ins.status}</span>
+                      {ins.snooze_until && (
+                        <div style={{ fontSize: "0.7rem", color: "var(--text-secondary,#6b7280)", marginTop: 2 }}>
+                          until {fmtTs(ins.snooze_until)}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}>
+                      {fmtTs(ins.detected_at)}
+                    </td>
+                    {canWrite && (
+                      <td>
+                        <div className="insight-actions">
+                          {ins.status === "open" && (
+                            <button className="btn-sm primary" onClick={() => doAcknowledge(ins.id)}>
+                              Ack
+                            </button>
+                          )}
+                          {(ins.status === "open" || ins.status === "acknowledged") && (
+                            <button className="btn-sm" onClick={() => setSnoozeTarget(ins.id)}>
+                              Snooze
+                            </button>
+                          )}
+                          {ins.status !== "resolved" && (
+                            <button className="btn-sm" onClick={() => doResolve(ins.id)}>
+                              Resolve
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          {/* Pagination */}
+          {total > PAGE_SIZE && (
+            <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem", justifyContent: "center" }}>
+              <button className="btn-sm" disabled={page === 1} onClick={() => loadInsights(page - 1)}>
+                ← Prev
+              </button>
+              <span style={{ padding: "0.25rem 0.5rem", fontSize: "0.85rem" }}>
+                {page} / {Math.ceil(total / PAGE_SIZE)}
+              </span>
+              <button
+                className="btn-sm"
+                disabled={page * PAGE_SIZE >= total}
+                onClick={() => loadInsights(page + 1)}
+              >
+                Next →
+              </button>
+            </div>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  function renderRisk() {
+    // Filter to risk + capacity insights from current feed (or re-use summary by_type)
+    const riskInsights = insights.filter(
+      (i) => i.type.startsWith("risk_") || i.type.startsWith("capacity_") || i.type.startsWith("waste_")
+    );
+
+    // Group by entity (project)
+    const byEntity: Record<string, Insight[]> = {};
+    for (const ins of riskInsights) {
+      const key = ins.entity_name || ins.entity_id;
+      if (!byEntity[key]) byEntity[key] = [];
+      byEntity[key].push(ins);
+    }
+
+    const rows = Object.entries(byEntity).sort(
+      ([, a], [, b]) => {
+        const maxSev = (arr: Insight[]) => {
+          const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+          return Math.min(...arr.map((i) => order[i.severity] ?? 9));
+        };
+        return maxSev(a) - maxSev(b);
+      }
+    );
+
+    return (
+      <div className="insights-feed">
+        {rows.length === 0 ? (
+          <div className="insights-empty">
+            <div className="insights-empty-icon">✅</div>
+            <p className="insights-empty-text">No active risk or capacity insights.</p>
+          </div>
+        ) : (
+          <table className="insights-table">
+            <thead>
+              <tr>
+                <th>Entity</th>
+                <th>Highest Severity</th>
+                <th>Active Insights</th>
+                <th>Types</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(([entity, arr]) => {
+                const sevOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+                const worst = arr.reduce((w, i) =>
+                  (sevOrder[i.severity] ?? 9) < (sevOrder[w.severity] ?? 9) ? i : w
+                );
+                const types = [...new Set(arr.map((i) => i.type.replace(/_/g, " ")))];
+                return (
+                  <tr key={entity}>
+                    <td style={{ fontWeight: 600 }}>{entity}</td>
+                    <td><span className={sevClass(worst.severity)}>{worst.severity}</span></td>
+                    <td>{arr.length}</td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)" }}>
+                      {types.join(", ")}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  }
+
+  function renderSla() {
+    if (slaLoading) {
+      return <div style={{ padding: "2rem 1.5rem", color: "var(--text-secondary,#6b7280)" }}>Loading SLA summary…</div>;
+    }
+    return (
+      <div className="insights-feed">
+        {slaSummary.length === 0 ? (
+          <div className="insights-empty">
+            <div className="insights-empty-icon">📋</div>
+            <p className="insights-empty-text">No SLA commitments configured.</p>
+          </div>
+        ) : (
+          <table className="insights-table">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Tier</th>
+                <th>Uptime</th>
+                <th>RTO (worst)</th>
+                <th>RPO (worst)</th>
+                <th>Backup success</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {slaSummary.map((row) => (
+                <tr key={row.project_id}>
+                  <td style={{ fontWeight: 600 }}>{row.project_name || row.project_id}</td>
+                  <td>
+                    {row.tier
+                      ? <span className="sla-tier-badge">{row.tier}</span>
+                      : <span style={{ color: "var(--text-secondary,#9ca3af)" }}>—</span>}
+                  </td>
+                  <td>{row.uptime_pct != null ? `${row.uptime_pct.toFixed(2)}%` : "—"}</td>
+                  <td>{row.rto_worst_hours != null ? `${row.rto_worst_hours.toFixed(1)}h` : "—"}</td>
+                  <td>{row.rpo_worst_hours != null ? `${row.rpo_worst_hours.toFixed(1)}h` : "—"}</td>
+                  <td>{row.backup_success_pct != null ? `${row.backup_success_pct.toFixed(1)}%` : "—"}</td>
+                  <td>
+                    <span className={`sla-status-${row.overall_status}`}>
+                      {row.overall_status.replace(/_/g, " ")}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Main render
+  // ---------------------------------------------------------------------------
+
+  return (
+    <div className="insights-tab">
+      {/* Inner tab nav */}
+      <div className="insights-inner-tabs">
+        {(
+          [
+            { id: "feed" as const, label: "🔔 Insights Feed" },
+            { id: "risk" as const, label: "⚠️ Risk & Capacity" },
+            { id: "sla"  as const, label: "📋 SLA Summary" },
+          ] as { id: InnerTab; label: string }[]
+        ).map((t) => (
+          <button
+            key={t.id}
+            className={`insights-inner-tab${innerTab === t.id ? " active" : ""}`}
+            onClick={() => setInnerTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {innerTab === "feed" && renderFeed()}
+      {innerTab === "risk" && renderRisk()}
+      {innerTab === "sla"  && renderSla()}
+
+      {/* Snooze modal */}
+      {snoozeTarget !== null && (
+        <div className="snooze-overlay" onClick={() => setSnoozeTarget(null)}>
+          <div className="snooze-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Snooze insight</h3>
+            <label>Snooze until</label>
+            <input
+              type="datetime-local"
+              value={snoozeUntil}
+              onChange={(e) => setSnoozeUntil(e.target.value)}
+            />
+            <div className="snooze-actions">
+              <button className="btn-sm" onClick={() => setSnoozeTarget(null)}>Cancel</button>
+              <button className="btn-sm primary" onClick={doSnooze} disabled={!snoozeUntil}>
+                Snooze
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
