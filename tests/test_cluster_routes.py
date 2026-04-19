@@ -220,9 +220,15 @@ class TestFernetHelpers(unittest.TestCase):
             pass
 
     def test_decrypt_env_prefix(self):
-        result = _decrypt_password("env:PF9_PASSWORD")
-        # Delegates to secret_helper.read_secret — verify it returns a non-empty string
-        # (exact value depends on which stub was registered first during a combined test run)
+        # _decrypt_password("env:*") delegates to secret_helper.read_secret.
+        # Use patch.dict to guarantee a known stub is active regardless of which
+        # implementation (real or another test's stub) is in sys.modules at
+        # collection time — this was the source of a persistent CI flake.
+        import types as _types
+        _sh = _types.ModuleType("secret_helper")
+        _sh.read_secret = lambda name, env_var=None, default="": "env-prefix-test-password"
+        with patch.dict(sys.modules, {"secret_helper": _sh}):
+            result = _decrypt_password("env:PF9_PASSWORD")
         self.assertIsInstance(result, str)
         self.assertTrue(len(result) > 0, "env: prefix should return a non-empty password from secret_helper")
 
