@@ -137,6 +137,14 @@ jobs:
             context: ./ldap_sync_worker
             dockerfile: ldap_sync_worker/Dockerfile
             platforms: linux/amd64,linux/arm64
+          - service: sla-worker
+            context: ./sla_worker
+            dockerfile: sla_worker/Dockerfile
+            platforms: linux/amd64,linux/arm64
+          - service: intelligence-worker
+            context: ./intelligence_worker
+            dockerfile: intelligence_worker/Dockerfile
+            platforms: linux/amd64,linux/arm64
           - service: tenant-portal
             context: .
             dockerfile: tenant_portal/Dockerfile

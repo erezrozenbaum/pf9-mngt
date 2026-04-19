@@ -661,6 +661,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.86.0 — SLA Compliance Tracking + Operational Intelligence Feed (✅ Complete)
+
+- **SLA Compliance Tracking**: `sla_tier_templates` (bronze/silver/gold/custom), `sla_commitments` (per-tenant date-ranged contracts), `sla_compliance_monthly` (monthly KPI rows: uptime %, RTO, RPO, MTTA, MTTR, backup success). `sla_worker` recomputes KPIs every 4 hours, raises breach/at-risk `sla_risk` insights, and generates ReportLab PDF compliance reports via `POST /api/sla/compliance/report/{tenant_id}`.
+- **Operational Intelligence Feed**: `operational_insights` table with de-duplication index and full lifecycle (open → acknowledged / snoozed → resolved). `intelligence_worker` (15-min poll) runs three engine families: **Capacity** (linear-regression storage trend, fires when quota exhaustion is ≤ 30 days), **Waste** (idle VMs ≥ 6 days, unattached volumes > 14 days, stale snapshots > 60 days), **Risk** (snapshot gap, health-score decline ≥ 15 pts, unacknowledged critical drift < 48 h).
+- **UI — Insights tab** (`🔍 Insights`): three sub-views — Insights Feed (filterable, paginated table with Ack / Snooze / Resolve actions), Risk & Capacity (entity-pivoted table), SLA Summary (portfolio KPI table with tier badge and per-KPI columns).
+- **Dashboard widget**: Intelligence Insights severity pill grid on the landing dashboard; links to the Insights tab.
+- **RBAC**: `intelligence:read` (viewer+), `intelligence:write` (admin+), `sla:read` (viewer+), `sla:write` (admin+).
+- **Infrastructure**: `sla_worker` and `intelligence_worker` added to Docker Compose (dev + prod) and Kubernetes Helm chart. Migrations: `db/migrate_v1_85_0_sla.sql`, `db/migrate_v1_85_0_intelligence.sql`.
+
 ### v1.85.12 — K8s CrashLoopBackOff Hotfix: tenant-ui nginx hostname + monitoring httpx (✅ Complete)
 
 - **`pf9-tenant-ui` CrashLoopBackOff in K8s — fixed**: `nginx.conf` added in v1.85.11 hardcoded `proxy_pass http://tenant_portal:8010` (Docker Compose service name). In Kubernetes the service is `pf9-tenant-portal`, so nginx failed DNS resolution at startup. Fixed with an `envsubst` template: the nginx config now contains `${TENANT_PORTAL_UPSTREAM}` which is substituted at container startup. Dockerfile CMD defaults to `tenant_portal:8010`; the Helm `tenant-ui` Deployment sets `TENANT_PORTAL_UPSTREAM=pf9-tenant-portal:8010`.

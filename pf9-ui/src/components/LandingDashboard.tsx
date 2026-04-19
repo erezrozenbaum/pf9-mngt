@@ -35,6 +35,7 @@ interface DashboardData {
   complianceDrift: any;
   osDistribution: any;
   ticketStats: any;
+  insightSummary: any;
 }
 
 // ---------- Widget registry for the chooser ----------
@@ -53,7 +54,8 @@ type WidgetId =
   | 'trendlines'
   | 'capacityTrends'
   | 'osDistribution'
-  | 'tickets';
+  | 'tickets'
+  | 'insights';
 
 interface WidgetMeta {
   id: WidgetId;
@@ -79,6 +81,7 @@ const WIDGET_REGISTRY: WidgetMeta[] = [
   { id: 'capacityTrends', label: 'Capacity Trends', icon: '📐', description: 'Capacity usage over time', defaultVisible: false },
   { id: 'osDistribution', label: 'OS Distribution', icon: '💻', description: 'VM count by operating system', defaultVisible: true },
   { id: 'tickets', label: 'Support Tickets', icon: '🎫', description: 'Open tickets, SLA breaches & today\'s activity', defaultVisible: true },
+  { id: 'insights', label: 'Intelligence Insights', icon: '🔍', description: 'Active operational insights by severity', defaultVisible: true },
 ];
 
 const STORAGE_KEY_WIDGETS = 'pf9_dashboard_widgets';
@@ -123,6 +126,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
     complianceDrift: null,
     osDistribution: null,
     ticketStats: null,
+    insightSummary: null,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -205,7 +209,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
       ]);
 
       // Batch 3: trends + analytics
-      const [trendlines, tenantRiskHeatmap, capacityTrends, complianceDrift, rvtoolsLastRun, osDistribution, ticketStats] = await Promise.all([
+      const [trendlines, tenantRiskHeatmap, capacityTrends, complianceDrift, rvtoolsLastRun, osDistribution, ticketStats, insightSummary] = await Promise.all([
         safeFetch(`${API_BASE}/dashboard/trendlines`),
         safeFetch(`${API_BASE}/dashboard/tenant-risk-heatmap`),
         safeFetch(`${API_BASE}/dashboard/capacity-trends`),
@@ -213,6 +217,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         safeFetch(`${API_BASE}/dashboard/rvtools-last-run`),
         safeFetch(`${API_BASE}/os-distribution`),
         safeFetch(`${API_BASE}/api/tickets/stats`),
+        safeFetch(`${API_BASE}/api/intelligence/insights/summary`),
       ]);
 
       setData({
@@ -233,6 +238,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         complianceDrift,
         osDistribution,
         ticketStats,
+        insightSummary,
       });
       setLastRefresh(new Date());
       setLastRVToolsRun(rvtoolsLastRun?.last_run ? rvtoolsLastRun : null);
@@ -458,6 +464,41 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
                   style={{marginTop:12, width:'100%', padding:'6px', background:'none', border:'1px solid rgba(128,128,128,0.3)', borderRadius:6, cursor:'pointer', fontSize:'0.85em', opacity:0.8}}
                 >
                   View all tickets →
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Intelligence Insights Widget */}
+        {visibleWidgets.has('insights') && data.insightSummary && (
+          <div className="dashboard-card">
+            <div className="card-header"><h3>🔍 Intelligence Insights</h3></div>
+            <div className="card-body" style={{padding: '16px'}}>
+              <div style={{display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:12}}>
+                {(['critical','high','medium','low'] as const).map((sev) => {
+                  const colors: Record<string, {bg:string; text:string}> = {
+                    critical: {bg:'rgba(220,38,38,0.1)', text:'#dc2626'},
+                    high:     {bg:'rgba(234,88,12,0.1)',  text:'#ea580c'},
+                    medium:   {bg:'rgba(202,138,4,0.1)',  text:'#ca8a04'},
+                    low:      {bg:'rgba(22,163,74,0.1)',  text:'#16a34a'},
+                  };
+                  const c = colors[sev];
+                  const count = (data.insightSummary?.by_severity || {})[sev] ?? 0;
+                  return (
+                    <div key={sev} style={{textAlign:'center', padding:12, background:c.bg, borderRadius:8}}>
+                      <div style={{fontSize:'2em', fontWeight:'bold', color:c.text}}>{count}</div>
+                      <div style={{fontSize:'0.85em', opacity:0.7, textTransform:'capitalize'}}>{sev}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              {onNavigate && (
+                <button
+                  onClick={() => onNavigate('insights')}
+                  style={{marginTop:12, width:'100%', padding:'6px', background:'none', border:'1px solid rgba(128,128,128,0.3)', borderRadius:6, cursor:'pointer', fontSize:'0.85em', opacity:0.8}}
+                >
+                  View all insights →
                 </button>
               )}
             </div>

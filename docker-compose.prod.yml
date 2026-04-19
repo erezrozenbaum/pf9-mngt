@@ -97,6 +97,12 @@ services:
   metering_worker:
     image: ghcr.io/erezrozenbaum/pf9-mngt-metering-worker:${PF9_IMAGE_TAG:-latest}
 
+  sla_worker:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-sla-worker:${PF9_IMAGE_TAG:-latest}
+
+  intelligence_worker:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-intelligence-worker:${PF9_IMAGE_TAG:-latest}
+
   scheduler_worker:
     image: ghcr.io/erezrozenbaum/pf9-mngt-scheduler-worker:${PF9_IMAGE_TAG:-latest}
 

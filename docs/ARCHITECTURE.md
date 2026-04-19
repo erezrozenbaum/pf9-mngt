@@ -142,6 +142,8 @@ This document covers:
 | **scheduler_worker** | PF9 hosts (:9388) | HTTP | Scrape Prometheus node_exporter | — |
 | **scheduler_worker** | pf9_db | TCP/PostgreSQL | Write metrics cache + RVTools inventory | `POSTGRES_USER/PASSWORD` |
 | **search_worker** | pf9_db | TCP/PostgreSQL | Index documents for full-text search | `POSTGRES_USER/PASSWORD` |
+| **sla_worker** | pf9_db | TCP/PostgreSQL | Compute monthly SLA KPIs + breach detection | `POSTGRES_USER/PASSWORD` |
+| **intelligence_worker** | pf9_db | TCP/PostgreSQL | Generate capacity/waste/risk insights | `POSTGRES_USER/PASSWORD` |
 
 ### Key Security Boundary
 

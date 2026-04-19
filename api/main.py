@@ -113,6 +113,12 @@ from docs_routes import router as docs_router
 # Admin: Tenant portal management
 from tenant_portal_routes import router as tenant_portal_admin_router
 
+# SLA Compliance Tracking
+from sla_routes import router as sla_router
+
+# Operational Intelligence Feed
+from intelligence_routes import router as intelligence_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -376,6 +382,8 @@ app.include_router(cluster_router)
 app.include_router(ldap_sync_router)
 app.include_router(docs_router)
 app.include_router(tenant_portal_admin_router)
+app.include_router(sla_router)
+app.include_router(intelligence_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode
 @app.get("/demo-mode")

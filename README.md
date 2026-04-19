@@ -220,6 +220,8 @@ After running Demo Mode you'll find:
 | Tenant Self-Service Portal | ✅ Production |
 | Tenant VM Provisioning (self-service) | ✅ Production |
 | Tenant Network & Security Group Management | ✅ Production |
+| SLA Compliance Tracking | ✅ Production |
+| Operational Intelligence Feed | ✅ Production |
 
 ---
 
@@ -608,7 +610,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🔧 Tenant Portal Bug-Fixes — v1.85.5–v1.85.12
+### � SLA Compliance + Operational Intelligence — v1.86.0
+
+**[v1.86.0](CHANGELOG.md)** — **SLA Compliance Tracking** and **Operational Intelligence Feed**: SLA tier templates (bronze/silver/gold/custom), per-tenant commitments, monthly KPI measurement (uptime %, RTO, RPO, MTTA, MTTR, backup success %), and PDF compliance reports. `sla_worker` computes KPIs every 4 hours; breach detection fires `sla_risk` insights. `intelligence_worker` (15-min poll) runs three engine families — **Capacity** (linear-regression storage trend), **Waste** (idle VMs, unattached volumes, stale snapshots), **Risk** (snapshot gap, health decline, unacknowledged drift). New `🔍 Insights` tab with three sub-views: Insights Feed (ack/snooze/resolve), Risk & Capacity, SLA Summary. Dashboard widget shows insight count by severity.
+
+### �🔧 Tenant Portal Bug-Fixes — v1.85.5–v1.85.12
 
 **[v1.85.12](CHANGELOG.md)** — K8s CrashLoopBackOff hotfix (tenant-ui nginx + monitoring httpx): `pf9-tenant-ui` crashed on v1.85.11 because `nginx.conf` hardcoded `proxy_pass http://tenant_portal:8010` (Docker Compose service name), which fails DNS resolution in Kubernetes (service is `pf9-tenant-portal`). Fixed using an envsubst template — same image works in Docker Compose (default `tenant_portal:8010`) and Kubernetes (`TENANT_PORTAL_UPSTREAM=pf9-tenant-portal:8010` via Helm). `pf9-monitoring` crashed because `_bootstrap_cache_from_api()` imports `httpx` at the function level (outside `try`) but `httpx` was absent from `monitoring/requirements.txt` — CI-built image raised `ModuleNotFoundError` on startup. Added `httpx==0.27.2`. 538 tests, 0 HIGH bandit findings.
 
