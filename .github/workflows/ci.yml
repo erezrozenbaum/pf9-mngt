@@ -313,7 +313,9 @@ jobs:
         # the test runner raises ModuleNotFoundError / AttributeError.
         # tenacity + redis are imported by backup_worker/main.py at module level
         # (added in v1.83.52 for worker resilience / observability).
-        run: pip install pytest-cov pytest-asyncio fastapi pydantic passlib python-jose tenacity redis httpx
+        # python-multipart is required by FastAPI's UploadFile/File for the
+        # branding logo upload endpoint (added in v1.85.9).
+        run: pip install pytest-cov pytest-asyncio fastapi pydantic passlib python-jose tenacity redis httpx python-multipart
 
       - name: Run full test suite with coverage
         env:
