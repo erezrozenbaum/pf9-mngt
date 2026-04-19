@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.85.12-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.86.1-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -609,7 +609,9 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+### 🔧 Kubernetes Hotfix — v1.86.1
 
+**[v1.86.1](CHANGELOG.md)** — K8s CrashLoopBackOff hotfix for `sla-worker` and `intelligence-worker`: Helm `values.yaml` was missing `redis.host` and `redis.port` keys. Both worker Deployments inject `REDIS_HOST`/`REDIS_PORT` via `{{ .Values.redis.host | quote }}` / `{{ .Values.redis.port | quote }}`, which resolved to empty strings when the keys were absent. `int("")` raised `ValueError: invalid literal for int() with base 10: ''` at startup. Fixed by adding `redis.host: pf9-redis` and `redis.port: "6379"` to `values.yaml`. Helm chart version bumped from `1.85.7` to `1.86.1`. 538 tests, 0 HIGH bandit findings.
 ### � SLA Compliance + Operational Intelligence — v1.86.0
 
 **[v1.86.0](CHANGELOG.md)** — **SLA Compliance Tracking** and **Operational Intelligence Feed**: SLA tier templates (bronze/silver/gold/custom), per-tenant commitments, monthly KPI measurement (uptime %, RTO, RPO, MTTA, MTTR, backup success %), and PDF compliance reports. `sla_worker` computes KPIs every 4 hours; breach detection fires `sla_risk` insights. `intelligence_worker` (15-min poll) runs three engine families — **Capacity** (linear-regression storage trend), **Waste** (idle VMs, unattached volumes, stale snapshots), **Risk** (snapshot gap, health decline, unacknowledged drift). New `🔍 Insights` tab with three sub-views: Insights Feed (ack/snooze/resolve), Risk & Capacity, SLA Summary. Dashboard widget shows insight count by severity.
@@ -749,4 +751,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Tests**: 538 passed, 25 skipped | **Version**: 1.85.12 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Tests**: 538 passed, 27 skipped | **Version**: 1.86.1 | **Last Updated**: April 2026

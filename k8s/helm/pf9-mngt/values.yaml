@@ -90,6 +90,8 @@ jwt:
 
 redis:
   url: redis://pf9-redis:6379/0
+  host: pf9-redis
+  port: "6379"
   cacheEnabled: "true"
   cacheTTLSeconds: "60"
 
