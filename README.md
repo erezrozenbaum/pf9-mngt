@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.86.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.86.2-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -609,6 +609,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+### 🔧 SLA Summary Hotfix — v1.86.2
+
+**[v1.86.2](CHANGELOG.md)** — `InsightsTab` SLA Summary fix: API returns `{ summary, month }` but the component consumed `data.projects` (undefined), crashing on `.length`. Also corrected `SlaSummaryRow` interface and table columns to match the actual summary endpoint response (`tenant_id`/`tenant_name`/`breach_fields`/`at_risk_fields` instead of KPI values). 524 tests, 0 HIGH bandit findings.
+
 ### 🔧 Kubernetes Hotfix — v1.86.1
 
 **[v1.86.1](CHANGELOG.md)** — K8s CrashLoopBackOff hotfix for `sla-worker` and `intelligence-worker`: Helm `values.yaml` was missing `redis.host` and `redis.port` keys. Both worker Deployments inject `REDIS_HOST`/`REDIS_PORT` via `{{ .Values.redis.host | quote }}` / `{{ .Values.redis.port | quote }}`, which resolved to empty strings when the keys were absent. `int("")` raised `ValueError: invalid literal for int() with base 10: ''` at startup. Fixed by adding `redis.host: pf9-redis` and `redis.port: "6379"` to `values.yaml`. Helm chart version bumped from `1.85.7` to `1.86.1`. 538 tests, 0 HIGH bandit findings.
@@ -751,4 +755,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Tests**: 538 passed, 27 skipped | **Version**: 1.86.1 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Tests**: 524 passed, 22 skipped | **Version**: 1.86.2 | **Last Updated**: April 2026

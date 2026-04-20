@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.86.2] - 2026-04-19
+
+### Fixed
+
+- **SLA Summary blank page crash** — `InsightsTab.tsx` called `data.projects` on the `/api/sla/compliance/summary` response, but the API returns `{ summary: [...], month: "..." }`. Accessing `.projects` on that object yielded `undefined`, which was stored in state and then crashed on `.length`. Fixed: use `data.summary ?? []` and updated the type annotation to match.
+- **`SlaSummaryRow` interface field name mismatch** — the interface used `project_id`, `project_name`, `uptime_pct`, `rto_worst_hours`, `rpo_worst_hours`, `backup_success_pct`. The summary endpoint actually returns `tenant_id`, `tenant_name`, `tier`, `breach_fields`, `at_risk_fields`, `overall_status` (per-KPI values are only in the per-tenant detail endpoint). Updated interface and table render to match the actual API shape. Table columns changed from Uptime/RTO/RPO/Backup to Breached KPIs/At-Risk KPIs.
+
 ## [1.86.1] - 2026-04-19
 
 ### Fixed
