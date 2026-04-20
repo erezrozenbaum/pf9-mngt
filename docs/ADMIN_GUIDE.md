@@ -661,6 +661,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.87.1 — Intelligence 500 Hotfix (✅ Complete)
+
+- All `GET /api/intelligence/` endpoints returned HTTP 500 after v1.87.0 deployed to Kubernetes
+- Root cause: `# nosec B608` bandit suppression comments were inside the f-string triple-quote body, sending `#` as SQL to PostgreSQL
+- Fix: moved suppression comments to the `cur.execute(` line; f-string starts on the next line
+- No schema changes, no migration required
+- 524 unit tests pass, 0 HIGH bandit findings
+
 ### v1.87.0 — Department Workspaces + SLA Tier Modal Fixes (✅ Complete)
 
 - **Workspace selector added to Insights tab**: Four context-aware workspace buttons (Global / Support / Engineering / Operations) appear above the insight feed. Each workspace filters to its relevant insight types (Support: drift/snapshot/incident/risk; Engineering: capacity/waste/anomaly; Operations: risk/health) and applies a default severity preset. Workspace selection persists in `localStorage`. The `operator` role defaults to Engineering on first load; all other roles default to Global.

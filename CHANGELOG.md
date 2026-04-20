@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.87.1] - 2026-04-20
+
+### Fixed
+
+- **Intelligence endpoints 500 on all requests** — `# nosec B608` suppression comments were placed inline inside the triple-quoted f-strings (e.g. `f"""  # nosec B608 ...\n SELECT ...`). Python triple-quoted strings include everything before the closing `"""`, so the comment text was sent as part of the SQL query to PostgreSQL. PostgreSQL does not recognise `#` as a comment character and raised a syntax error on every request, causing all `GET /api/intelligence/insights`, `GET /api/intelligence/insights/summary`, and `GET /api/intelligence/insights/entity` calls to return HTTP 500. Fixed by moving `# nosec B608` to the `cur.execute(` call line and starting the f-string on the next line.
+
+---
+
 ## [1.87.0] - 2026-04-20
 
 ### Added

@@ -134,7 +134,8 @@ def list_insights(
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(f"""  # nosec B608 - f-string interpolates only hardcoded WHERE fragments; all user values are parameterized
+            cur.execute(
+                f"""
                 SELECT *, COUNT(*) OVER() AS total_count
                 FROM operational_insights
                 {where}
@@ -143,7 +144,7 @@ def list_insights(
                                    WHEN 'medium' THEN 3 ELSE 4 END,
                     last_seen_at DESC
                 LIMIT %s OFFSET %s
-            """, params + [page_size, offset])
+                """, params + [page_size, offset])
             rows = cur.fetchall()
 
     total = rows[0]["total_count"] if rows else 0
@@ -166,7 +167,8 @@ def insights_summary(
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(f"""  # nosec B608 - type_clause is either empty or a fixed parameterized fragment; dept_types passed via %s
+            cur.execute(
+                f"""
                 SELECT
                     severity,
                     COUNT(*) AS count
@@ -174,17 +176,18 @@ def insights_summary(
                 WHERE status IN ('open','acknowledged','snoozed')
                 {type_clause}
                 GROUP BY severity
-            """, base_params)
+                """, base_params)
             by_severity = {r["severity"]: r["count"] for r in cur.fetchall()}
 
-            cur.execute(f"""  # nosec B608 - same: type_clause is a fixed parameterized fragment or empty string
+            cur.execute(
+                f"""
                 SELECT type, COUNT(*) AS count
                 FROM operational_insights
                 WHERE status IN ('open','acknowledged','snoozed')
                 {type_clause}
                 GROUP BY type
                 ORDER BY count DESC
-            """, base_params)
+                """, base_params)
             by_type = [{"type": r["type"], "count": r["count"]} for r in cur.fetchall()]
 
     return {
@@ -330,7 +333,8 @@ def get_entity_insights(
     )
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(f"""  # nosec B608 - status_clause is one of two hardcoded SQL strings; entity values are parameterized
+            cur.execute(
+                f"""
                 SELECT * FROM operational_insights
                 WHERE entity_type = %s AND entity_id = %s
                 {status_clause}
@@ -338,7 +342,7 @@ def get_entity_insights(
                     CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2
                                    WHEN 'medium' THEN 3 ELSE 4 END,
                     detected_at DESC
-            """, (entity_type, entity_id))
+                """, (entity_type, entity_id))
             rows = cur.fetchall()
 
     return {"insights": [_row_to_insight(dict(r)) for r in rows]}
