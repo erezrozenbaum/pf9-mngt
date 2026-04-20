@@ -42,15 +42,11 @@ interface InsightSummary {
 }
 
 interface SlaSummaryRow {
-  project_id: string;
-  project_name: string;
+  tenant_id: string;
+  tenant_name: string;
   tier?: string;
-  uptime_pct?: number;
-  rto_worst_hours?: number;
-  rpo_worst_hours?: number;
-  backup_success_pct?: number;
-  overall_status: string;
-}
+  breach_fields: string[];
+  at_risk_fields: string[]
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -142,8 +138,8 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   const loadSlaSummary = useCallback(async () => {
     setSlaLoading(true);
     try {
-      const data = await apiFetch<{ projects: SlaSummaryRow[] }>("/api/sla/compliance/summary");
-      setSlaSummary(data.projects);
+      const data = await apiFetch<{ summary: SlaSummaryRow[]; month: string }>("/api/sla/compliance/summary");
+      setSlaSummary(data.summary ?? []);
     } finally {
       setSlaLoading(false);
     }
@@ -429,28 +425,36 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
           <table className="insights-table">
             <thead>
               <tr>
-                <th>Project</th>
+                <th>Tenant</th>
                 <th>Tier</th>
-                <th>Uptime</th>
-                <th>RTO (worst)</th>
-                <th>RPO (worst)</th>
-                <th>Backup success</th>
+                <th>Tenant</th>
+                <th>Tier</th>
+                <th>Breached KPIs</th>
+                <th>At-Risk KPIs</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
               {slaSummary.map((row) => (
-                <tr key={row.project_id}>
-                  <td style={{ fontWeight: 600 }}>{row.project_name || row.project_id}</td>
+                <tr key={row.tenant_id}>
+                  <td style={{ fontWeight: 600 }}>{row.tenant_name || row.tenant_id}</td>
                   <td>
-                    {row.tier
+                    {row.tier && row.tier !== "none"
                       ? <span className="sla-tier-badge">{row.tier}</span>
                       : <span style={{ color: "var(--text-secondary,#9ca3af)" }}>—</span>}
                   </td>
-                  <td>{row.uptime_pct != null ? `${row.uptime_pct.toFixed(2)}%` : "—"}</td>
-                  <td>{row.rto_worst_hours != null ? `${row.rto_worst_hours.toFixed(1)}h` : "—"}</td>
-                  <td>{row.rpo_worst_hours != null ? `${row.rpo_worst_hours.toFixed(1)}h` : "—"}</td>
-                  <td>{row.backup_success_pct != null ? `${row.backup_success_pct.toFixed(1)}%` : "—"}</td>
+                  <td>
+                    {row.breach_fields.length > 0
+                      ? <span style={{ color: "var(--color-danger,#ef4444)" }}>{row.breach_fields.join(", ")}</span>
+                      : <span style={{ color: "var(--text-secondary,#9ca3af)" }}>none</span>}
+                  </td>
+                  <td>
+                    {row.at_risk_fields.length > 0
+                      ? <span style={{ color: "var(--color-warning,#f59e0b)" }}>{row.at_risk_fields.join(", ")}</span>
+                      : <span style={{ color: "var(--text-secondary,#9ca3af)" }}>none</span>}
+                  in(", ")}</span>
+                      : <span style={{ color: "var(--text-secondary,#9ca3af)" }}>none</span>}
+                  </td>
                   <td>
                     <span className={`sla-status-${row.overall_status}`}>
                       {row.overall_status.replace(/_/g, " ")}

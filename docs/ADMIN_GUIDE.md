@@ -661,6 +661,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.86.2 — SLA Summary crash + interface field-name mismatch (✅ Complete)
+
+- **SLA Summary blank page crash — fixed**: `InsightsTab.tsx` `loadSlaSummary` consumed `data.projects` on the `/api/sla/compliance/summary` response, but the endpoint returns `{ summary: [...], month: "..." }`. Accessing `.projects` returned `undefined`, which was stored in state; the render then crashed with `TypeError: Cannot read properties of undefined (reading 'length')`. Fixed: use `data.summary ?? []` and updated the inline type annotation to `{ summary: SlaSummaryRow[]; month: string }`.
+- **`SlaSummaryRow` interface and table columns misaligned with API — fixed**: The interface declared `project_id`, `project_name`, `uptime_pct`, `rto_worst_hours`, `rpo_worst_hours`, `backup_success_pct` — none of which exist in the summary response. The summary endpoint returns `tenant_id`, `tenant_name`, `tier`, `breach_fields: string[]`, `at_risk_fields: string[]`, `overall_status` (per-KPI numeric values are only in the per-tenant detail endpoint `/compliance/{tenant_id}`). Updated `SlaSummaryRow` interface and the table render: columns changed from Uptime / RTO / RPO / Backup to **Breached KPIs** / **At-Risk KPIs**, row key changed from `row.project_id` to `row.tenant_id`.
+
 ### v1.86.1 — Kubernetes Hotfix: Redis env vars in Helm values (✅ Complete)
 
 - **`pf9-sla-worker` CrashLoopBackOff + `pf9-intelligence-worker` Error in K8s — fixed**: Both worker Helm Deployments inject `REDIS_HOST` and `REDIS_PORT` from `{{ .Values.redis.host | quote }}` / `{{ .Values.redis.port | quote }}`. The keys `redis.host` and `redis.port` were absent from `values.yaml` (only `redis.url` was defined), so both env vars arrived as empty strings in the container. Each worker's `main.py` calls `int(os.getenv("REDIS_PORT", "6379"))` — when the env var is set but empty, `os.getenv` returns `""` rather than the default, raising `ValueError: invalid literal for int() with base 10: ''` at startup. Fixed by adding `redis.host: pf9-redis` and `redis.port: "6379"` to `values.yaml`. Root cause: Docker Compose injects `REDIS_HOST`/`REDIS_PORT` from the `.env` file (so local dev always worked); Kubernetes injects them exclusively via Helm values.
