@@ -241,38 +241,9 @@ def upsert_commitment(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/sla/compliance/{tenant_id}
-# ---------------------------------------------------------------------------
-
-@router.get("/compliance/{tenant_id}")
-def get_compliance_history(
-    tenant_id: str,
-    months: int = Query(12, ge=1, le=36),
-    region_id: Optional[str] = Query(None),
-    _user: User = Depends(require_permission("sla", "read")),
-):
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            args = [tenant_id, months]
-            region_filter = ""
-            if region_id is not None:
-                region_filter = "AND region_id = %s"
-                args.append(region_id)
-            cur.execute(f"""
-                SELECT *
-                FROM sla_compliance_monthly
-                WHERE tenant_id = %s
-                ORDER BY month DESC
-                LIMIT %s
-                {region_filter}
-            """, args)
-            rows = cur.fetchall()
-
-    return {"history": [_row_to_compliance(dict(r)) for r in rows]}
-
-
-# ---------------------------------------------------------------------------
 # GET /api/sla/compliance/summary — all tenants, current month
+# NOTE: must be registered BEFORE /compliance/{tenant_id} or FastAPI will
+#       match "summary" as a tenant_id path parameter.
 # ---------------------------------------------------------------------------
 
 @router.get("/compliance/summary")
@@ -323,6 +294,38 @@ def get_compliance_summary(
         })
 
     return {"summary": results, "month": str(month_start)}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/sla/compliance/{tenant_id} — per-tenant monthly history
+# NOTE: registered AFTER /compliance/summary to avoid path-param shadowing.
+# ---------------------------------------------------------------------------
+
+@router.get("/compliance/{tenant_id}")
+def get_compliance_history(
+    tenant_id: str,
+    months: int = Query(12, ge=1, le=36),
+    region_id: Optional[str] = Query(None),
+    _user: User = Depends(require_permission("sla", "read")),
+):
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            args = [tenant_id, months]
+            region_filter = ""
+            if region_id is not None:
+                region_filter = "AND region_id = %s"
+                args.append(region_id)
+            cur.execute(f"""
+                SELECT *
+                FROM sla_compliance_monthly
+                WHERE tenant_id = %s
+                ORDER BY month DESC
+                LIMIT %s
+                {region_filter}
+            """, args)
+            rows = cur.fetchall()
+
+    return {"history": [_row_to_compliance(dict(r)) for r in rows]}
 
 
 # ---------------------------------------------------------------------------

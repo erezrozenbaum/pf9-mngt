@@ -661,6 +661,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.88.1 — SLA Summary Route Hotfix + Insights Feed Tenant Column (✅ Complete)
+
+- **SLA Summary blank bug fixed**: `GET /api/sla/compliance/summary` was being matched by the parameterised `GET /api/sla/compliance/{tenant_id}` route registered earlier in the router. FastAPI evaluates routes in registration order — the literal segment `summary` was treated as a `tenant_id` value, returning an empty compliance history. Fixed by registering `/compliance/summary` before `/compliance/{tenant_id}`.
+- **Insights Feed Tenant column**: Added Tenant/Project column to the Insights Feed table (sourced from `metadata.project` / `metadata.tenant_name`), consistent with the same column in Risk & Capacity. No DB migration required.
+
 ### v1.88.0 — Phase 2 Intelligence: Recommendations, Auto-Tickets, Bulk Actions (✅ Complete)
 
 - **Insight recommendations**: `insight_recommendations` table stores actionable recommendations attached to open insights
