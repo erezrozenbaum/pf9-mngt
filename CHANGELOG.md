@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.87.2] - 2026-04-20
+
+### Fixed
+
+- **SLA tier assignment 500 (Internal server error)** — `PUT /api/sla/commitments/{tenant_id}` raised `AttributeError: 'dict' object has no attribute 'username'` because `require_permission()` returns `user.model_dump()` (a dict) but `sla_routes.py` accessed it as `user.username`. Fixed by using `user["username"]`.
+- **Intelligence write endpoints 500 (acknowledge / snooze / resolve)** — same root cause in `intelligence_routes.py`; all three write handlers used `user.username` on the dict returned by `require_permission`. Fixed to `user["username"]`.
+- No schema changes, no migration required; 524 unit tests pass.
+
+---
+
 ## [1.87.1] - 2026-04-20
 
 ### Fixed

@@ -661,6 +661,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.87.2 — SLA & Intelligence Write 500 Hotfix (✅ Complete)
+
+- `PUT /api/sla/commitments/{tenant_id}` and intelligence write endpoints (acknowledge/snooze/resolve) returned HTTP 500
+- Root cause: `require_permission()` returns a dict (`user.model_dump()`) but handlers used attribute access `user.username`
+- Fix: changed to `user["username"]` in `sla_routes.py` and `intelligence_routes.py`
+- No schema changes, no migration required; 524 unit tests pass
+
 ### v1.87.1 — Intelligence 500 Hotfix (✅ Complete)
 
 - All `GET /api/intelligence/` endpoints returned HTTP 500 after v1.87.0 deployed to Kubernetes

@@ -239,13 +239,13 @@ def acknowledge_insight(
                 WHERE id = %s
                   AND status IN ('open','snoozed')
                 RETURNING *
-            """, (user.username, insight_id))
+            """, (user["username"], insight_id))
             row = cur.fetchone()
             conn.commit()
 
     if not row:
         raise HTTPException(status_code=404, detail="Insight not found or not in open/snoozed state")
-    logger.info("Insight %d acknowledged by %s", insight_id, user.username)
+    logger.info("Insight %d acknowledged by %s", insight_id, user["username"])
     return {"insight": _row_to_insight(dict(row))}
 
 
@@ -284,7 +284,7 @@ def snooze_insight(
 
     if not row:
         raise HTTPException(status_code=404, detail="Insight not found or not in open/acknowledged state")
-    logger.info("Insight %d snoozed until %s by %s", insight_id, snooze_dt, user.username)
+    logger.info("Insight %d snoozed until %s by %s", insight_id, snooze_dt, user["username"])
     return {"insight": _row_to_insight(dict(row))}
 
 
@@ -311,7 +311,7 @@ def resolve_insight(
 
     if not row:
         raise HTTPException(status_code=404, detail="Insight not found or already resolved")
-    logger.info("Insight %d resolved by %s", insight_id, user.username)
+    logger.info("Insight %d resolved by %s", insight_id, user["username"])
     return {"insight": _row_to_insight(dict(row))}
 
 

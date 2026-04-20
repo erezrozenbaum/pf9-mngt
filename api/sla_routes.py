@@ -236,7 +236,7 @@ def upsert_commitment(
             row = cur.fetchone()
             conn.commit()
 
-    logger.info("SLA commitment upserted for tenant %s by %s", tenant_id, user.username)
+    logger.info("SLA commitment upserted for tenant %s by %s", tenant_id, user["username"])
     return {"commitment": _row_to_commitment(dict(row))}
 
 
