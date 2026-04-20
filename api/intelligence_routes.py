@@ -19,6 +19,7 @@ from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, get_current_user, User
 from db_pool import get_connection
+from intelligence_utils import types_for_department, VALID_DEPARTMENTS
 
 logger = logging.getLogger("pf9.intelligence")
 
@@ -90,6 +91,7 @@ def list_insights(
     type: Optional[str] = Query(None),
     entity_type: Optional[str] = Query(None),
     tenant_id: Optional[str] = Query(None),
+    department: Optional[str] = Query(None, pattern="^(support|engineering|operations|general)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     _user: User = Depends(require_permission("intelligence", "read")),
@@ -111,6 +113,12 @@ def list_insights(
     if type:
         conditions.append("type = %s")
         params.append(type)
+    elif department:
+        # Department workspace filter — applies only when no explicit type filter given
+        dept_types = types_for_department(department)
+        if dept_types is not None:
+            conditions.append("type = ANY(%s)")
+            params.append(dept_types)
 
     if entity_type:
         conditions.append("entity_type = %s")
@@ -126,7 +134,7 @@ def list_insights(
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(f"""
+            cur.execute(f"""  # nosec B608 - f-string interpolates only hardcoded WHERE fragments; all user values are parameterized
                 SELECT *, COUNT(*) OVER() AS total_count
                 FROM operational_insights
                 {where}
@@ -149,27 +157,34 @@ def list_insights(
 
 @router.get("/insights/summary")
 def insights_summary(
+    department: Optional[str] = Query(None, pattern="^(support|engineering|operations|general)$"),
     _user: User = Depends(require_permission("intelligence", "read")),
 ):
+    dept_types = types_for_department(department)
+    type_clause = "AND type = ANY(%s)" if dept_types is not None else ""
+    base_params: list = [dept_types] if dept_types is not None else []
+
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
+            cur.execute(f"""  # nosec B608 - type_clause is either empty or a fixed parameterized fragment; dept_types passed via %s
                 SELECT
                     severity,
                     COUNT(*) AS count
                 FROM operational_insights
                 WHERE status IN ('open','acknowledged','snoozed')
+                {type_clause}
                 GROUP BY severity
-            """)
+            """, base_params)
             by_severity = {r["severity"]: r["count"] for r in cur.fetchall()}
 
-            cur.execute("""
+            cur.execute(f"""  # nosec B608 - same: type_clause is a fixed parameterized fragment or empty string
                 SELECT type, COUNT(*) AS count
                 FROM operational_insights
                 WHERE status IN ('open','acknowledged','snoozed')
+                {type_clause}
                 GROUP BY type
                 ORDER BY count DESC
-            """)
+            """, base_params)
             by_type = [{"type": r["type"], "count": r["count"]} for r in cur.fetchall()]
 
     return {
@@ -315,7 +330,7 @@ def get_entity_insights(
     )
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(f"""
+            cur.execute(f"""  # nosec B608 - status_clause is one of two hardcoded SQL strings; entity values are parameterized
                 SELECT * FROM operational_insights
                 WHERE entity_type = %s AND entity_id = %s
                 {status_clause}

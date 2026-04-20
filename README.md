@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.86.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.87.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -609,6 +609,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+
+### 🔍 Department Workspaces + SLA Tier Modal — v1.87.0
+
+**[v1.87.0](CHANGELOG.md)** — Operational Intelligence workspace selector: four context-aware workspaces (Global / Support / Engineering / Operations) filter the insight feed to relevant insight types with sensible severity presets; workspace preference persists to `localStorage`; `operator` role defaults to Engineering on first load. New `intelligence_utils.py` is the single source of truth for insight-type→department routing, consumed by `GET /api/intelligence/insights?department=` and `GET /api/intelligence/insights/summary?department=`. Fixed SLA tier assignment modal: `SlaTierTemplate` interface was using `id`/`name` but the API returns `tier`/`display_name` causing an empty dropdown; replaced bare KPI summary with a rich description block per tier (plain-language guidance, 3-column KPI grid, abbreviation legend). 538 tests, 0 HIGH bandit findings.
+
 ### 🔧 SLA Summary Hotfix — v1.86.2
 
 **[v1.86.2](CHANGELOG.md)** — `InsightsTab` SLA Summary fix: API returns `{ summary, month }` but the component consumed `data.projects` (undefined), crashing on `.length`. Also corrected `SlaSummaryRow` interface and table columns to match the actual summary endpoint response (`tenant_id`/`tenant_name`/`breach_fields`/`at_risk_fields` instead of KPI values). 524 tests, 0 HIGH bandit findings.
@@ -755,4 +760,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Tests**: 524 passed, 22 skipped | **Version**: 1.86.3 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Tests**: 538 passed, 27 skipped | **Version**: 1.87.0 | **Last Updated**: April 2026

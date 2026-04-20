@@ -51,8 +51,8 @@ interface SlaSummaryRow {
 }
 
 interface SlaTierTemplate {
-  id: string;
-  name: string;
+  tier: string;          // PK: bronze | silver | gold | custom
+  display_name: string;  // e.g. "Gold"
   uptime_pct: number | null;
   rto_hours: number | null;
   rpo_hours: number | null;
@@ -111,6 +111,13 @@ type InnerTab = "feed" | "risk" | "sla";
 export default function InsightsTab({ userRole }: InsightsTabProps) {
   const [innerTab, setInnerTab] = useState<InnerTab>("feed");
 
+  // Workspace (department) selector
+  // Role-based defaults: operator → engineering, others → global
+  const defaultWorkspace = userRole === "operator" ? "engineering" : "global";
+  const [workspace, setWorkspace] = useState<string>(() =>
+    localStorage.getItem("pf9_intelligence_workspace") || defaultWorkspace
+  );
+
   // Feed state
   const [insights, setInsights]   = useState<Insight[]>([]);
   const [summary, setSummary]     = useState<InsightSummary | null>(null);
@@ -142,25 +149,43 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
 
   const canWrite = userRole === "admin" || userRole === "superadmin";
 
+  // Workspace preset severity filters (type filtering is handled server-side via ?department=)
+  function applyWorkspacePresets(ws: string) {
+    switch (ws) {
+      case "support":     setFilterSeverity("high");   setFilterStatus(""); setFilterType(""); break;
+      case "engineering": setFilterSeverity("medium"); setFilterStatus(""); setFilterType(""); break;
+      case "operations":  setFilterSeverity("medium"); setFilterStatus(""); setFilterType(""); break;
+      default:            setFilterSeverity("");        setFilterStatus(""); setFilterType(""); break;
+    }
+  }
+
+  function changeWorkspace(ws: string) {
+    localStorage.setItem("pf9_intelligence_workspace", ws);
+    setWorkspace(ws);
+    applyWorkspacePresets(ws);
+  }
+
   // ------- Fetch insights + summary -------
 
   const loadInsights = useCallback(async (p: number = 1) => {
     const params = new URLSearchParams({ page: String(p), page_size: String(PAGE_SIZE) });
-    if (filterStatus)   params.set("status",      filterStatus);
-    if (filterSeverity) params.set("severity",     filterSeverity);
-    if (filterType)     params.set("type",         filterType);
+    if (filterStatus)                        params.set("status",     filterStatus);
+    if (filterSeverity)                      params.set("severity",   filterSeverity);
+    if (filterType)                          params.set("type",       filterType);
+    if (workspace && workspace !== "global") params.set("department", workspace);
     const data = await apiFetch<{ insights: Insight[]; total: number }>(
       `/api/intelligence/insights?${params}`
     );
     setInsights(data.insights);
     setTotal(data.total);
     setPage(p);
-  }, [filterStatus, filterSeverity, filterType]);
+  }, [filterStatus, filterSeverity, filterType, workspace]);
 
   const loadSummary = useCallback(async () => {
-    const data = await apiFetch<InsightSummary>("/api/intelligence/insights/summary");
+    const qs = workspace && workspace !== "global" ? `?department=${workspace}` : "";
+    const data = await apiFetch<InsightSummary>(`/api/intelligence/insights/summary${qs}`);
     setSummary(data);
-  }, []);
+  }, [workspace]);
 
   const loadSlaSummary = useCallback(async () => {
     setSlaLoading(true);
@@ -172,8 +197,8 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
     }
   }, []);
 
-  useEffect(() => { loadInsights(1); }, [filterStatus, filterSeverity, filterType]);
-  useEffect(() => { loadSummary(); }, []);
+  useEffect(() => { loadInsights(1); }, [filterStatus, filterSeverity, filterType, workspace]);
+  useEffect(() => { loadSummary(); }, [workspace]);
   useEffect(() => { if (innerTab === "sla") loadSlaSummary(); }, [innerTab]);
 
   async function openSlaModal() {
@@ -474,7 +499,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
       return <div style={{ padding: "2rem 1.5rem", color: "var(--text-secondary,#6b7280)" }}>Loading SLA summary…</div>;
     }
 
-    const selectedTier = slaTiers.find((t) => t.name === slaPickTier);
+    const selectedTier = slaTiers.find((t) => t.tier === slaPickTier);
 
     return (
       <div className="insights-feed">
@@ -570,18 +595,49 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                     value={slaPickTier}
                     onChange={(e) => setSlaPickTier(e.target.value)}
                   >
-                    {slaTiers.length > 0
-                      ? slaTiers.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)
-                      : ["bronze", "silver", "gold", "custom"].map((n) => <option key={n} value={n}>{n}</option>)}
+                    <option value="">— select tier —</option>
+                    {(slaTiers.length > 0
+                      ? slaTiers
+                      : [{tier:"gold",display_name:"Gold"},{tier:"silver",display_name:"Silver"},{tier:"bronze",display_name:"Bronze"},{tier:"custom",display_name:"Custom"}] as SlaTierTemplate[]
+                    ).map((t) => <option key={t.tier} value={t.tier}>{t.display_name}</option>)}
                   </select>
                 </label>
 
                 {selectedTier && (
-                  <div style={{ fontSize: "0.78rem", background: "var(--bg-secondary,#1e2028)", borderRadius: "6px", padding: "0.6rem 0.8rem", color: "var(--text-secondary,#9ca3af)" }}>
-                    {selectedTier.uptime_pct != null && <span>Uptime ≥ {selectedTier.uptime_pct}% &nbsp;·&nbsp; </span>}
-                    {selectedTier.rto_hours != null && <span>RTO {selectedTier.rto_hours}h &nbsp;·&nbsp; </span>}
-                    {selectedTier.rpo_hours != null && <span>RPO {selectedTier.rpo_hours}h &nbsp;·&nbsp; </span>}
-                    {selectedTier.backup_freq_hours != null && <span>Backup every {selectedTier.backup_freq_hours}h</span>}
+                  <div style={{ fontSize: "0.78rem", background: "var(--bg-secondary,#1e2028)", borderRadius: "6px", padding: "0.75rem 0.9rem", color: "var(--text-secondary,#9ca3af)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    {/* Tier description */}
+                    <div style={{ color: "var(--text-primary,#e5e7eb)", fontWeight: 600, fontSize: "0.82rem" }}>
+                      {selectedTier.tier === "gold"   && "🥇 Gold — Mission-critical workloads. Highest uptime guarantee. Any SLA breach auto-generates a critical incident insight and triggers notifications."}
+                      {selectedTier.tier === "silver" && "🥈 Silver — Standard production workloads. Balanced SLA with automated compliance monitoring. Breaches generate high-severity insights."}
+                      {selectedTier.tier === "bronze" && "🥉 Bronze — Dev / test / non-critical workloads. Best-effort SLA. Breaches generate medium-severity insights."}
+                      {selectedTier.tier === "custom" && "⚙️ Custom — Fully configurable targets. Set exact thresholds when assigning. Use for enterprise contracts with negotiated SLAs."}
+                    </div>
+                    {/* KPI grid */}
+                    {selectedTier.tier !== "custom" && (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.35rem 0.75rem" }}>
+                        {selectedTier.uptime_pct != null && (
+                          <div><span style={{ opacity: 0.6 }}>Uptime </span><strong style={{ color: "var(--text-primary,#e5e7eb)" }}>≥ {selectedTier.uptime_pct}%</strong></div>
+                        )}
+                        {selectedTier.rto_hours != null && (
+                          <div><span style={{ opacity: 0.6 }}>RTO </span><strong style={{ color: "var(--text-primary,#e5e7eb)" }}>{selectedTier.rto_hours}h</strong></div>
+                        )}
+                        {selectedTier.rpo_hours != null && (
+                          <div><span style={{ opacity: 0.6 }}>RPO </span><strong style={{ color: "var(--text-primary,#e5e7eb)" }}>{selectedTier.rpo_hours}h</strong></div>
+                        )}
+                        {selectedTier.mtta_hours != null && (
+                          <div><span style={{ opacity: 0.6 }}>MTTA </span><strong style={{ color: "var(--text-primary,#e5e7eb)" }}>{selectedTier.mtta_hours}h</strong></div>
+                        )}
+                        {selectedTier.mttr_hours != null && (
+                          <div><span style={{ opacity: 0.6 }}>MTTR </span><strong style={{ color: "var(--text-primary,#e5e7eb)" }}>{selectedTier.mttr_hours}h</strong></div>
+                        )}
+                        {selectedTier.backup_freq_hours != null && (
+                          <div><span style={{ opacity: 0.6 }}>Backup </span><strong style={{ color: "var(--text-primary,#e5e7eb)" }}>every {selectedTier.backup_freq_hours}h</strong></div>
+                        )}
+                      </div>
+                    )}
+                    <div style={{ fontSize: "0.72rem", opacity: 0.55, fontStyle: "italic" }}>
+                      Abbreviations: RTO = Recovery Time Objective · RPO = Recovery Point Objective · MTTA = Mean Time to Acknowledge · MTTR = Mean Time to Resolve
+                    </div>
                   </div>
                 )}
 
@@ -608,6 +664,32 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
 
   return (
     <div className="insights-tab">
+      {/* Workspace selector */}
+      <div className="insights-workspace-bar">
+        {(
+          [
+            { id: "global",      label: "🌐 Global" },
+            { id: "support",     label: "🎧 Support" },
+            { id: "engineering", label: "⚙️ Engineering" },
+            { id: "operations",  label: "📊 Operations" },
+          ] as { id: string; label: string }[]
+        ).map((ws) => (
+          <button
+            key={ws.id}
+            className={`insights-workspace-btn${workspace === ws.id ? " active" : ""}`}
+            onClick={() => changeWorkspace(ws.id)}
+          >
+            {ws.label}
+          </button>
+        ))}
+        <span className="insights-workspace-hint">
+          {workspace === "support"     && "Showing: drift · snapshot · incident · risk (high+)"}
+          {workspace === "engineering" && "Showing: capacity · waste · anomaly (medium+)"}
+          {workspace === "operations"  && "Showing: risk · health (medium+)"}
+          {workspace === "global"      && "Showing: all insight types"}
+        </span>
+      </div>
+
       {/* Inner tab nav */}
       <div className="insights-inner-tabs">
         {(

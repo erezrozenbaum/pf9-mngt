@@ -132,6 +132,72 @@ def test_intelligence():  # noqa: C901
     r_noauth = requests.get(f"{BASE}/api/intelligence/insights")
     check("Unauthenticated access denied (401/403)", r_noauth.status_code in (401, 403))
 
+    # ── [9] Department workspace filter ───────────────────────────────────────
+    print("\n[9] Department workspace filter")
+
+    DEPT_TYPES = {
+        "support":     {"drift", "snapshot", "incident", "risk", "sla_risk"},
+        "engineering": {"capacity", "waste", "anomaly", "cross_region"},
+        "operations":  {"risk", "health", "sla_risk"},
+    }
+
+    for dept, expected_types in DEPT_TYPES.items():
+        r = requests.get(
+            f"{BASE}/api/intelligence/insights?department={dept}&page_size=200",
+            headers=hdrs,
+        )
+        check(f"GET insights?department={dept} 200", r.status_code == 200, r.text[:120])
+        items = r.json().get("insights", [])
+        if items:
+            returned_types = {i["type"].split("_")[0] for i in items}
+            unexpected = returned_types - expected_types
+            # Exact-type matches use full type name; map to prefix for flexible check
+            full_unexpected = {
+                i["type"] for i in items
+                if not any(i["type"].startswith(et) for et in expected_types)
+                and i["type"] not in expected_types
+            }
+            check(
+                f"  {dept}: all returned types belong to workspace",
+                len(full_unexpected) == 0,
+                f"unexpected types: {full_unexpected}",
+            )
+        else:
+            info(f"  {dept}: no insights currently; type-assertion skipped")
+
+    # ?department= omitted → full feed (no type restriction)
+    r_global = requests.get(f"{BASE}/api/intelligence/insights", headers=hdrs)
+    r_dept   = requests.get(f"{BASE}/api/intelligence/insights?department=support", headers=hdrs)
+    check("Global feed (no dept) >= support-scoped feed", r_global.json()["total"] >= r_dept.json()["total"])
+
+    # risk type should appear in both support and operations workspaces (multi-dept routing)
+    r_sup = requests.get(f"{BASE}/api/intelligence/insights?department=support&page_size=200",   headers=hdrs)
+    r_ops = requests.get(f"{BASE}/api/intelligence/insights?department=operations&page_size=200", headers=hdrs)
+    sup_types = {i["type"] for i in r_sup.json().get("insights", [])}
+    ops_types = {i["type"] for i in r_ops.json().get("insights", [])}
+    risk_types = {"risk", "risk_snapshot_gap", "risk_health_decline", "risk_unack_drift"}
+    has_risk_in_sup = bool(sup_types & risk_types)
+    has_risk_in_ops = bool(ops_types & risk_types)
+    if has_risk_in_sup or has_risk_in_ops:
+        # If risk insights exist, they must appear in BOTH workspaces
+        check(
+            "risk insights appear in both support and operations workspaces",
+            has_risk_in_sup == has_risk_in_ops,
+            f"sup has risk={has_risk_in_sup}, ops has risk={has_risk_in_ops}",
+        )
+    else:
+        info("  No risk insights currently; multi-dept routing check skipped")
+
+    # Department summary counts should be ≤ global summary total
+    r_sum_global = requests.get(f"{BASE}/api/intelligence/insights/summary", headers=hdrs)
+    r_sum_dept   = requests.get(f"{BASE}/api/intelligence/insights/summary?department=support", headers=hdrs)
+    check("Dept summary total_open <= global total_open",
+          r_sum_dept.json()["total_open"] <= r_sum_global.json()["total_open"])
+
+    # Invalid department value → 422 Unprocessable Entity
+    r_invalid = requests.get(f"{BASE}/api/intelligence/insights?department=invalid_dept", headers=hdrs)
+    check("Invalid ?department= returns 422", r_invalid.status_code == 422)
+
     # ── Final ─────────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     if errors:

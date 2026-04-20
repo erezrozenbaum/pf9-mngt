@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.87.0] - 2026-04-20
+
+### Added
+
+- **Workspace selector in Insights tab** — four workspace buttons (`Global`, `Support`, `Engineering`, `Operations`) sit above the insight feed. Selecting a workspace filters the feed to department-relevant insight types (`support`: drift/snapshot/incident/risk; `engineering`: capacity/waste/anomaly; `operations`: risk/health) and applies sensible default severity filters (Support → high+, Engineering/Operations → medium+). Selection persists to `localStorage` (key `pf9_intelligence_workspace`). Role-based default: `operator` role defaults to the Engineering workspace on first load; all others default to Global.
+- **`api/intelligence_utils.py`** — single source of truth for insight-type → department routing. `map_insight_to_departments()` returns a `list[str]` (an insight type can belong to multiple departments — e.g. `risk` appears in both `operations` and `support`). `types_for_department()` returns the type list for a department filter. Adding a new insight type requires only one entry in `_DEPT_MAP`.
+- **`?department=` filter on `GET /api/intelligence/insights`** — optional query param (`support` | `engineering` | `operations` | `general`). When supplied with no explicit `?type=`, filters to insight types belonging to that workspace. Backward-compatible — omitting the param returns the full feed unchanged.
+- **`?department=` filter on `GET /api/intelligence/insights/summary`** — same department scoping for the severity/type count summary used by the summary bar.
+- **`sla_risk` type in department routing** — `sla_risk` insights routed to both `operations` and `support` workspaces.
+
+### Fixed
+
+- **SLA Tier assignment modal — tier list empty** — `SlaTierTemplate` interface used `id`/`name` but the `GET /api/sla/tiers` response returns `tier`/`display_name` (the PK is the tier slug, not an auto-increment ID). Dropdown rendered nothing because `t.id` and `t.name` were both `undefined`. Fixed interface and all usages (`key`, `value`, and `selectedTier` lookup).
+- **SLA Tier assignment modal — no description for tiers** — tier dropdown only showed the bare tier name with a one-line KPI summary. Replaced with a rich description block per tier: a plain-language sentence explaining intended workload type and breach consequences, a 3-column KPI grid (Uptime / RTO / RPO / MTTA / MTTR / Backup), and an abbreviation legend. Custom tier shows only the plain-language description (KPI grid hidden — targets are set per-tenant).
+
+### Tests
+
+- Extended `test_intelligence.py` section [9] — department workspace filter: verifies that `?department=support/engineering/operations` each return only their mapped types; global feed has ≥ as many results as any department-scoped feed; risk insights appear in both `support` and `operations` workspaces (multi-department routing); department-scoped summary total ≤ global summary total; invalid `?department=` value returns HTTP 422.
+
 ## [1.86.3] - 2026-04-20
 
 ### Fixed

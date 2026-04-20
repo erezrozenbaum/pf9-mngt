@@ -661,6 +661,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.87.0 — Department Workspaces + SLA Tier Modal Fixes (✅ Complete)
+
+- **Workspace selector added to Insights tab**: Four context-aware workspace buttons (Global / Support / Engineering / Operations) appear above the insight feed. Each workspace filters to its relevant insight types (Support: drift/snapshot/incident/risk; Engineering: capacity/waste/anomaly; Operations: risk/health) and applies a default severity preset. Workspace selection persists in `localStorage`. The `operator` role defaults to Engineering on first load; all other roles default to Global.
+- **`api/intelligence_utils.py` added**: Single source of truth for insight-type → department routing. `map_insight_to_departments()` returns a list — `risk` and `sla_risk` types appear in multiple workspaces simultaneously. `types_for_department()` translates a department name to its type list. Adding a new insight type requires only one entry in the mapping dict.
+- **`?department=` filter on `GET /api/intelligence/insights` and `GET /api/intelligence/insights/summary`**: Optional query param (`support` | `engineering` | `operations` | `general`). Backward-compatible — omitting the param returns the full feed unchanged.
+- **SLA Tier assignment modal — empty dropdown fixed**: `SlaTierTemplate` interface declared `id`/`name` but `GET /api/sla/tiers` returns `tier`/`display_name` (the PK is the tier slug, not an auto-increment ID). Dropdown rendered nothing because both fields were `undefined`. Fixed interface and all downstream usages.
+- **SLA Tier assignment modal — rich tier descriptions**: Replaced a one-line KPI summary with a full description block per tier: a plain-language sentence describing intended workload type and breach consequences, a 3-column KPI grid (Uptime / RTO / RPO / MTTA / MTTR / Backup frequency), and an abbreviation legend. Custom tier shows the description only (thresholds are set per-tenant).
+
 ### v1.86.3 — WasteEngine crash fix + SLA Tier assignment UI (✅ Complete)
 
 - **WasteEngine crash on `None` metric values — fixed**: `_check_idle_vms()` used `{row['overall_score']:.0f}` etc. in a format string. When those columns are `NULL` in the DB the `:0f` spec raises `unsupported format string passed to NoneType.__format__`, causing all three waste detectors (idle VMs, unattached volumes, stale snapshots) to be skipped on every cycle. Fixed by extracting `float(val or 0)` before formatting.
