@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.87.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.88.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -610,7 +610,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🩹 SLA & Intelligence Write 500 Hotfix — v1.87.2
+### � Phase 2 Intelligence — Recommendations, Bulk Actions, Copilot Intents — v1.88.0
+
+**[v1.88.0](CHANGELOG.md)** — Phase 2 of Operational Intelligence: idle-VM waste insights now generate actionable recommendations (cleanup runbook ≥14 days, downsize suggestion ≥7 days). Risk engine auto-creates support tickets for snapshot-gap and critical health-decline insights. New bulk-acknowledge/bulk-resolve API endpoints. Five new Copilot natural-language intents (critical_insights, capacity_warnings, waste_insights, unacknowledged_insights_count, risk_summary). InsightsTab UI: SLA Summary shows only configured tenants sorted by breach status; Risk & Capacity gains Tenant/Project column; bulk-action bar above feed; per-row recommendations panel with dismiss. 524 unit tests pass, 0 HIGH bandit findings.
+
+### �🩹 SLA & Intelligence Write 500 Hotfix — v1.87.2
 
 **[v1.87.2](CHANGELOG.md)** — `PUT /api/sla/commitments` and intelligence write endpoints (acknowledge/snooze/resolve) all returned HTTP 500. Root cause: `require_permission()` returns `user.model_dump()` (a dict) but the affected handlers called `user.username` (attribute access). Fixed to `user["username"]` dict access in both `sla_routes.py` and `intelligence_routes.py`. 524 unit tests pass, 0 HIGH bandit findings.
 
@@ -768,4 +772,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Tests**: 524 passed, 22 skipped | **Version**: 1.87.2 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Tests**: 524 passed, 22 skipped | **Version**: 1.88.0 | **Last Updated**: April 2026

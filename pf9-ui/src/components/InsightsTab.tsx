@@ -8,7 +8,7 @@
  *
  * v1.85.0
  */
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/api";
 import "../styles/InsightsTab.css";
 
@@ -64,6 +64,14 @@ interface SlaTierTemplate {
 interface TenantOption {
   id: string;
   name: string;
+}
+
+interface Recommendation {
+  id: number;
+  action_type: string;
+  action_payload: Record<string, unknown>;
+  estimated_impact?: string;
+  status: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +141,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   // SLA Summary
   const [slaSummary, setSlaSummary] = useState<SlaSummaryRow[]>([]);
   const [slaLoading, setSlaLoading] = useState(false);
+  const [slaLoadError, setSlaLoadError] = useState("");
 
   // SLA assign modal
   const [slaModalOpen, setSlaModalOpen] = useState(false);
@@ -142,6 +151,10 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   const [slaPickTier, setSlaPickTier] = useState("bronze");
   const [slaSaving, setSlaSaving] = useState(false);
   const [slaError, setSlaError] = useState("");
+
+  // Recommendations
+  const [expandedRecs, setExpandedRecs] = useState<Record<number, Recommendation[]>>({});
+  const [loadingRecs, setLoadingRecs] = useState<Record<number, boolean>>({});
 
   // Snooze modal
   const [snoozeTarget, setSnoozeTarget] = useState<number | null>(null);
@@ -189,9 +202,12 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
 
   const loadSlaSummary = useCallback(async () => {
     setSlaLoading(true);
+    setSlaLoadError("");
     try {
       const data = await apiFetch<{ summary: SlaSummaryRow[]; month: string }>("/api/sla/compliance/summary");
       setSlaSummary(data.summary ?? []);
+    } catch (e: unknown) {
+      setSlaLoadError(e instanceof Error ? e.message : "Failed to load SLA summary.");
     } finally {
       setSlaLoading(false);
     }
@@ -259,6 +275,62 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
     loadSummary();
   }
 
+  // ------- Bulk actions -------
+
+  async function doBulkAcknowledge(severity?: string) {
+    const body: Record<string, string> = {};
+    if (severity) body.severity = severity;
+    const data = await apiFetch<{ acknowledged: number }>("/api/intelligence/insights/bulk-acknowledge", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    await loadInsights(1);
+    await loadSummary();
+    return data.acknowledged;
+  }
+
+  async function doBulkResolve(type?: string) {
+    const body: Record<string, string> = {};
+    if (type) body.type = type;
+    const data = await apiFetch<{ resolved: number }>("/api/intelligence/insights/bulk-resolve", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    await loadInsights(1);
+    await loadSummary();
+    return data.resolved;
+  }
+
+  // ------- Recommendations -------
+
+  async function toggleRecommendations(insightId: number) {
+    if (expandedRecs[insightId] !== undefined) {
+      setExpandedRecs((prev) => { const n = { ...prev }; delete n[insightId]; return n; });
+      return;
+    }
+    setLoadingRecs((prev) => ({ ...prev, [insightId]: true }));
+    try {
+      const data = await apiFetch<{ recommendations: Recommendation[] }>(
+        `/api/intelligence/insights/${insightId}/recommendations`
+      );
+      setExpandedRecs((prev) => ({ ...prev, [insightId]: data.recommendations ?? [] }));
+    } finally {
+      setLoadingRecs((prev) => ({ ...prev, [insightId]: false }));
+    }
+  }
+
+  async function dismissRecommendation(insightId: number, recId: number) {
+    await apiFetch(`/api/intelligence/insights/${insightId}/recommendations/${recId}/dismiss`, {
+      method: "POST",
+    });
+    setExpandedRecs((prev) => ({
+      ...prev,
+      [insightId]: (prev[insightId] ?? []).map((r) =>
+        r.id === recId ? { ...r, status: "dismissed" } : r
+      ),
+    }));
+  }
+
   // ------- Render helpers -------
 
   function renderSummaryBar() {
@@ -320,6 +392,25 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
               Clear filters
             </button>
           )}
+          {canWrite && (
+            <div className="insights-bulk-actions">
+              <span style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)", marginRight: "0.5rem" }}>
+                Bulk:
+              </span>
+              <button className="btn-sm" title="Acknowledge all open medium insights"
+                onClick={() => doBulkAcknowledge("medium")}>
+                Ack medium
+              </button>
+              <button className="btn-sm" title="Resolve all idle-VM waste insights"
+                onClick={() => doBulkResolve("waste_idle_vm")}>
+                Resolve idle VMs
+              </button>
+              <button className="btn-sm" title="Resolve all waste insights (any type)"
+                onClick={() => doBulkResolve(filterType || undefined)}>
+                {filterType ? `Resolve all ${filterType.replace(/_/g," ")}` : "Resolve current type"}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="insights-feed">
@@ -343,7 +434,8 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
               </thead>
               <tbody>
                 {insights.map((ins) => (
-                  <tr key={ins.id}>
+                  <React.Fragment key={ins.id}>
+                  <tr>
                     <td><span className={sevClass(ins.severity)}>{ins.severity}</span></td>
                     <td>
                       <span className="type-icon">{typeIcon(ins.type)}</span>
@@ -396,11 +488,80 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                               Resolve
                             </button>
                           )}
+                          {/* Recommendations toggle */}
+                          {(ins.type.startsWith("waste_") || ins.type.startsWith("risk_")) && (
+                            <button
+                              className="btn-sm"
+                              title="Show recommendations"
+                              onClick={() => toggleRecommendations(ins.id)}
+                            >
+                              {loadingRecs[ins.id] ? "…" : expandedRecs[ins.id] !== undefined ? "▲ Recs" : "▼ Recs"}
+                            </button>
+                          )}
                         </div>
                       </td>
                     )}
                   </tr>
-                ))}
+                  {/* Recommendations expansion panel */}
+                  {expandedRecs[ins.id] !== undefined && (
+                    <tr key={`recs-${ins.id}`}>
+                      <td colSpan={canWrite ? 7 : 6} style={{ background: "var(--bg-subtle,#f9fafb)", padding: "0.5rem 1rem 0.75rem" }}>
+                        <strong style={{ fontSize: "0.78rem" }}>Recommendations</strong>
+                        {expandedRecs[ins.id].length === 0 ? (
+                          <span style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)", marginLeft: "0.5rem" }}>
+                            No recommendations available.
+                          </span>
+                        ) : (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "0.35rem" }}>
+                            {expandedRecs[ins.id].map((rec) => (
+                              <div key={rec.id} style={{
+                                display: "flex", alignItems: "center", gap: "0.4rem",
+                                background: "var(--card-bg,#fff)", border: "1px solid var(--border,#e5e7eb)",
+                                borderRadius: 6, padding: "0.3rem 0.6rem", fontSize: "0.8rem",
+                                opacity: rec.status !== "pending" ? 0.5 : 1,
+                              }}>
+                                <span>{rec.action_type === "runbook" ? "🔧" : rec.action_type === "resize" ? "⬇️" : "💡"}</span>
+                                <span>
+                                  <strong>{rec.action_type}</strong>
+                                  {typeof rec.action_payload?.runbook_key === "string" && (
+                                    <span style={{ color: "var(--text-secondary,#6b7280)", marginLeft: "0.25rem" }}>
+                                      — {rec.action_payload.runbook_key}
+                                    </span>
+                                  )}
+                                  {typeof rec.action_payload?.suggestion === "string" && (
+                                    <span style={{ color: "var(--text-secondary,#6b7280)", marginLeft: "0.25rem" }}>
+                                      — {rec.action_payload.suggestion}
+                                    </span>
+                                  )}
+                                </span>
+                                {rec.estimated_impact && (
+                                  <span style={{ color: "var(--success,#059669)", fontSize: "0.75rem" }}>
+                                    {rec.estimated_impact}
+                                  </span>
+                                )}
+                                {rec.status === "pending" && canWrite && (
+                                  <button
+                                    className="btn-sm"
+                                    style={{ fontSize: "0.7rem", padding: "0.1rem 0.4rem" }}
+                                    onClick={() => dismissRecommendation(ins.id, rec.id)}
+                                  >
+                                    Dismiss
+                                  </button>
+                                )}
+                                {rec.status !== "pending" && (
+                                  <span style={{ fontSize: "0.7rem", color: "var(--text-secondary,#6b7280)" }}>
+                                    {rec.status}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
               </tbody>
             </table>
           )}
@@ -464,6 +625,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
             <thead>
               <tr>
                 <th>Entity</th>
+                <th>Tenant / Project</th>
                 <th>Highest Severity</th>
                 <th>Active Insights</th>
                 <th>Types</th>
@@ -476,9 +638,11 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                   (sevOrder[i.severity] ?? 9) < (sevOrder[w.severity] ?? 9) ? i : w
                 );
                 const types = [...new Set(arr.map((i) => i.type.replace(/_/g, " ")))];
+                const tenant = (arr[0]?.metadata?.project as string) || (arr[0]?.metadata?.tenant_name as string) || "—";
                 return (
                   <tr key={entity}>
                     <td style={{ fontWeight: 600 }}>{entity}</td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)" }}>{tenant}</td>
                     <td><span className={sevClass(worst.severity)}>{worst.severity}</span></td>
                     <td>{arr.length}</td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)" }}>
@@ -499,6 +663,22 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
       return <div style={{ padding: "2rem 1.5rem", color: "var(--text-secondary,#6b7280)" }}>Loading SLA summary…</div>;
     }
 
+    if (slaLoadError) {
+      return (
+        <div style={{ padding: "2rem 1.5rem" }}>
+          <div className="insights-empty-icon">⚠️</div>
+          <p style={{ color: "var(--danger,#dc2626)", fontSize: "0.88rem" }}>{slaLoadError}</p>
+          <button className="btn-sm" onClick={loadSlaSummary}>Retry</button>
+        </div>
+      );
+    }
+
+    const statusOrder: Record<string, number> = { breached: 0, at_risk: 1, ok: 2, not_configured: 9 };
+    const configuredRows = slaSummary
+      .filter((r) => r.tier && r.tier !== "none" && r.overall_status !== "not_configured")
+      .sort((a, b) => (statusOrder[a.overall_status] ?? 9) - (statusOrder[b.overall_status] ?? 9));
+    const unconfiguredCount = slaSummary.length - configuredRows.length;
+
     const selectedTier = slaTiers.find((t) => t.tier === slaPickTier);
 
     return (
@@ -512,7 +692,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
           </div>
         )}
 
-        {slaSummary.length === 0 ? (
+        {configuredRows.length === 0 ? (
           <div className="insights-empty">
             <div className="insights-empty-icon">📋</div>
             <p className="insights-empty-text">No SLA commitments configured.</p>
@@ -524,6 +704,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
             )}
           </div>
         ) : (
+          <>
           <table className="insights-table">
             <thead>
               <tr>
@@ -535,7 +716,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
               </tr>
             </thead>
             <tbody>
-              {slaSummary.map((row) => (
+              {configuredRows.map((row) => (
                 <tr key={row.tenant_id}>
                   <td style={{ fontWeight: 600 }}>{row.tenant_name || row.tenant_id}</td>
                   <td>
@@ -562,6 +743,12 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
               ))}
             </tbody>
           </table>
+          {unconfiguredCount > 0 && (
+            <p style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)", padding: "0.5rem 1rem 0", margin: 0 }}>
+              {unconfiguredCount} tenant{unconfiguredCount !== 1 ? "s" : ""} not yet configured. Use <strong>Assign SLA Tier</strong> to add them.
+            </p>
+          )}
+          </>
         )}
 
         {/* Assign SLA Tier modal */}

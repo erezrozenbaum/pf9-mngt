@@ -661,6 +661,21 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.88.0 — Phase 2 Intelligence: Recommendations, Auto-Tickets, Bulk Actions (✅ Complete)
+
+- **Insight recommendations**: `insight_recommendations` table stores actionable recommendations attached to open insights
+  - Waste engine: idle-VM insights ≥7 days get a resize recommendation; ≥14 days get a runbook recommendation
+  - Risk engine: snapshot-gap and critical health-decline insights auto-create support tickets
+- **Bulk API endpoints**: `POST /api/intelligence/insights/bulk-acknowledge` and `bulk-resolve` with optional `severity`/`type` filters
+- **Recommendations API**: `GET /api/intelligence/insights/{id}/recommendations`; `POST …/recommendations/{rec_id}/dismiss`
+- **5 new Copilot intents**: `critical_insights`, `capacity_warnings`, `waste_insights`, `unacknowledged_insights_count`, `risk_summary`
+- **InsightsTab UI fixes**:
+  - SLA Summary: shows only configured tenants (sorted breached→at-risk→ok); empty state only when 0 configured; error handling
+  - Risk & Capacity: new Tenant/Project column
+  - Bulk action bar: Ack medium / Resolve idle VMs / Resolve current type
+  - Per-insight ▼ Recs panel for waste and risk rows with dismiss button
+- DB migration: `db/migrate_intelligence_v2.sql` — applied to live K8s DB; 524 unit tests pass
+
 ### v1.87.2 — SLA & Intelligence Write 500 Hotfix (✅ Complete)
 
 - `PUT /api/sla/commitments/{tenant_id}` and intelligence write endpoints (acknowledge/snooze/resolve) returned HTTP 500

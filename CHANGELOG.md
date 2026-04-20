@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.88.0] - 2026-04-21
+
+### Added
+
+- **Insight recommendations** — `insight_recommendations` table and Phase 2 engine: idle-VM waste insights now generate actionable recommendations (run cleanup runbook for ≥14-day idle VMs; downsize suggestion for ≥7-day idle VMs). Risk engine auto-creates support tickets for snapshot-gap and critical health-decline insights.
+- **Bulk operations** — `POST /api/intelligence/insights/bulk-acknowledge` and `bulk-resolve` endpoints allow batch lifecycle management filtered by severity and/or type.
+- **Recommendations API** — `GET /api/intelligence/insights/{id}/recommendations` lists pending recommendations; `POST …/recommendations/{rec_id}/dismiss` allows dismissal.
+- **5 new Copilot intents** — `critical_insights`, `capacity_warnings`, `waste_insights`, `unacknowledged_insights_count`, `risk_summary` for natural-language intelligence queries.
+- **InsightsTab UI improvements**:
+  - SLA Summary now shows only configured tenants (sorted breached → at-risk → ok) with a count of unconfigured tenants; proper error state added.
+  - Risk & Capacity table gains a **Tenant / Project** column populated from `metadata.project`.
+  - Bulk action bar (Ack medium / Resolve idle VMs / Resolve current type) above the feed.
+  - Per-insight **recommendations panel** (expand ▼ Recs) for waste and risk rows with dismiss button.
+
+### Changed
+
+- DB migration `db/migrate_intelligence_v2.sql` applied: `insight_recommendations` table with FK to `operational_insights` and `runbooks`.
+
+---
+
 ## [1.87.2] - 2026-04-20
 
 ### Fixed

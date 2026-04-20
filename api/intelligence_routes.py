@@ -346,3 +346,136 @@ def get_entity_insights(
             rows = cur.fetchall()
 
     return {"insights": [_row_to_insight(dict(r)) for r in rows]}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/intelligence/insights/bulk-acknowledge
+# POST /api/intelligence/insights/bulk-resolve
+# Phase 2: batch lifecycle operations
+# ---------------------------------------------------------------------------
+
+class BulkActionRequest(BaseModel):
+    severity: Optional[str] = None    # optional severity filter
+    type: Optional[str] = None        # optional type filter
+
+
+@router.post("/insights/bulk-acknowledge", status_code=status.HTTP_200_OK)
+def bulk_acknowledge(
+    body: BulkActionRequest,
+    user: User = Depends(require_permission("intelligence", "write")),
+):
+    conditions = ["status = 'open'"]
+    params: list = []
+    if body.severity:
+        conditions.append("severity = %s")
+        params.append(body.severity)
+    if body.type:
+        conditions.append("type = %s")
+        params.append(body.type)
+    where = "WHERE " + " AND ".join(conditions)
+    params.extend([user["username"]])
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                UPDATE operational_insights
+                SET status = 'acknowledged',
+                    acknowledged_by = %s,
+                    acknowledged_at = NOW()
+                {where}
+                """, params[-1:] + params[:-1])
+            count = cur.rowcount
+            conn.commit()
+
+    logger.info("Bulk acknowledged %d insights by %s", count, user["username"])
+    return {"acknowledged": count}
+
+
+@router.post("/insights/bulk-resolve", status_code=status.HTTP_200_OK)
+def bulk_resolve(
+    body: BulkActionRequest,
+    user: User = Depends(require_permission("intelligence", "write")),
+):
+    conditions = ["status IN ('open','acknowledged','snoozed')"]
+    params: list = []
+    if body.severity:
+        conditions.append("severity = %s")
+        params.append(body.severity)
+    if body.type:
+        conditions.append("type = %s")
+        params.append(body.type)
+    where = "WHERE " + " AND ".join(conditions)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                UPDATE operational_insights
+                SET status = 'resolved', resolved_at = NOW()
+                {where}
+                """, params)
+            count = cur.rowcount
+            conn.commit()
+
+    logger.info("Bulk resolved %d insights by %s", count, user["username"])
+    return {"resolved": count}
+
+
+# ---------------------------------------------------------------------------
+# GET  /api/intelligence/insights/{id}/recommendations
+# POST /api/intelligence/insights/{id}/recommendations/{rec_id}/dismiss
+# Phase 2: recommendations
+# ---------------------------------------------------------------------------
+
+@router.get("/insights/{insight_id}/recommendations")
+def get_recommendations(
+    insight_id: int,
+    _user: User = Depends(require_permission("intelligence", "read")),
+):
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, action_type, action_payload, estimated_impact,
+                       status, created_at, executed_at
+                FROM insight_recommendations
+                WHERE insight_id = %s
+                ORDER BY created_at ASC
+            """, (insight_id,))
+            rows = cur.fetchall()
+    recs = [
+        {
+            "id":               r["id"],
+            "action_type":      r["action_type"],
+            "action_payload":   r["action_payload"] or {},
+            "estimated_impact": r.get("estimated_impact"),
+            "status":           r["status"],
+            "created_at":       r["created_at"].isoformat() if r.get("created_at") else None,
+            "executed_at":      r["executed_at"].isoformat() if r.get("executed_at") else None,
+        }
+        for r in rows
+    ]
+    return {"recommendations": recs}
+
+
+@router.post("/insights/{insight_id}/recommendations/{rec_id}/dismiss",
+             status_code=status.HTTP_200_OK)
+def dismiss_recommendation(
+    insight_id: int,
+    rec_id: int,
+    user: User = Depends(require_permission("intelligence", "write")),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE insight_recommendations
+                SET status = 'dismissed'
+                WHERE id = %s AND insight_id = %s AND status = 'pending'
+            """, (rec_id, insight_id))
+            affected = cur.rowcount
+            conn.commit()
+    if not affected:
+        raise HTTPException(status_code=404, detail="Recommendation not found or already actioned")
+    logger.info("Recommendation %d dismissed by %s", rec_id, user["username"])
+    return {"dismissed": True}
+

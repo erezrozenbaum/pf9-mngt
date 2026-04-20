@@ -1196,6 +1196,108 @@ INTENTS: List[IntentDef] = [
             if rows else "No provisioning jobs found."
         ),
     ),
+
+    # ── Operational Intelligence ──────────────────────────────────────
+    IntentDef(
+        key="critical_insights",
+        display_name="Critical insights",
+        keywords=["critical insights", "open critical", "active critical insights",
+                  "critical alerts", "critical issues", "intelligence critical",
+                  "most severe insights", "urgent insights"],
+        patterns=[r"(?:open|active|show)?\s*critical\s+insights?",
+                  r"(?:show|list)\s+critical\s+(?:issues?|alerts?)"],
+        sql="""SELECT type, entity_name, entity_id, title, message, status, detected_at
+               FROM operational_insights
+               WHERE severity = 'critical' AND status NOT IN ('resolved')
+               ORDER BY detected_at DESC LIMIT 20""",
+        formatter=lambda rows: (
+            f"**{len(rows)} critical insight(s)** currently open:\n\n" +
+            _fmt_table(rows, ["type", "entity_name", "title", "status", "detected_at"])
+            if rows else "No open critical insights. ✅"
+        ),
+    ),
+    IntentDef(
+        key="capacity_warnings",
+        display_name="Capacity warning insights",
+        keywords=["capacity warnings", "capacity insights", "tenants with capacity issues",
+                  "capacity alerts", "low capacity tenants", "capacity problems"],
+        patterns=[r"(?:tenants?|projects?)\s+with\s+capacity\s+(?:warnings?|issues?|problems?)",
+                  r"capacity\s+(?:warnings?|alerts?|insights?)"],
+        sql="""SELECT entity_name, entity_id, title, severity, status, detected_at
+               FROM operational_insights
+               WHERE type LIKE 'capacity_%' AND status NOT IN ('resolved')
+               ORDER BY severity, detected_at DESC LIMIT 30""",
+        formatter=lambda rows: (
+            f"**{len(rows)} capacity insight(s)** across tenants:\n\n" +
+            _fmt_table(rows, ["entity_name", "title", "severity", "status"])
+            if rows else "No open capacity insights. ✅"
+        ),
+    ),
+    IntentDef(
+        key="waste_insights",
+        display_name="Waste insights",
+        keywords=["waste insights", "idle vms", "wasted resources", "waste summary",
+                  "idle resources", "overprovisioned", "unused vms"],
+        patterns=[r"waste\s+insights?",
+                  r"idle\s+(?:vms?|servers?|resources?)",
+                  r"wasted\s+resources?"],
+        sql="""SELECT entity_name, entity_id, title, severity, status,
+                      metadata->>'idle_days' AS idle_days, detected_at
+               FROM operational_insights
+               WHERE type LIKE 'waste_%' AND status NOT IN ('resolved')
+               ORDER BY (metadata->>'idle_days')::int DESC NULLS LAST, detected_at DESC LIMIT 30""",
+        formatter=lambda rows: (
+            f"**{len(rows)} waste insight(s)** detected:\n\n" +
+            _fmt_table(rows, ["entity_name", "title", "idle_days", "severity", "status"])
+            if rows else "No open waste insights. ✅"
+        ),
+        supports_scope=True,
+        sql_template="""SELECT entity_name, entity_id, title, severity, status,
+                               metadata->>'idle_days' AS idle_days, detected_at
+                        FROM operational_insights
+                        WHERE type LIKE 'waste_%' AND status NOT IN ('resolved') {scope_and}
+                        ORDER BY (metadata->>'idle_days')::int DESC NULLS LAST LIMIT 30""",
+    ),
+    IntentDef(
+        key="unacknowledged_insights_count",
+        display_name="Unacknowledged insights",
+        keywords=["unacknowledged insights", "how many open insights", "insights count",
+                  "unacked insights", "total open insights", "insights summary"],
+        patterns=[r"how\s+many\s+(?:insights?|issues?|alerts?)\s+(?:are\s+)?(?:open|unacknowledged|unacked)",
+                  r"(?:unacknowledged|unacked)\s+insights?"],
+        sql="""SELECT status, severity, COUNT(*) AS count
+               FROM operational_insights
+               WHERE status NOT IN ('resolved')
+               GROUP BY status, severity
+               ORDER BY severity, status""",
+        formatter=lambda rows: (
+            "**Open insights by status and severity**:\n\n" +
+            _fmt_table(rows, ["severity", "status", "count"])
+            if rows else "No open insights. ✅"
+        ),
+    ),
+    IntentDef(
+        key="risk_summary",
+        display_name="Risk summary",
+        keywords=["risk summary", "risk insights", "tenant risk", "project risk",
+                  "risk overview", "health risk", "snapshot risk"],
+        patterns=[r"risk\s+(?:summary|overview|insights?)",
+                  r"(?:tenant|project)\s+risk"],
+        sql="""SELECT entity_name, entity_id, title, severity, status, detected_at
+               FROM operational_insights
+               WHERE type LIKE 'risk_%' AND status NOT IN ('resolved')
+               ORDER BY severity, entity_name LIMIT 30""",
+        formatter=lambda rows: (
+            f"**{len(rows)} risk insight(s)** open:\n\n" +
+            _fmt_table(rows, ["entity_name", "title", "severity", "status", "detected_at"])
+            if rows else "No open risk insights. ✅"
+        ),
+        supports_scope=True,
+        sql_template="""SELECT entity_name, entity_id, title, severity, status, detected_at
+                        FROM operational_insights
+                        WHERE type LIKE 'risk_%' AND status NOT IN ('resolved') {scope_and}
+                        ORDER BY severity, entity_name LIMIT 30""",
+    ),
 ]
 
 

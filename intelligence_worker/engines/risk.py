@@ -89,6 +89,15 @@ class RiskEngine(BaseEngine):
                 message=message,
                 metadata={"uncovered_vms": count},
             )
+            # Phase 2: auto-ticket for snapshot coverage gap (high severity)
+            self.auto_create_ticket(
+                insight_type=_TYPE_SNAP_GAP,
+                entity_type="tenant",
+                entity_id=project_id,
+                title=f"[Auto] Snapshot coverage gap — {project_name}",
+                description=message,
+                priority="high",
+            )
 
     # ------------------------------------------------------------------
     # C2 — Health score decline
@@ -181,6 +190,16 @@ class RiskEngine(BaseEngine):
                 message=message,
                 metadata={"previous_score": score_prev, "current_score": score_now, "drop": drop},
             )
+            # Phase 2: auto-ticket for critical health decline
+            if severity == "critical":
+                self.auto_create_ticket(
+                    insight_type=_TYPE_HEALTH,
+                    entity_type="tenant",
+                    entity_id=project_id,
+                    title=f"[Auto] Critical health decline — {project_name}",
+                    description=message,
+                    priority="critical",
+                )
 
     # ------------------------------------------------------------------
     # C3 — Unacknowledged critical drift
