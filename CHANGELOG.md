@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.86.3] - 2026-04-20
+
+### Fixed
+
+- **WasteEngine crash: `None` metric values** — `WasteEngine._check_idle_vms()` formatted `row['overall_score']`, `row['cpu_efficiency']`, `row['ram_efficiency']` directly with `:.0f`. When any value is `NULL` in the DB the format spec raises `unsupported format string passed to NoneType.__format__`, causing the entire engine (all three waste detectors) to be skipped silently. Fixed by extracting `float(val or 0)` before the format string.
+
+### Added
+
+- **SLA Tier assignment UI** — admins can now assign an SLA tier to any tenant directly from the SLA Summary sub-tab without touching the API. An **Assign SLA Tier** button opens a modal that loads the available tier templates (`GET /api/sla/tiers`) and all tenants, lets the operator pick a tier, and saves via `PUT /api/sla/commitments/{tenant_id}`. The SLA Summary table refreshes automatically after saving. Tier KPI targets (uptime, RTO, RPO, backup frequency) are shown inline in the modal for reference.
+
 ## [1.86.2] - 2026-04-19
 
 ### Fixed

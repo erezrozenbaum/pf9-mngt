@@ -661,6 +661,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.86.3 — WasteEngine crash fix + SLA Tier assignment UI (✅ Complete)
+
+- **WasteEngine crash on `None` metric values — fixed**: `_check_idle_vms()` used `{row['overall_score']:.0f}` etc. in a format string. When those columns are `NULL` in the DB the `:0f` spec raises `unsupported format string passed to NoneType.__format__`, causing all three waste detectors (idle VMs, unattached volumes, stale snapshots) to be skipped on every cycle. Fixed by extracting `float(val or 0)` before formatting.
+- **SLA Tier assignment UI added**: Admins can now assign an SLA tier to any tenant directly from the SLA Summary sub-tab (Insights → SLA Summary → **Assign SLA Tier**). The modal loads tier templates and tenant list, displays the selected tier's KPI targets inline, and saves via `PUT /api/sla/commitments/{tenant_id}`. The table refreshes automatically. Prior to this change the only way to configure commitments was via the raw API.
+
 ### v1.86.2 — SLA Summary crash + interface field-name mismatch (✅ Complete)
 
 - **SLA Summary blank page crash — fixed**: `InsightsTab.tsx` `loadSlaSummary` consumed `data.projects` on the `/api/sla/compliance/summary` response, but the endpoint returns `{ summary: [...], month: "..." }`. Accessing `.projects` returned `undefined`, which was stored in state; the render then crashed with `TypeError: Cannot read properties of undefined (reading 'length')`. Fixed: use `data.summary ?? []` and updated the inline type annotation to `{ summary: SlaSummaryRow[]; month: string }`.

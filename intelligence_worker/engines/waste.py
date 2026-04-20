@@ -82,6 +82,9 @@ class WasteEngine(BaseEngine):
             cls        = row["classification"]
             idle_days  = row["idle_days"] or 0
             severity   = "medium" if cls == "idle" else "low"
+            score   = float(row["overall_score"] or 0)
+            cpu_eff = float(row["cpu_efficiency"] or 0)
+            ram_eff = float(row["ram_efficiency"] or 0)
             title = (
                 f"VM {vm_name} has been {cls} for {idle_days} day(s) "
                 f"— candidate for shutdown or rightsizing"
@@ -89,8 +92,8 @@ class WasteEngine(BaseEngine):
             message = (
                 f"VM {vm_name!r} in project {project!r} has maintained "
                 f"{cls!r} efficiency for {idle_days} day(s). "
-                f"Overall score: {row['overall_score']:.0f}/100 "
-                f"(CPU {row['cpu_efficiency']:.0f}%, RAM {row['ram_efficiency']:.0f}%). "
+                f"Overall score: {score:.0f}/100 "
+                f"(CPU {cpu_eff:.0f}%, RAM {ram_eff:.0f}%). "
                 f"Consider downsizing the flavor, suspending, or decommissioning."
             )
             self.upsert_insight(
@@ -104,9 +107,9 @@ class WasteEngine(BaseEngine):
                 metadata={
                     "classification":   cls,
                     "idle_days":        idle_days,
-                    "overall_score":    float(row["overall_score"] or 0),
-                    "cpu_efficiency":   float(row["cpu_efficiency"] or 0),
-                    "ram_efficiency":   float(row["ram_efficiency"] or 0),
+                    "overall_score":    score,
+                    "cpu_efficiency":   cpu_eff,
+                    "ram_efficiency":   ram_eff,
                     "project":          project,
                 },
             )

@@ -50,6 +50,22 @@ interface SlaSummaryRow {
   overall_status: string;
 }
 
+interface SlaTierTemplate {
+  id: string;
+  name: string;
+  uptime_pct: number | null;
+  rto_hours: number | null;
+  rpo_hours: number | null;
+  mtta_hours: number | null;
+  mttr_hours: number | null;
+  backup_freq_hours: number | null;
+}
+
+interface TenantOption {
+  id: string;
+  name: string;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -111,6 +127,15 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   const [slaSummary, setSlaSummary] = useState<SlaSummaryRow[]>([]);
   const [slaLoading, setSlaLoading] = useState(false);
 
+  // SLA assign modal
+  const [slaModalOpen, setSlaModalOpen] = useState(false);
+  const [slaTiers, setSlaTiers] = useState<SlaTierTemplate[]>([]);
+  const [slaTenants, setSlaTenants] = useState<TenantOption[]>([]);
+  const [slaPickTenant, setSlaPickTenant] = useState("");
+  const [slaPickTier, setSlaPickTier] = useState("bronze");
+  const [slaSaving, setSlaSaving] = useState(false);
+  const [slaError, setSlaError] = useState("");
+
   // Snooze modal
   const [snoozeTarget, setSnoozeTarget] = useState<number | null>(null);
   const [snoozeUntil,  setSnoozeUntil]  = useState("");
@@ -150,6 +175,38 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   useEffect(() => { loadInsights(1); }, [filterStatus, filterSeverity, filterType]);
   useEffect(() => { loadSummary(); }, []);
   useEffect(() => { if (innerTab === "sla") loadSlaSummary(); }, [innerTab]);
+
+  async function openSlaModal() {
+    setSlaError("");
+    setSlaPickTenant("");
+    setSlaPickTier("bronze");
+    setSlaModalOpen(true);
+    const [tiersData, tenantsData] = await Promise.all([
+      apiFetch<{ tiers: SlaTierTemplate[] }>("/api/sla/tiers"),
+      apiFetch<{ data: TenantOption[] }>("/api/resources/context/projects"),
+    ]);
+    setSlaTiers(tiersData.tiers ?? []);
+    setSlaTenants(tenantsData.data ?? []);
+  }
+
+  async function saveSlaCommitment() {
+    if (!slaPickTenant) { setSlaError("Please select a tenant."); return; }
+    setSlaSaving(true);
+    setSlaError("");
+    try {
+      await apiFetch(`/api/sla/commitments/${slaPickTenant}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier: slaPickTier }),
+      });
+      setSlaModalOpen(false);
+      loadSlaSummary();
+    } catch (e: unknown) {
+      setSlaError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSlaSaving(false);
+    }
+  }
 
   // ------- Lifecycle actions -------
 
@@ -416,12 +473,30 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
     if (slaLoading) {
       return <div style={{ padding: "2rem 1.5rem", color: "var(--text-secondary,#6b7280)" }}>Loading SLA summary…</div>;
     }
+
+    const selectedTier = slaTiers.find((t) => t.name === slaPickTier);
+
     return (
       <div className="insights-feed">
+        {/* Header row with assign button */}
+        {canWrite && (
+          <div style={{ display: "flex", justifyContent: "flex-end", padding: "0.75rem 1rem 0" }}>
+            <button className="insights-action-btn" onClick={openSlaModal}>
+              ＋ Assign SLA Tier
+            </button>
+          </div>
+        )}
+
         {slaSummary.length === 0 ? (
           <div className="insights-empty">
             <div className="insights-empty-icon">📋</div>
             <p className="insights-empty-text">No SLA commitments configured.</p>
+            {canWrite && (
+              <p style={{ fontSize: "0.85rem", color: "var(--text-secondary,#9ca3af)", marginTop: "0.5rem" }}>
+                Use the <strong>Assign SLA Tier</strong> button above to set a tier for a tenant.
+                The SLA worker will compute compliance on its next run (every 4 hours).
+              </p>
+            )}
           </div>
         ) : (
           <table className="insights-table">
@@ -462,6 +537,66 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
               ))}
             </tbody>
           </table>
+        )}
+
+        {/* Assign SLA Tier modal */}
+        {slaModalOpen && (
+          <div className="insights-modal-overlay" onClick={() => setSlaModalOpen(false)}>
+            <div className="insights-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="insights-modal-header">
+                <span>Assign SLA Tier</span>
+                <button className="insights-modal-close" onClick={() => setSlaModalOpen(false)}>✕</button>
+              </div>
+              <div className="insights-modal-body" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                  <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary,#6b7280)" }}>TENANT</span>
+                  <select
+                    className="insights-select"
+                    value={slaPickTenant}
+                    onChange={(e) => setSlaPickTenant(e.target.value)}
+                  >
+                    <option value="">— select tenant —</option>
+                    {slaTenants.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                  <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary,#6b7280)" }}>TIER</span>
+                  <select
+                    className="insights-select"
+                    value={slaPickTier}
+                    onChange={(e) => setSlaPickTier(e.target.value)}
+                  >
+                    {slaTiers.length > 0
+                      ? slaTiers.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)
+                      : ["bronze", "silver", "gold", "custom"].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+
+                {selectedTier && (
+                  <div style={{ fontSize: "0.78rem", background: "var(--bg-secondary,#1e2028)", borderRadius: "6px", padding: "0.6rem 0.8rem", color: "var(--text-secondary,#9ca3af)" }}>
+                    {selectedTier.uptime_pct != null && <span>Uptime ≥ {selectedTier.uptime_pct}% &nbsp;·&nbsp; </span>}
+                    {selectedTier.rto_hours != null && <span>RTO {selectedTier.rto_hours}h &nbsp;·&nbsp; </span>}
+                    {selectedTier.rpo_hours != null && <span>RPO {selectedTier.rpo_hours}h &nbsp;·&nbsp; </span>}
+                    {selectedTier.backup_freq_hours != null && <span>Backup every {selectedTier.backup_freq_hours}h</span>}
+                  </div>
+                )}
+
+                {slaError && (
+                  <p style={{ color: "var(--color-danger,#ef4444)", fontSize: "0.85rem", margin: 0 }}>{slaError}</p>
+                )}
+              </div>
+              <div className="insights-modal-footer">
+                <button className="insights-action-btn" onClick={saveSlaCommitment} disabled={slaSaving}>
+                  {slaSaving ? "Saving…" : "Save"}
+                </button>
+                <button className="insights-cancel-btn" onClick={() => setSlaModalOpen(false)}>Cancel</button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     );
