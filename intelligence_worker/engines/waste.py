@@ -113,6 +113,31 @@ class WasteEngine(BaseEngine):
                     "project":          project,
                 },
             )
+            # Phase 2: attach cleanup recommendation for long-idle VMs
+            if idle_days >= 14:
+                self.upsert_recommendation(
+                    insight_type=_TYPE_VM,
+                    entity_type="vm",
+                    entity_id=vm_id,
+                    action_type="runbook",
+                    action_payload={
+                        "runbook_key": "orphan_resource_cleanup",
+                        "scope": {"vm_id": vm_id, "vm_name": vm_name, "project": project},
+                    },
+                    estimated_impact=f"Free VM resources; reclaim flavor allocation for {vm_name}",
+                )
+            elif idle_days >= 7:
+                self.upsert_recommendation(
+                    insight_type=_TYPE_VM,
+                    entity_type="vm",
+                    entity_id=vm_id,
+                    action_type="resize",
+                    action_payload={
+                        "vm_id": vm_id, "vm_name": vm_name, "project": project,
+                        "suggestion": "Downsize flavor — CPU/RAM barely used",
+                    },
+                    estimated_impact="Reduce flavor size to recover unused vCPUs and RAM",
+                )
 
     # ------------------------------------------------------------------
     # B2 — Unattached volumes

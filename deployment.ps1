@@ -823,7 +823,11 @@ $provisioningMigrations = @(
     @{File="db\migrate_metering_region.sql"; Desc="Multi-region metering v1.74.5: region_id column + indexes on metering_resources, metering_snapshots, metering_restores, metering_quotas, metering_efficiency, backup_history"},
     @{File="db\migrate_phase6_api.sql"; Desc="Multi-region API filtering v1.75.0: search_documents.region_id column + idx_search_documents_region_id index + search_ranked function 9th filter_region parameter"},
     @{File="db\migrate_phase7_nav.sql"; Desc="Multi-region management UI v1.76.0: cluster_management nav item added to admin_tools navigation group"},
-    @{File="db\migrate_phase8_migration_norm.sql"; Desc="Migration planner normalization v1.77.0: source_region_id + target_region_id FKs on migration_projects; idx_cluster_tasks_pending index"}
+    @{File="db\migrate_phase8_migration_norm.sql"; Desc="Migration planner normalization v1.77.0: source_region_id + target_region_id FKs on migration_projects; idx_cluster_tasks_pending index"},
+    @{File="db\migrate_v1_85_0_intelligence.sql"; Desc="Operational Intelligence v1.85.0: operational_insights table, indexes, RBAC"},
+    @{File="db\migrate_v1_85_0_sla.sql";          Desc="SLA Compliance v1.85.0: sla_tier_templates, sla_commitments, sla_compliance_monthly, RBAC"},
+    @{File="db\migrate_v1_86_1_insights_nav.sql"; Desc="Insights navigation v1.86.1: Insights nav item + department visibility"},
+    @{File="db\migrate_intelligence_v2.sql";       Desc="Operational Intelligence Phase 2 v1.88.0: insight_recommendations table + indexes"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."
