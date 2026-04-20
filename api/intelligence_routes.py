@@ -166,7 +166,7 @@ def insights_summary(
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(f"""  # nosec B608 - type_clause is either empty or a fixed parameterized fragment; dept_types passed via %s
+            cur.execute(f"""  # nosec B608 - type_clause is either empty or a fixed parameterized fragment; dept_types passed via %s
                 SELECT
                     severity,
                     COUNT(*) AS count
@@ -177,7 +177,7 @@ def insights_summary(
             """, base_params)
             by_severity = {r["severity"]: r["count"] for r in cur.fetchall()}
 
-                cur.execute(f"""  # nosec B608 - same: type_clause is a fixed parameterized fragment or empty string
+            cur.execute(f"""  # nosec B608 - same: type_clause is a fixed parameterized fragment or empty string
                 SELECT type, COUNT(*) AS count
                 FROM operational_insights
                 WHERE status IN ('open','acknowledged','snoozed')
