@@ -3772,6 +3772,9 @@ CREATE INDEX IF NOT EXISTS idx_insights_detected_at
 CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_dedup
     ON operational_insights(type, entity_type, entity_id)
     WHERE status IN ('open','acknowledged','snoozed');
+-- Prefix index for efficient department-based type filtering (e.g. anomaly_*)
+CREATE INDEX IF NOT EXISTS idx_insights_type_prefix
+    ON operational_insights (type text_pattern_ops);
 
 -- -------------------------------------------------------------------------
 -- Insight Recommendations (v1.88.0 — Phase 2)

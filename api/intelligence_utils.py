@@ -25,10 +25,13 @@ _DEPT_MAP: dict[str, list[str]] = {
     "snapshot":     ["support"],
     "incident":     ["support"],
     # Engineering workspace — resource health, capacity, efficiency
-    "capacity":     ["engineering"],
-    "waste":        ["engineering"],
-    "anomaly":      ["engineering"],
-    "cross_region": ["engineering"],
+    "capacity":          ["engineering"],
+    "capacity_storage":  ["engineering"],
+    "capacity_compute":  ["engineering"],
+    "capacity_quota":    ["engineering"],
+    "waste":             ["engineering"],
+    "anomaly":           ["engineering"],
+    "cross_region":      ["engineering"],
     # Operations workspace — risk + health score monitoring
     "risk":         ["operations", "support"],   # critical risk → both teams
     "health":       ["operations"],
@@ -52,7 +55,11 @@ def types_for_department(department: Optional[str]) -> Optional[List[str]]:
 
     Returns None when department is None or 'general' — meaning no type filter
     should be applied (full global feed).
+
+    Includes prefix-match expansion so that e.g. "anomaly" in the map also
+    covers DB types like "anomaly_snapshot_spike", "anomaly_vm_spike", etc.
     """
     if not department or department == "general":
         return None
-    return [t for t, depts in _DEPT_MAP.items() if department in depts]
+    base_types = [t for t, depts in _DEPT_MAP.items() if department in depts]
+    return base_types

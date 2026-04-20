@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.88.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.89.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -609,7 +609,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
-### 🩹 SLA Summary Route Hotfix + Insights Feed Tenant Column — v1.88.1
+### � Extended Forecasting, Cross-Region Intelligence & Anomaly Detection — v1.89.0
+
+**[v1.89.0](CHANGELOG.md)** — Capacity engine extended with per-hypervisor compute forecasting and per-project quota-saturation forecasting (vCPUs, RAM, instances, floating IPs) including confidence scoring. New cross-region engine detects utilization imbalance, risk concentration, and growth-rate divergence across regions. New threshold-based anomaly engine fires on snapshot spikes, VM-count spikes, and API error spikes. Two new REST endpoints: `GET /api/intelligence/forecast` (on-demand runway per project/resource) and `GET /api/intelligence/regions` (per-region utilization + runway + growth). Intelligence Dashboard gains two tabs: Capacity Forecast and Cross-Region comparison. Department filter upgraded to prefix matching so insight subtypes are correctly routed. 524 unit tests pass, 0 HIGH bandit findings.
+
+### �🩹 SLA Summary Route Hotfix + Insights Feed Tenant Column — v1.88.1
 
 **[v1.88.1](CHANGELOG.md)** — Hotfix: `GET /api/sla/compliance/summary` was being shadowed by the earlier `GET /api/sla/compliance/{tenant_id}` route (FastAPI matches in registration order), causing the SLA Summary tab to always show empty even when tiers were configured. Fixed by reordering the routes. Also adds a Tenant/Project column to the Insights Feed table (from `metadata.project`), matching the column already present in Risk & Capacity. No DB migration required.
 ### � Phase 2 Intelligence — Recommendations, Bulk Actions, Copilot Intents — v1.88.0

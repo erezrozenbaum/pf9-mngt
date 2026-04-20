@@ -198,6 +198,144 @@ def test_intelligence():  # noqa: C901
     r_invalid = requests.get(f"{BASE}/api/intelligence/insights?department=invalid_dept", headers=hdrs)
     check("Invalid ?department= returns 422", r_invalid.status_code == 422)
 
+    # ── [10] Bulk-acknowledge ─────────────────────────────────────────────────
+    print("\n[10] Bulk-acknowledge")
+    r = requests.post(
+        f"{BASE}/api/intelligence/insights/bulk-acknowledge",
+        headers={**hdrs, "Content-Type": "application/json"},
+        json={"severity": "low"},
+    )
+    check("POST bulk-acknowledge 200", r.status_code == 200, r.text[:120])
+    body = r.json()
+    check("Response has 'acknowledged' count", "acknowledged" in body)
+    check("Acknowledged count is int >= 0", isinstance(body.get("acknowledged"), int) and body["acknowledged"] >= 0)
+    info(f"  Bulk-acknowledged {body.get('acknowledged', '?')} low-severity insights")
+
+    # Verify filter applies: bulk-ack with unknown type should ack zero
+    r_zero = requests.post(
+        f"{BASE}/api/intelligence/insights/bulk-acknowledge",
+        headers={**hdrs, "Content-Type": "application/json"},
+        json={"type": "__nonexistent_type_xyz__"},
+    )
+    check("Bulk-acknowledge unknown type acks 0", r_zero.json().get("acknowledged", -1) == 0)
+
+    # ── [11] Bulk-resolve ────────────────────────────────────────────────────
+    print("\n[11] Bulk-resolve")
+    r = requests.post(
+        f"{BASE}/api/intelligence/insights/bulk-resolve",
+        headers={**hdrs, "Content-Type": "application/json"},
+        json={"type": "waste_idle_vm"},
+    )
+    check("POST bulk-resolve 200", r.status_code == 200, r.text[:120])
+    body = r.json()
+    check("Response has 'resolved' count", "resolved" in body)
+    check("Resolved count is int >= 0", isinstance(body.get("resolved"), int) and body["resolved"] >= 0)
+    info(f"  Bulk-resolved {body.get('resolved', '?')} waste_idle_vm insights")
+
+    # Verify empty body still returns 200 (resolves all open)
+    r_all = requests.post(
+        f"{BASE}/api/intelligence/insights/bulk-resolve",
+        headers={**hdrs, "Content-Type": "application/json"},
+        json={},
+    )
+    check("POST bulk-resolve empty body 200", r_all.status_code == 200)
+
+    # ── [12] Recommendations ─────────────────────────────────────────────────
+    print("\n[12] Recommendations")
+    # Re-fetch any open insight that could have recommendations
+    r = requests.get(f"{BASE}/api/intelligence/insights?status=open&page_size=10", headers=hdrs)
+    open_items = r.json().get("insights", [])
+    if not open_items:
+        info("  No open insights; creating a dummy check on id=1")
+        # GET on a non-existent insight's recs should still return 200 with empty list or 404
+        r_recs = requests.get(f"{BASE}/api/intelligence/insights/1/recommendations", headers=hdrs)
+        check("GET /insights/1/recommendations returns 200 or 404",
+              r_recs.status_code in (200, 404))
+    else:
+        iid = open_items[0]["id"]
+        r_recs = requests.get(f"{BASE}/api/intelligence/insights/{iid}/recommendations", headers=hdrs)
+        check(f"GET /insights/{iid}/recommendations 200", r_recs.status_code == 200, r_recs.text[:120])
+        check("Response has 'recommendations' list", "recommendations" in r_recs.json())
+        recs = r_recs.json()["recommendations"]
+        info(f"  Found {len(recs)} recommendation(s) for insight {iid}")
+        if recs:
+            rec = recs[0]
+            check("Rec has id",               "id" in rec)
+            check("Rec has action_type",      "action_type" in rec)
+            check("Rec has action_payload",   "action_payload" in rec)
+            check("Rec has status",           "status" in rec)
+            check("Rec status is valid",
+                  rec.get("status") in ("pending", "executed", "dismissed"))
+
+    # ── [13] Dismiss recommendation ───────────────────────────────────────────
+    print("\n[13] Dismiss recommendation")
+    # Find an insight with pending recommendations to dismiss
+    r = requests.get(f"{BASE}/api/intelligence/insights?status=open&page_size=50", headers=hdrs)
+    candidate_iid: int | None = None
+    candidate_rid: int | None = None
+    for item in r.json().get("insights", []):
+        r_recs = requests.get(f"{BASE}/api/intelligence/insights/{item['id']}/recommendations", headers=hdrs)
+        if r_recs.status_code == 200:
+            pending = [rx for rx in r_recs.json().get("recommendations", []) if rx["status"] == "pending"]
+            if pending:
+                candidate_iid = item["id"]
+                candidate_rid = pending[0]["id"]
+                break
+    if candidate_iid is None:
+        info("  No pending recommendations found; dismiss test skipped")
+    else:
+        info(f"  Dismissing rec {candidate_rid} on insight {candidate_iid}")
+        r_dis = requests.post(
+            f"{BASE}/api/intelligence/insights/{candidate_iid}/recommendations/{candidate_rid}/dismiss",
+            headers=hdrs,
+        )
+        check("POST dismiss 200", r_dis.status_code == 200, r_dis.text[:120])
+        check("Response has dismissed=True", r_dis.json().get("dismissed") is True)
+
+        # Idempotency — second dismiss returns 404 (already dismissed)
+        r_dis2 = requests.post(
+            f"{BASE}/api/intelligence/insights/{candidate_iid}/recommendations/{candidate_rid}/dismiss",
+            headers=hdrs,
+        )
+        check("Re-dismiss returns 404", r_dis2.status_code == 404)
+
+    # ── [14] Capacity Forecast endpoint ───────────────────────────────────────
+    print("\n[14] Capacity Forecast endpoint")
+    r = requests.get(f"{BASE}/api/intelligence/forecast", headers=hdrs)
+    check("GET /api/intelligence/forecast 200", r.status_code == 200, r.text[:120])
+    body = r.json()
+    check("Response has 'forecasts' list", "forecasts" in body)
+    forecasts = body.get("forecasts", [])
+    info(f"  {len(forecasts)} project forecast(s) returned")
+    if forecasts:
+        f0 = forecasts[0]
+        check("Forecast has project_id",    "project_id"   in f0)
+        check("Forecast has project_name",  "project_name" in f0)
+        check("Forecast has resources",     "resources"    in f0)
+        resources = f0.get("resources", {})
+        if resources:
+            resource_key = next(iter(resources))
+            r0 = resources[resource_key]
+            check(f"Resource '{resource_key}' has used",    "used"    in r0)
+            check(f"Resource '{resource_key}' has quota",   "quota"   in r0)
+            check(f"Resource '{resource_key}' has days_to_90", "days_to_90" in r0)
+
+    # ── [15] Region Comparison endpoint ───────────────────────────────────────
+    print("\n[15] Region Comparison endpoint")
+    r = requests.get(f"{BASE}/api/intelligence/regions", headers=hdrs)
+    check("GET /api/intelligence/regions 200", r.status_code == 200, r.text[:120])
+    body = r.json()
+    check("Response has 'regions' list", "regions" in body)
+    regions = body.get("regions", [])
+    info(f"  {len(regions)} region(s) returned")
+    if regions:
+        reg = regions[0]
+        check("Region has region_id",          "region_id"          in reg)
+        check("Region has hypervisors",        "hypervisors"        in reg)
+        check("Region has vcpu_utilization",   "vcpu_utilization"   in reg)
+        check("Region has open_critical",      "open_critical"      in reg)
+        check("Region has capacity_runway_days", "capacity_runway_days" in reg)
+
     # ── Final ─────────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     if errors:

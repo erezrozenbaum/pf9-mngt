@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.89.0] - 2026-04-20
+
+### Added
+
+- **Capacity Forecast endpoint** — `GET /api/intelligence/forecast` runs per-project linear regression over the last 14 days of metering data and returns days-to-90%-quota runway, trend, and confidence score for storage, vCPUs, RAM, instances, and floating IPs.
+- **Region Comparison endpoint** — `GET /api/intelligence/regions` aggregates per-region vCPU and RAM utilization, running-VM count, open critical/high insight counts, capacity runway, and VM growth rate from live hypervisor inventory.
+- **Extended capacity forecasting** — Capacity engine now fires compute-capacity insights per hypervisor (vCPU / RAM saturation using VM history trend) and quota-saturation insights per project per resource type (`capacity_quota_vcpu`, `capacity_quota_ram`, `capacity_quota_instances`, `capacity_quota_floating_ip`). All capacity insights include a confidence score and R² value in metadata.
+- **Cross-region intelligence engine** — New engine detects three cross-region conditions: utilization imbalance (one region ≥80% vCPU while another ≤40%), risk concentration (≥3 critical/high insights in one region comprising ≥70% of fleet total), and growth-rate divergence (a region's VM growth rate exceeds 2× the fleet average). Fires `cross_region_imbalance`, `cross_region_concentration`, and `cross_region_growth` insights. Requires ≥2 regions; silently skips single-region deployments.
+- **Anomaly detection engine** — Threshold-based (no ML) detector for three patterns: snapshot spike (>50% week-over-week increase in `snapshots_used`), VM count spike (>20% growth in 48 h), and API error spike (endpoint error rate >3× its 7-day baseline). Fires `anomaly_snapshot_spike`, `anomaly_vm_spike`, and `anomaly_api_errors` insights. All three auto-resolve when conditions clear.
+- **Intelligence Dashboard — 4-tab layout**: Feed · Risk & Capacity · **Capacity Forecast** · **Cross-Region** · SLA Summary.
+  - Capacity Forecast tab: per-project table showing days-to-90% runway per resource with confidence badge and colour-coded urgency.
+  - Cross-Region tab: per-region utilization bars, running-VM count, active critical/high insights, storage runway, and VM growth rate.
+  - Type filter dropdown extended with Capacity subtypes, Anomaly group, and Cross-Region group.
+  - Engineering workspace hint updated to include anomaly and cross-region types.
+
+### Changed
+
+- Department filter in insight listing and summary endpoints now uses prefix matching (`type LIKE 'anomaly_%'` etc.) so subtype insight names (`anomaly_vm_spike`, `cross_region_imbalance`) are correctly routed to their workspace.
+- `intelligence_utils.py` department map extended with `capacity_storage`, `capacity_compute`, and `capacity_quota` mapped to the `engineering` workspace.
+
+### Fixed
+
+- Unused `get_current_user` and `VALID_DEPARTMENTS` imports removed from `intelligence_routes.py`.
+
+### Infrastructure
+
+- DB index `idx_insights_type_prefix` (text_pattern_ops) added to `operational_insights.type` to accelerate LIKE prefix queries. Migration applied to live Kubernetes cluster and Docker `init.sql`.
+
+---
+
 ## [1.88.1] - 2026-04-20
 
 ### Fixed
