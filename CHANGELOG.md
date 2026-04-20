@@ -5,7 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.88.0] - 2026-04-21
+## [1.88.1] - 2026-04-20
+
+### Fixed
+
+- **SLA Summary blank despite saved tiers** — `GET /api/sla/compliance/summary` was being matched by the earlier `GET /api/sla/compliance/{tenant_id}` route (FastAPI evaluates routes in registration order). Moved the specific `/compliance/summary` route before the parameterised `/compliance/{tenant_id}` route so the summary endpoint is always reached correctly.
+- **Insights Feed missing Tenant column** — Added Tenant / Project column to the Insights Feed table (sourced from `metadata.project` or `metadata.tenant_name`), matching the column already present in Risk & Capacity.
+
 
 ### Added
 

@@ -426,6 +426,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                   <th>Severity</th>
                   <th>Type</th>
                   <th>Entity</th>
+                  <th>Tenant</th>
                   <th>Title</th>
                   <th>Status</th>
                   <th>Detected</th>
@@ -450,6 +451,9 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                       <div style={{ fontSize: "0.75rem", color: "var(--text-secondary,#6b7280)" }}>
                         {ins.entity_type}
                       </div>
+                    </td>
+                    <td style={{ fontSize: "0.8rem", color: "var(--text-secondary,#6b7280)" }}>
+                      {(ins.metadata?.project as string) || (ins.metadata?.tenant_name as string) || "—"}
                     </td>
                     <td>
                       <div style={{ maxWidth: 280 }}>
@@ -505,7 +509,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                   {/* Recommendations expansion panel */}
                   {expandedRecs[ins.id] !== undefined && (
                     <tr key={`recs-${ins.id}`}>
-                      <td colSpan={canWrite ? 7 : 6} style={{ background: "var(--bg-subtle,#f9fafb)", padding: "0.5rem 1rem 0.75rem" }}>
+                      <td colSpan={canWrite ? 8 : 7} style={{ background: "var(--bg-subtle,#f9fafb)", padding: "0.5rem 1rem 0.75rem" }}>
                         <strong style={{ fontSize: "0.78rem" }}>Recommendations</strong>
                         {expandedRecs[ins.id].length === 0 ? (
                           <span style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)", marginLeft: "0.5rem" }}>
