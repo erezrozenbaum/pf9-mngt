@@ -46,7 +46,9 @@ interface SlaSummaryRow {
   tenant_name: string;
   tier?: string;
   breach_fields: string[];
-  at_risk_fields: string[]
+  at_risk_fields: string[];
+  overall_status: string;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -427,8 +429,6 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
               <tr>
                 <th>Tenant</th>
                 <th>Tier</th>
-                <th>Tenant</th>
-                <th>Tier</th>
                 <th>Breached KPIs</th>
                 <th>At-Risk KPIs</th>
                 <th>Status</th>
@@ -451,8 +451,6 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                   <td>
                     {row.at_risk_fields.length > 0
                       ? <span style={{ color: "var(--color-warning,#f59e0b)" }}>{row.at_risk_fields.join(", ")}</span>
-                      : <span style={{ color: "var(--text-secondary,#9ca3af)" }}>none</span>}
-                  in(", ")}</span>
                       : <span style={{ color: "var(--text-secondary,#9ca3af)" }}>none</span>}
                   </td>
                   <td>
