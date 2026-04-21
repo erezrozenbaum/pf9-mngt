@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.91.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.91.2-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -302,7 +302,7 @@ Per-VM resource tracking, snapshot / restore metering, API usage metrics, effici
 ### 🤖 AI Ops Copilot — Query Layer for the Entire Platform
 Not just an LLM integration — a purpose-built operator assistant that queries your live infrastructure in plain language. Ask *"which tenants are over quota?"*, *"show drift events from last week"*, or *"how many VMs are powered off on host X?"* and get live SQL-backed answers instantly. 40+ built-in intents with tenant / project / host scoping. Ollama backend keeps all data on your network; OpenAI / Anthropic available with automatic sensitive-data redaction.
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.91.0)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.91.2)*
 A completely isolated, MFA-protected web portal that gives your customers read and restore access to their own infrastructure — without exposing your admin panel.
 
 - **Security by design**: data isolated at the PostgreSQL Row-Level Security layer (not just application code); separate JWT namespace; IP-bound Redis sessions; per-user rate limiting.
@@ -612,6 +612,15 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+
+### 🩹 PSA Webhooks, Health 500, Clickable Sort Headers — v1.91.2
+
+**[v1.91.2](CHANGELOG.md)** — Bug-fix patch. Fixed `GET /api/psa/configs` and `POST /api/psa/configs/{id}/test-fire` missing `/api` prefix in `IntelligenceSettingsPanel.tsx` — PSA Webhooks tab no longer throws `Unexpected token '<', "<!doctype"...`. Fixed `/internal/client-health/{tenant_id}` 500: endpoint was querying non-existent `resource`/`runway_days` columns on `metering_quotas`; replaced with correct linear-regression runway logic (`_days_runway` / `_linear_forecast` over 14-day quota history). Insights Feed column headers (Entity, Tenant, Status, Detected, Severity, Type) are now clickable sort triggers with triangle indicators; filter-bar sort labelled `Sort by:`. 538 unit tests pass, 0 HIGH bandit findings.
+
+### 🧩 Client Health, Observer Role & Insights History — v1.91.0
+
+**[v1.91.0](CHANGELOG.md)** — Full Client Transparency Layer. Added `portal_role` column (`manager` | `observer`) to `tenant_portal_access`; observer tokens are blocked at the API layer from all write routes. New `GET /api/intelligence/client-health/{tenant_id}` endpoint returning three-axis health (Efficiency, Stability, Capacity Runway). Tenant UI gains a Health Overview default screen with SVG circular dials. Observer invite flow via magic-link email. Insights History tab (resolved insights with pagination). Operations summary bar. Admin UI role-toggle per portal user. DB migration `migrate_v1_91_0_phase5.sql`. 538 unit tests pass, 0 HIGH bandit findings.
+
 ### 🩹 Intelligence 500 / Sort / Entitlements UX Fixes — v1.90.1
 
 **[v1.90.1](CHANGELOG.md)** — Hotfix patch for v1.90.0. Fixed `/api/intelligence/regions` 500 crash (wrong SQL column names `hypervisor_id`/`collected_at` on the `servers` and `servers_history` tables; root cause of cascading 502/503 pod-restart loop). Fixed cross-region growth-rate always returning 0.0 (same column bug silently swallowed in `cross_region.py`). Fixed Python syntax error in `intelligence_routes.py` (`_SORT_CLAUSES` dict placed between decorator and function). Added **Sort** dropdown to Insights Feed (server-side, 5 options). Added clickable sort headers to Risk & Capacity and Capacity Forecast tables (client-side, toggle asc/desc). Contract Entitlements tab now includes a full feature explanation, column-reference spec table, downloadable CSV template, and styled import button. All `intel-settings-*` CSS classes added to `InsightsTab.css`. 538 unit tests pass, 0 HIGH bandit findings.

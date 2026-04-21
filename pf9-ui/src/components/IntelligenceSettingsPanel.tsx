@@ -199,7 +199,7 @@ function PsaSection() {
     setLoading(true);
     setError("");
     try {
-      const data = await apiFetch<{ configs: PsaConfig[] }>("/psa/configs");
+      const data = await apiFetch<{ configs: PsaConfig[] }>("/api/psa/configs");
       setConfigs(data.configs);
     } catch (e: any) {
       setError(e.message || "Failed to load PSA configs");
@@ -277,7 +277,7 @@ function PsaSection() {
     setTestStatus((s) => ({ ...s, [id]: "firing…" }));
     try {
       const r = await apiFetch<{ success: boolean; http_status: number | null }>(
-        `/psa/configs/${id}/test-fire`,
+        `/api/psa/configs/${id}/test-fire`,
         { method: "POST" },
       );
       setTestStatus((s) => ({

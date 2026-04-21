@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.91.2] - 2026-04-21
+
+### Fixed
+
+- **Intelligence Settings — PSA Webhooks**: Two additional `apiFetch` calls were still missing the `/api` prefix: the `GET /psa/configs` in `load()` and the `POST /psa/configs/{id}/test-fire` in `testFire()`. Both now use `/api/psa/configs` / `/api/psa/configs/{id}/test-fire`. The PSA Webhooks tab no longer shows `Unexpected token '<', "<!doctype"...`.
+- **Tenant Health Overview 500**: `/internal/client-health/{tenant_id}` was querying `metering_quotas` for columns `resource` and `runway_days` that do not exist in the schema. Replaced with the same linear-regression runway computation used by the public admin endpoint: reads `vcpus_used`, `ram_used_mb`, `storage_used_gb`, `instances_used` over the last 14 days per project and calls `_days_runway` / `_linear_forecast` to derive `capacity_runway_days` and `capacity_runway_resource`.
+- **Insights Feed — sort UX**: Column headers (Entity, Tenant, Status, Detected, Severity, Type) are now clickable and trigger server-side re-sort, with a triangle indicator on the active column. The filter-bar sort control is relabelled `Sort by:` for clarity.
+
 ## [1.91.1] - 2026-04-21
 
 ### Fixed

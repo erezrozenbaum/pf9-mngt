@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.91.1  
+**Version**: 1.91.2  
 **Last Updated**: April 21, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.91.2 — Bug Fixes: PSA Webhooks /api, Health Overview 500, Clickable Sort Headers (✅ Complete)
+
+- **PSA Webhooks JSON error fixed**: `IntelligenceSettingsPanel.tsx` load (`GET /api/psa/configs`) and test-fire (`POST /api/psa/configs/{id}/test-fire`) calls were still missing the `/api` prefix — caused `Unexpected token '<', "<!doctype"...` on the PSA Webhooks tab. Two additional calls now fixed.
+- **Tenant Health Overview 500 fixed**: `/internal/client-health/{tenant_id}` was querying `metering_quotas` for non-existent `resource` / `runway_days` columns. Replaced with the correct multi-row linear-regression runway logic from the public endpoint (queries `vcpus_used`, `ram_used_mb`, `storage_used_gb`, `instances_used` over 14 days and computes `_days_runway` per resource).
+- **Insights Feed — clickable sort headers**: Column headers Entity, Tenant, Status, Detected, Severity, Type now trigger server-side re-sort when clicked (triangle indicator). The `Sort by:` dropdown in the filter bar is also relabelled for clarity.
+- 538 unit tests pass, 0 HIGH bandit findings, TypeScript clean.
 
 ### v1.91.1 — Bug Fixes: Settings Panel, Client Health Proxy, Favicon (✅ Complete)
 

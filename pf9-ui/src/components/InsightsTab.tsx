@@ -547,20 +547,22 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
               Clear filters
             </button>
           )}
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-            title="Sort insights by"
-            style={{ marginLeft: "auto" }}
-          >
-            <option value="severity">Sort: Severity</option>
-            <option value="detected_at">Sort: Detected (newest)</option>
-            <option value="last_seen">Sort: Last seen</option>
-            <option value="status">Sort: Status</option>
-            <option value="type">Sort: Type</option>
-            <option value="entity">Sort: Entity</option>
-            <option value="tenant">Sort: Tenant</option>
-          </select>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginLeft: "auto", fontSize: "0.82rem", color: "var(--text-secondary,#6b7280)", whiteSpace: "nowrap" }}>
+            Sort by:
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              style={{ marginLeft: 0 }}
+            >
+              <option value="severity">Severity</option>
+              <option value="detected_at">Detected (newest)</option>
+              <option value="last_seen">Last seen</option>
+              <option value="status">Status</option>
+              <option value="type">Type</option>
+              <option value="entity">Entity</option>
+              <option value="tenant">Tenant</option>
+            </select>
+          </label>
           {canWrite && (
             <div className="insights-bulk-actions">
               <span style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)", marginRight: "0.5rem" }}>
@@ -592,13 +594,25 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
             <table className="insights-table">
               <thead>
                 <tr>
-                  <th>Severity</th>
-                  <th>Type</th>
-                  <th>Entity</th>
-                  <th>Tenant</th>
+                  <th style={{ cursor: "pointer", userSelect: "none" }} onClick={() => setSortBy("severity")}>
+                    Severity {sortBy === "severity" ? "▲" : ""}
+                  </th>
+                  <th style={{ cursor: "pointer", userSelect: "none" }} onClick={() => setSortBy("type")}>
+                    Type {sortBy === "type" ? "▲" : ""}
+                  </th>
+                  <th style={{ cursor: "pointer", userSelect: "none" }} onClick={() => setSortBy("entity")}>
+                    Entity {sortBy === "entity" ? "▲" : ""}
+                  </th>
+                  <th style={{ cursor: "pointer", userSelect: "none" }} onClick={() => setSortBy("tenant")}>
+                    Tenant {sortBy === "tenant" ? "▲" : ""}
+                  </th>
                   <th>Title</th>
-                  <th>Status</th>
-                  <th>Detected</th>
+                  <th style={{ cursor: "pointer", userSelect: "none" }} onClick={() => setSortBy("status")}>
+                    Status {sortBy === "status" ? "▲" : ""}
+                  </th>
+                  <th style={{ cursor: "pointer", userSelect: "none" }} onClick={() => setSortBy("detected_at")}>
+                    Detected {sortBy === "detected_at" ? "▲" : ""}
+                  </th>
                   {canWrite && <th>Actions</th>}
                 </tr>
               </thead>
