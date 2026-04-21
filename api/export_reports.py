@@ -2049,3 +2049,338 @@ def generate_handoff_pdf(
 
     doc.build(story, onFirstPage=_footer_h, onLaterPages=_footer_h)
     return buf.getvalue()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SLA Compliance Report PDF
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_sla_report(
+    tenant_id: str,
+    tenant: dict,
+    history: List[dict],
+    from_month: str,
+    to_month: str,
+) -> bytes:
+    """
+    Generate a ReportLab PDF SLA compliance report.
+
+    Args:
+        tenant_id:   Project/tenant ID string.
+        tenant:      Dict with keys: tenant_name, tier, uptime_pct, rto_hours,
+                     rpo_hours, mtta_hours, mttr_hours.
+        history:     List of sla_compliance_monthly dicts (ordered ASC by month).
+        from_month:  ISO date string (first of month).
+        to_month:    ISO date string (first of month).
+    Returns:
+        Raw PDF bytes.
+    """
+    from datetime import timezone
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=2*cm, rightMargin=2*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    styles     = getSampleStyleSheet()
+    heading1   = styles["Heading1"]
+    heading2   = styles["Heading2"]
+    normal     = styles["Normal"]
+
+    _BLUE     = colors.HexColor("#1D4ED8")
+    _LT_GREY  = colors.HexColor("#F3F4F6")
+    _WHITE    = colors.white
+
+    tenant_name = tenant.get("tenant_name") or tenant_id
+    tier        = (tenant.get("tier") or "custom").title()
+    today_str   = datetime.utcnow().strftime("%Y-%m-%d")
+
+    story = []
+
+    # Cover
+    story.append(Paragraph("SLA Compliance Report", heading1))
+    story.append(Paragraph(f"<b>Tenant:</b> {tenant_name}", normal))
+    story.append(Paragraph(f"<b>SLA Tier:</b> {tier}", normal))
+    story.append(Paragraph(f"<b>Period:</b> {from_month[:7]} — {to_month[:7]}", normal))
+    story.append(Paragraph(f"<b>Generated:</b> {today_str} UTC", normal))
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(width="100%", color=_BLUE))
+    story.append(Spacer(1, 0.3*cm))
+
+    # Commitment scorecard
+    story.append(Paragraph("SLA Commitments", heading2))
+
+    def _fmt(val, unit):
+        return f"{val} {unit}" if val is not None else "Not set"
+
+    kpi_data = [
+        ["KPI", "Committed", "Description"],
+        ["Uptime",  _fmt(tenant.get("uptime_pct"), "%"), "Minimum monthly uptime"],
+        ["RTO",     _fmt(tenant.get("rto_hours"),  "h"), "Max restore time"],
+        ["RPO",     _fmt(tenant.get("rpo_hours"),  "h"), "Max backup gap"],
+        ["MTTA",    _fmt(tenant.get("mtta_hours"), "h"), "Avg ticket response time"],
+        ["MTTR",    _fmt(tenant.get("mttr_hours"), "h"), "Avg ticket resolution time"],
+    ]
+    kpi_table = Table(kpi_data, colWidths=[4*cm, 3*cm, 9*cm])
+    kpi_table.setStyle(TableStyle([
+        ("BACKGROUND",     (0, 0), (-1, 0), _BLUE),
+        ("TEXTCOLOR",      (0, 0), (-1, 0), _WHITE),
+        ("FONTNAME",       (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_LT_GREY, _WHITE]),
+        ("GRID",           (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+        ("FONTSIZE",       (0, 0), (-1, -1), 9),
+        ("VALIGN",         (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(kpi_table)
+    story.append(Spacer(1, 0.5*cm))
+
+    # Month-over-month history
+    story.append(Paragraph("Month-over-Month Compliance", heading2))
+
+    def _cell(val):
+        return f"{float(val):.1f}" if val is not None else "—"
+
+    def _status_cell(row):
+        if row.get("breach_fields"):
+            return "BREACH"
+        if row.get("at_risk_fields"):
+            return "AT RISK"
+        return "OK"
+
+    hist_headers = ["Month", "Uptime%", "RTO(h)", "RPO(h)", "MTTA(h)", "MTTR(h)", "Backup%", "Status"]
+    hist_data = [hist_headers]
+    for r in history:
+        hist_data.append([
+            str(r.get("month", ""))[:7],
+            _cell(r.get("uptime_actual_pct")),
+            _cell(r.get("rto_worst_hours")),
+            _cell(r.get("rpo_worst_hours")),
+            _cell(r.get("mtta_avg_hours")),
+            _cell(r.get("mttr_avg_hours")),
+            _cell(r.get("backup_success_pct")),
+            _status_cell(r),
+        ])
+
+    if len(hist_data) > 1:
+        hist_table = Table(hist_data, colWidths=[2.2*cm]*8)
+        ts = TableStyle([
+            ("BACKGROUND",     (0, 0), (-1, 0), _BLUE),
+            ("TEXTCOLOR",      (0, 0), (-1, 0), _WHITE),
+            ("FONTNAME",       (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_LT_GREY, _WHITE]),
+            ("GRID",           (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+            ("FONTSIZE",       (0, 0), (-1, -1), 8),
+            ("ALIGN",          (1, 1), (-1, -1), "CENTER"),
+        ])
+        for i, r in enumerate(history, start=1):
+            if r.get("breach_fields"):
+                ts.add("BACKGROUND", (0, i), (-1, i), colors.HexColor("#FEE2E2"))
+            elif r.get("at_risk_fields"):
+                ts.add("BACKGROUND", (0, i), (-1, i), colors.HexColor("#FEF9C3"))
+        hist_table.setStyle(ts)
+        story.append(hist_table)
+    else:
+        story.append(Paragraph("No compliance data available for this period.", normal))
+
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(width="100%", color=colors.HexColor("#D1D5DB")))
+    story.append(Spacer(1, 0.2*cm))
+    story.append(Paragraph(
+        f"<i>This report was generated from live operational data on {today_str} UTC. "
+        "All metrics are computed from infrastructure telemetry stored in the "
+        "PF9 management plane.</i>",
+        normal,
+    ))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QBR (Quarterly Business Review) PDF
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_qbr_pdf(qbr_data: dict, include_sections: List[str] | None = None) -> bytes:
+    """
+    Generate a QBR executive summary PDF from the pre-computed QBR data dict
+    (as returned by qbr_routes._build_qbr_data()).
+
+    Sections (controlled by include_sections list):
+      cover, executive_summary, interventions, health_trend, open_items, methodology
+    """
+    _all_sections = {
+        "cover", "executive_summary", "interventions",
+        "health_trend", "open_items", "methodology",
+    }
+    sections = set(include_sections or _all_sections) & _all_sections
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=2*cm, rightMargin=2*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    styles    = getSampleStyleSheet()
+    heading1  = styles["Heading1"]
+    heading2  = styles["Heading2"]
+    heading3  = styles["Heading3"]
+    normal    = styles["Normal"]
+
+    _BLUE     = colors.HexColor("#1D4ED8")
+    _BLUE_LT  = colors.HexColor("#DBEAFE")
+    _LT_GREY  = colors.HexColor("#F3F4F6")
+    _WHITE    = colors.white
+    _GREEN    = colors.HexColor("#DCFCE7")
+    _AMBER    = colors.HexColor("#FEF9C3")
+    _RED      = colors.HexColor("#FEE2E2")
+
+    tenant_name   = qbr_data.get("tenant_name", "")
+    from_date     = qbr_data.get("from_date", "")
+    to_date       = qbr_data.get("to_date", "")
+    region_id     = qbr_data.get("region_id")
+    today_str     = datetime.utcnow().strftime("%Y-%m-%d")
+    interventions = qbr_data.get("interventions", [])
+    open_items    = qbr_data.get("open_items", [])
+    sla_commit    = qbr_data.get("sla_commitment")
+
+    incidents_prevented = qbr_data.get("incidents_prevented", 0)
+    hours_saved         = qbr_data.get("total_hours_saved", 0.0)
+    cost_avoided        = qbr_data.get("total_cost_avoided", 0.0)
+
+    story = []
+
+    # ── 1. Cover ──────────────────────────────────────────────────────────────
+    if "cover" in sections:
+        story.append(Paragraph("Quarterly Business Review", heading1))
+        region_line = f"Region: {region_id}" if region_id else "All Regions"
+        story.append(Paragraph(f"<b>Tenant:</b> {tenant_name}", normal))
+        story.append(Paragraph(f"<b>Period:</b> {from_date} — {to_date}", normal))
+        story.append(Paragraph(f"<b>Scope:</b> {region_line}", normal))
+        story.append(Paragraph(f"<b>Generated:</b> {today_str} UTC", normal))
+        if sla_commit:
+            tier = (sla_commit.get("tier") or "custom").title()
+            story.append(Paragraph(f"<b>SLA Tier:</b> {tier}", normal))
+        story.append(Spacer(1, 0.5*cm))
+        story.append(HRFlowable(width="100%", color=_BLUE))
+        story.append(Spacer(1, 0.3*cm))
+
+    # ── 2. Executive Summary ─────────────────────────────────────────────────
+    if "executive_summary" in sections:
+        story.append(Paragraph("Executive Summary", heading2))
+        exec_data = [
+            ["Metric", "Value"],
+            ["Incidents Prevented",     str(incidents_prevented)],
+            ["Estimated Hours Saved",   f"{hours_saved:.1f} hrs"],
+            ["Estimated Cost Avoided",  f"${cost_avoided:,.0f}"],
+        ]
+        exec_table = Table(exec_data, colWidths=[8*cm, 8*cm])
+        exec_table.setStyle(TableStyle([
+            ("BACKGROUND",     (0, 0), (-1, 0), _BLUE),
+            ("TEXTCOLOR",      (0, 0), (-1, 0), _WHITE),
+            ("FONTNAME",       (0, 0), (-1, -1), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_LT_GREY, _WHITE]),
+            ("GRID",           (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+            ("FONTSIZE",       (0, 0), (-1, -1), 11),
+            ("ALIGN",          (1, 0), (1, -1), "CENTER"),
+            ("VALIGN",         (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        story.append(exec_table)
+        story.append(Spacer(1, 0.5*cm))
+
+    # ── 3. Automated Interventions ───────────────────────────────────────────
+    if "interventions" in sections and interventions:
+        story.append(Paragraph("Automated Interventions", heading2))
+        int_headers = ["Type", "Count", "Hours Saved", "Cost Avoided"]
+        int_data = [int_headers]
+        for iv in interventions:
+            int_data.append([
+                iv.get("type", ""),
+                str(iv.get("count", 0)),
+                f"{iv.get('hours_saved', 0):.1f} hrs",
+                f"${iv.get('cost_avoided', 0):,.0f}",
+            ])
+        int_table = Table(int_data, colWidths=[5*cm, 3*cm, 4*cm, 4*cm])
+        int_table.setStyle(TableStyle([
+            ("BACKGROUND",     (0, 0), (-1, 0), _BLUE),
+            ("TEXTCOLOR",      (0, 0), (-1, 0), _WHITE),
+            ("FONTNAME",       (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_LT_GREY, _WHITE]),
+            ("GRID",           (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+            ("FONTSIZE",       (0, 0), (-1, -1), 9),
+            ("ALIGN",          (1, 0), (-1, -1), "CENTER"),
+        ]))
+        story.append(int_table)
+        story.append(Spacer(1, 0.5*cm))
+
+    # ── 4. Health Trend (placeholder — uses SLA commitment data) ────────────
+    if "health_trend" in sections and sla_commit:
+        story.append(Paragraph("Infrastructure Health", heading2))
+        sla_tier = (sla_commit.get("tier") or "custom").title()
+        story.append(Paragraph(
+            f"This tenant is contracted at <b>{sla_tier}</b> tier. "
+            "Health scores and SLA compliance are tracked monthly in the management plane. "
+            "Refer to the SLA Compliance Report for month-over-month KPI detail.",
+            normal,
+        ))
+        story.append(Spacer(1, 0.3*cm))
+
+    # ── 5. Open Items ────────────────────────────────────────────────────────
+    if "open_items" in sections and open_items:
+        story.append(Paragraph("Active Open Items", heading2))
+        story.append(Paragraph(
+            "The following high/critical insights are currently open. "
+            "Our team is actively working to resolve these.",
+            normal,
+        ))
+        story.append(Spacer(1, 0.2*cm))
+        oi_headers = ["Severity", "Type", "Summary"]
+        oi_data = [oi_headers]
+        for item in open_items:
+            oi_data.append([
+                item.get("severity", ""),
+                item.get("type", ""),
+                (item.get("title", ""))[:80],
+            ])
+        oi_table = Table(oi_data, colWidths=[2.5*cm, 3*cm, 10.5*cm])
+        ts = TableStyle([
+            ("BACKGROUND",     (0, 0), (-1, 0), _BLUE),
+            ("TEXTCOLOR",      (0, 0), (-1, 0), _WHITE),
+            ("FONTNAME",       (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_LT_GREY, _WHITE]),
+            ("GRID",           (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+            ("FONTSIZE",       (0, 0), (-1, -1), 8),
+        ])
+        for i, item in enumerate(open_items, start=1):
+            if item.get("severity") == "critical":
+                ts.add("BACKGROUND", (0, i), (0, i), _RED)
+            elif item.get("severity") == "high":
+                ts.add("BACKGROUND", (0, i), (0, i), _AMBER)
+        oi_table.setStyle(ts)
+        story.append(oi_table)
+        story.append(Spacer(1, 0.5*cm))
+
+    # ── 6. Methodology ───────────────────────────────────────────────────────
+    if "methodology" in sections:
+        story.append(Paragraph("Methodology Note", heading2))
+        story.append(Paragraph(
+            "The <b>Estimated Hours Saved</b> and <b>Cost Avoided</b> figures are "
+            "derived from the MSP labor rate table (configurable per insight type). "
+            "Each resolved insight is counted once; hours saved are multiplied by "
+            "the configured rate per hour. Default rates: 0.50–2.00 hrs/insight at "
+            "$150.00/hr. "
+            "These figures represent avoided manual investigation and remediation effort, "
+            "not hardware or licensing cost.",
+            normal,
+        ))
+        story.append(Spacer(1, 0.3*cm))
+
+    # Footer
+    def _footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.grey)
+        canvas.drawCentredString(
+            A4[0] / 2, 0.7 * cm,
+            f"CONFIDENTIAL  ·  Business Review  ·  {tenant_name}  ·  Page {doc.page}",
+        )
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+    return buf.getvalue()

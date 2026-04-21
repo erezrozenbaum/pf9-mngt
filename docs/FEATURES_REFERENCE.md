@@ -212,6 +212,27 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
 - **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
 
+### 📊 Operational Intelligence *(v1.86.0 → v1.90.0)*
+
+**Continuous, background-running insight engine for MSP and enterprise infrastructure operators.**
+
+The `intelligence_worker` runs 6 detection engines every 5 minutes and writes structured insights to `operational_insights`. Insights are categorised by department (operations, finance, general), severity (info/medium/high/critical), and type. Expired conditions auto-resolve.
+
+- **Waste engine** *(v1.86.0)*: Detects idle VMs (powered off ≥7d, powered off ≥14d) and orphaned resources (unattached volumes, dangling FIPs, unused security groups).
+- **Risk engine** *(v1.86.0)*: Detects critical health decline (score drops ≥20 pts in 7d) and snapshot gaps (VMs without snapshot coverage ≥7d). Auto-creates `auto_incident` tickets for critical findings.
+- **SLA engine** *(v1.86.0)*: Detects imminent SLA breaches (≤48 h to deadline for open tickets). Monthly PDF report: `POST /api/sla/generate-report/{tenant_id}` — cover page, KPI scorecard, history table, attestation footer.
+- **Capacity engine** *(v1.89.0)*: Per-hypervisor compute saturation forecast (`capacity_compute`), per-project quota saturation (`capacity_quota_*`), and storage quota pressure. All include `confidence` + `r_squared` metadata.
+- **Cross-region + Anomaly engine** *(v1.89.0)*: Utilization imbalance, risk concentration, VM-count spikes, snapshot spikes, API error spikes.
+- **Revenue Leakage engine** *(v1.90.0)*: `leakage_overconsumption` — tenant resources exceed contracted entitlement by ≥10% (medium at 10–25%, high at >25%). `leakage_ghost` — tenant has active resources but no contract row. Requires `msp_contract_entitlements` rows to be populated.
+
+**QBR PDF Generator** *(v1.90.0)*: `POST /api/intelligence/qbr/generate/{tenant_id}` — configurable sections (cover, executive_summary, interventions, health_trend, open_items, methodology). Sections build from resolved insights × labor rates for defensible ROI reporting.
+
+**PSA Outbound Webhook** *(v1.90.0)*: `GET/POST/PUT/DELETE /api/psa/configs`. Per-config filtering: min severity, insight types allow-list, region IDs allow-list. Auth header Fernet-encrypted at rest. Webhooks fire from the intelligence worker on new high/critical insights — no cross-service HTTP dependency.
+
+**Intelligence Settings Panel** (admin-only, `⚙️ Settings` tab in InsightsTab): Labor rates editor (8 types, cost-per-hour), PSA Webhook CRUD with test-fire, Contract Entitlements CSV importer.
+
+**Insights Feed UI** *(v1.86.0 → v1.90.0)*: Department workspace selector (operations, risk, capacity, general), severity badges, per-insight acknowledge/snooze/resolve, bulk actions, recommendation panel, per-insight recommendations with dismiss. Type filter optgroup: Waste, Risk, SLA, Capacity, Anomaly, Cross-Region, Revenue Leakage. Copilot intents: critical_insights, capacity_warnings, waste_insights, unacknowledged_insights_count, risk_summary.
+
 ### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.12)*
 
 **For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning and security group management — without exposing the admin panel.**
@@ -243,7 +264,7 @@ A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolat
 ### 📈 30+ Tab Management Dashboard
 A single engineering console covering every operational surface:
 
-> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks** · **Ops Copilot** · **Tickets** · **Dependency Graph**
+> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks** · **Ops Copilot** · **Tickets** · **Dependency Graph** · **Operational Intelligence** · **SLA Compliance** · **Business Review (QBR)**
 
 <details>
 <summary><strong>Landing Dashboard Widgets</strong></summary>

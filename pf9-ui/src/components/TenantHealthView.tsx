@@ -1010,17 +1010,94 @@ function DetailContent({
   const [incidentLoading, setIncidentLoading] = useState(false);
   const [incidentRef, setIncidentRef] = useState<string | null>(null);
 
+  // QBR generation state
+  const [qbrFromDate, setQbrFromDate] = useState(() => {
+    const d = new Date(); d.setMonth(d.getMonth() - 3);
+    return d.toISOString().slice(0, 10);
+  });
+  const [qbrToDate, setQbrToDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [qbrGenerating, setQbrGenerating] = useState(false);
+  const [qbrError, setQbrError] = useState("");
+  const [showQbrPanel, setShowQbrPanel] = useState(false);
+
   return (
     <>
       {/* Header */}
       <div className="th-detail-header">
         <h3>{t.project_name}</h3>
-        <button className="th-detail-close" onClick={onClose}>
-          ✕
-        </button>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <button
+            style={{ fontSize: "0.78rem", padding: "4px 10px", borderRadius: "6px",
+              background: "#1d4ed8", color: "#fff", border: "none", cursor: "pointer" }}
+            onClick={() => setShowQbrPanel((v) => !v)}
+            title="Generate Business Review PDF"
+          >
+            📊 Business Review
+          </button>
+          <button className="th-detail-close" onClick={onClose}>✕</button>
+        </div>
       </div>
 
-      {/* Score hero */}
+      {/* QBR Panel */}
+      {showQbrPanel && (
+        <div style={{ background: "#1e293b", borderRadius: "8px", padding: "12px 16px", margin: "0 0 10px" }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ fontSize: "0.8rem" }}>
+              From{" "}
+              <input type="date" value={qbrFromDate}
+                onChange={(e) => setQbrFromDate(e.target.value)}
+                style={{ marginLeft: 4, borderRadius: "4px", padding: "2px 6px",
+                  background: "#0f172a", color: "#e2e8f0", border: "1px solid #334155" }}
+              />
+            </label>
+            <label style={{ fontSize: "0.8rem" }}>
+              To{" "}
+              <input type="date" value={qbrToDate}
+                onChange={(e) => setQbrToDate(e.target.value)}
+                style={{ marginLeft: 4, borderRadius: "4px", padding: "2px 6px",
+                  background: "#0f172a", color: "#e2e8f0", border: "1px solid #334155" }}
+              />
+            </label>
+            <button
+              disabled={qbrGenerating}
+              onClick={async () => {
+                setQbrGenerating(true); setQbrError("");
+                try {
+                  const resp = await fetch(`/api/intelligence/qbr/generate/${t.project_id}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json",
+                      "Authorization": `Bearer ${localStorage.getItem("token") || ""}` },
+                    body: JSON.stringify({
+                      tenant_id: t.project_id,
+                      from_date: qbrFromDate,
+                      to_date:   qbrToDate,
+                    }),
+                  });
+                  if (!resp.ok) { throw new Error(`HTTP ${resp.status}`); }
+                  const blob = await resp.blob();
+                  const url  = URL.createObjectURL(blob);
+                  const a    = document.createElement("a");
+                  a.href     = url;
+                  a.download = `business-review-${t.project_name}-${qbrToDate}.pdf`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch (e: any) {
+                  setQbrError(e.message || "Generation failed");
+                } finally {
+                  setQbrGenerating(false);
+                }
+              }}
+              style={{ padding: "4px 12px", borderRadius: "6px", background: "#16a34a",
+                color: "#fff", border: "none", cursor: "pointer", fontSize: "0.8rem" }}
+            >
+              {qbrGenerating ? "Generating…" : "⬇ Download PDF"}
+            </button>
+          </div>
+          {qbrError && (
+            <div style={{ color: "#f87171", fontSize: "0.78rem", marginTop: 6 }}>{qbrError}</div>
+          )}
+        </div>
+      )}
       <div className="th-detail-score-hero">
         <div className={`th-detail-score-circle th-score-${cls}`}>
           {t.health_score}

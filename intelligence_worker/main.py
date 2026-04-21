@@ -29,6 +29,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from engines.capacity import CapacityEngine
 from engines.waste import WasteEngine
 from engines.risk import RiskEngine
+from engines.cross_region import CrossRegionEngine
+from engines.anomaly import AnomalyEngine
+from engines.leakage import LeakageEngine
 
 # ---------------------------------------------------------------------------
 # Worker observability — Redis metrics
@@ -132,7 +135,7 @@ def get_conn():
 # Main loop
 # ---------------------------------------------------------------------------
 
-ENGINES = [CapacityEngine, WasteEngine, RiskEngine]
+ENGINES = [CapacityEngine, WasteEngine, RiskEngine, CrossRegionEngine, AnomalyEngine, LeakageEngine]
 
 
 def run_once(conn) -> None:

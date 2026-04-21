@@ -759,6 +759,69 @@ CREATE OR REPLACE VIEW tenant_cp_view AS
     WHERE  is_enabled = TRUE;
 ```
 
+## MSP Business Value Layer (v1.90.0)
+
+### msp_contract_entitlements
+Per-tenant contracted resource limits for Revenue Leakage detection. Two partial unique indexes handle NULL `region_id` (global limit) vs non-NULL (region-specific limit).
+
+```sql
+CREATE TABLE msp_contract_entitlements (
+    id              BIGSERIAL PRIMARY KEY,
+    tenant_id       TEXT NOT NULL,
+    resource        TEXT NOT NULL,        -- vcpu | ram_gb | storage_gb | floating_ip
+    limit_value     NUMERIC(12,3) NOT NULL,
+    region_id       TEXT,                 -- NULL = applies to all regions
+    effective_from  DATE NOT NULL DEFAULT CURRENT_DATE,
+    effective_to    DATE,                 -- NULL = open-ended (currently active)
+    notes           TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Region-specific entitlement: one active row per (tenant, resource, effective_from, region_id)
+CREATE UNIQUE INDEX uq_entitlements_active_with_region
+    ON msp_contract_entitlements (tenant_id, resource, effective_from, region_id)
+    WHERE region_id IS NOT NULL;
+-- Global entitlement: one active row per (tenant, resource, effective_from) with no region
+CREATE UNIQUE INDEX uq_entitlements_active_global
+    ON msp_contract_entitlements (tenant_id, resource, effective_from)
+    WHERE region_id IS NULL;
+```
+
+### msp_labor_rates
+Per-insight-type labor rate configuration for QBR ROI calculations. Seeded with 8 common types at $150/hr.
+
+```sql
+CREATE TABLE msp_labor_rates (
+    insight_type    TEXT PRIMARY KEY,   -- waste_idle_vm | waste_orphan_volume | capacity_storage | ...
+    label           TEXT NOT NULL,
+    hours_saved     NUMERIC(8,2) NOT NULL DEFAULT 2.0,
+    hourly_rate_usd NUMERIC(10,2) NOT NULL DEFAULT 150.0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**Seeded types** (8 rows): `waste_idle_vm`, `waste_orphan_volume`, `waste_orphan_snapshot`, `waste_orphan_fip`, `capacity_storage`, `risk_snapshot_gap`, `leakage_overconsumption`, `leakage_ghost`.
+
+### psa_webhook_config
+Outbound PSA/ITSM webhook configuration. Auth header is Fernet-encrypted at rest.
+
+```sql
+CREATE TABLE psa_webhook_config (
+    id              BIGSERIAL PRIMARY KEY,
+    name            TEXT NOT NULL,
+    webhook_url     TEXT NOT NULL,          -- must start with http:// or https://
+    auth_header     TEXT,                   -- Fernet-encrypted "Bearer ..." or "Key: Value"
+    min_severity    TEXT NOT NULL DEFAULT 'high',  -- info|medium|high|critical
+    filter_types    JSONB NOT NULL DEFAULT '[]',   -- [] = all types allowed
+    filter_regions  JSONB NOT NULL DEFAULT '[]',   -- [] = all regions allowed
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**Webhook firing rules**: Triggered from `intelligence_worker/engines/base.py` `upsert_insight()` on new inserts (`xmax=0`) when severity is `high` or `critical`. Per-config `min_severity`, `filter_types`, and `filter_regions` conditions are all applied before firing.
+
 ---
 
 ## Enriched Views

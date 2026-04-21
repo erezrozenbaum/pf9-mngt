@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.90.0] - 2026-04-21
+
+### Added
+
+- **Revenue Leakage engine** — New intelligence engine detects two billing risk conditions:
+  - *Over-consumption upsell signal* (`leakage_overconsumption`) — fires when a tenant's in-use resources (vCPU, RAM, storage, floating IPs) exceed their contracted entitlement by ≥10%. Medium severity at 10–25% overage; high at >25%.
+  - *Ghost resources billing gap* (`leakage_ghost`) — fires high-severity insight when a tenant has active resources but no matching contract entitlement row, indicating untracked billing risk.
+  - Both auto-resolve when the condition clears. Engine skips gracefully when no entitlements are configured.
+- **Contract entitlement management** (`msp_contract_entitlements` table) — Stores per-tenant, per-resource, per-region contracted limits. Supports CSV import from the Intelligence Settings panel.
+- **Labor rate configuration** (`msp_labor_rates` table) — Configurable per-insight-type hours-saved estimates and billed rate. Default 8 types seeded at $150/hr. Editable from the Intelligence Settings panel.
+- **Quarterly Business Review (QBR) PDF generator** — `POST /api/intelligence/qbr/generate/{tenant_id}` produces a ReportLab PDF with configurable sections: cover page, executive summary (total ROI, incidents prevented), intervention breakdown table, health trend, open items, and methodology. JSON preview available via `GET /api/intelligence/qbr/preview/{tenant_id}`.
+- **PSA outbound webhook integration** — Configurable outbound webhooks (`psa_webhook_config` table) that fire on new high/critical insights:
+  - Full CRUD: `GET/POST /api/psa/configs`, `PUT/DELETE /api/psa/configs/{id}`.
+  - Per-config filters: minimum severity level, allowed insight types, allowed regions.
+  - Auth header encrypted at rest with Fernet (same key as JWT secret).
+  - One-click test-fire: `POST /api/psa/configs/{id}/test-fire`.
+  - Firing integrated directly in the intelligence worker's `upsert_insight()` — no API round-trip required.
+- **Intelligence Settings panel** (`IntelligenceSettingsPanel.tsx`) — Admin-only three-tab panel: Labor Rates editable table, PSA Webhook config CRUD with test-fire, and Contract Entitlements CSV importer.
+- **Settings tab in Insights Feed** — `⚙️ Settings` tab visible to admins and superadmins.
+- **Business Review button in Tenant Health detail pane** — `📊 Business Review` button with date-range picker generates and downloads the QBR PDF directly from the tenant detail panel.
+- **Revenue Leakage filter options** in the Insights Feed type filter dropdown.
+- **SLA PDF report consolidated** — `generate_sla_report()` moved from inline `_build_sla_pdf()` in `sla_routes.py` into `export_reports.py`, sharing the same ReportLab pipeline as all other PDF generators.
+- **DB migration** `migrate_intelligence_v4.sql` — idempotent, adds 3 new tables + seeds 8 default labor rates + 13 new RBAC permission rows.
+- Phase 4 test suite (`tests/test_phase4_intelligence.py`) — unit tests (dept routing, PDF generation) and live-stack integration tests (labor rates CRUD, QBR preview/PDF, PSA CRUD, security validation).
+
+### Changed
+
+- `intelligence_utils.py` department map extended with `leakage` → `["operations", "general"]`.
+- Operations workspace hint updated to include `leakage`.
+- `InsightsTab.tsx` `TYPE_ICONS` extended with `leakage_overconsumption` 📈 and `leakage_ghost` 👻.
+- Worker now fires PSA webhooks on new high/critical insights via DB-resident config (no API dependency).
+
+### Security
+
+- PSA webhook `auth_header` encrypted at rest with Fernet; never returned in plaintext via the list API.
+- Webhook URL validated to require `http://` or `https://` scheme.
+- `min_severity` validated against allowlist (`low`, `medium`, `high`, `critical`).
+- SQL fragment injection risk eliminated: dynamic region filter uses hardcoded conditional fragment with parameterized value (B608 false positive suppressed with `# nosec B608`).
+
+---
+
+## [1.89.0] - 2026-04-20
+
+### Added
+
+- **Capacity Forecast endpoint** — `GET /api/intelligence/forecast` runs per-project linear regression over the last 14 days of metering data and returns days-to-90%-quota runway, trend, and confidence score for storage, vCPUs, RAM, instances, and floating IPs.
+- **Region Comparison endpoint** — `GET /api/intelligence/regions` aggregates per-region vCPU and RAM utilization, running-VM count, open critical/high insight counts, capacity runway, and VM growth rate from live hypervisor inventory.
+- **Extended capacity forecasting** — Capacity engine now fires compute-capacity insights per hypervisor (vCPU / RAM saturation using VM history trend) and quota-saturation insights per project per resource type (`capacity_quota_vcpu`, `capacity_quota_ram`, `capacity_quota_instances`, `capacity_quota_floating_ip`). All capacity insights include a confidence score and R² value in metadata.
+- **Cross-region intelligence engine** — New engine detects three cross-region conditions: utilization imbalance (one region ≥80% vCPU while another ≤40%), risk concentration (≥3 critical/high insights in one region comprising ≥70% of fleet total), and growth-rate divergence (a region's VM growth rate exceeds 2× the fleet average). Fires `cross_region_imbalance`, `cross_region_concentration`, and `cross_region_growth` insights. Requires ≥2 regions; silently skips single-region deployments.
+- **Anomaly detection engine** — Threshold-based (no ML) detector for three patterns: snapshot spike (>50% week-over-week increase in `snapshots_used`), VM count spike (>20% growth in 48 h), and API error spike (endpoint error rate >3× its 7-day baseline). Fires `anomaly_snapshot_spike`, `anomaly_vm_spike`, and `anomaly_api_errors` insights. All three auto-resolve when conditions clear.
+- **Intelligence Dashboard — 4-tab layout**: Feed · Risk & Capacity · **Capacity Forecast** · **Cross-Region** · SLA Summary.
+  - Capacity Forecast tab: per-project table showing days-to-90% runway per resource with confidence badge and colour-coded urgency.
+  - Cross-Region tab: per-region utilization bars, running-VM count, active critical/high insights, storage runway, and VM growth rate.
+  - Type filter dropdown extended with Capacity subtypes, Anomaly group, and Cross-Region group.
+  - Engineering workspace hint updated to include anomaly and cross-region types.
+
+### Changed
+
+- Department filter in insight listing and summary endpoints now uses prefix matching (`type LIKE 'anomaly_%'` etc.) so subtype insight names (`anomaly_vm_spike`, `cross_region_imbalance`) are correctly routed to their workspace.
+- `intelligence_utils.py` department map extended with `capacity_storage`, `capacity_compute`, and `capacity_quota` mapped to the `engineering` workspace.
+
+### Fixed
+
+- Unused `get_current_user` and `VALID_DEPARTMENTS` imports removed from `intelligence_routes.py`.
+
+### Infrastructure
+
+- DB index `idx_insights_type_prefix` (text_pattern_ops) added to `operational_insights.type` to accelerate LIKE prefix queries. Migration applied to live Kubernetes cluster and Docker `init.sql`.
+
+---
+
 ## [1.88.1] - 2026-04-20
 
 ### Fixed

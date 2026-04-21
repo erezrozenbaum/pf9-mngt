@@ -11,6 +11,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/api";
 import "../styles/InsightsTab.css";
+import IntelligenceSettingsPanel from "./IntelligenceSettingsPanel";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -74,19 +75,63 @@ interface Recommendation {
   status: string;
 }
 
+interface ForecastResource {
+  used: number;
+  quota: number;
+  used_pct: number | null;
+  days_to_90: number | null;
+  trend_per_day: number;
+  confidence: number;
+}
+
+interface ProjectForecast {
+  project_id: string;
+  project_name: string;
+  resources: Record<string, ForecastResource>;
+}
+
+interface RegionRow {
+  region_id: string;
+  hypervisors: number;
+  total_vcpus: number;
+  allocated_vcpus: number;
+  vcpu_utilization: number;
+  total_ram_mb: number;
+  allocated_ram_mb: number;
+  ram_utilization: number;
+  running_vms: number;
+  open_critical: number;
+  open_high: number;
+  capacity_runway_days: number | null;
+  growth_rate_pct: number;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const TYPE_ICONS: Record<string, string> = {
-  capacity_storage:      "💾",
-  waste_idle_vm:         "🖥️",
-  waste_unattached_volume: "📦",
-  waste_old_snapshots:   "📸",
-  risk_snapshot_gap:     "⚠️",
-  risk_health_decline:   "📉",
-  risk_unack_drift:      "🔀",
-  sla_risk:              "📋",
+  capacity_storage:          "💾",
+  capacity_compute:          "🖧",
+  capacity_quota_vcpu:       "⚡",
+  capacity_quota_ram:        "🧠",
+  capacity_quota_instances:  "📦",
+  capacity_quota_floating_ip: "🌐",
+  waste_idle_vm:             "🖥️",
+  waste_unattached_volume:   "📦",
+  waste_old_snapshots:       "📸",
+  risk_snapshot_gap:         "⚠️",
+  risk_health_decline:       "📉",
+  risk_unack_drift:          "🔀",
+  sla_risk:                  "📋",
+  cross_region_imbalance:    "⚖️",
+  cross_region_concentration: "🎯",
+  cross_region_growth:       "📈",
+  anomaly_snapshot_spike:    "🚨",
+  anomaly_vm_spike:          "🔺",
+  anomaly_api_errors:        "🔴",
+  leakage_overconsumption:   "📈",
+  leakage_ghost:             "👻",
 };
 
 function typeIcon(type: string): string {
@@ -114,7 +159,7 @@ interface InsightsTabProps {
   userRole?: string;
 }
 
-type InnerTab = "feed" | "risk" | "sla";
+type InnerTab = "feed" | "risk" | "forecast" | "regions" | "sla" | "settings";
 
 export default function InsightsTab({ userRole }: InsightsTabProps) {
   const [innerTab, setInnerTab] = useState<InnerTab>("feed");
@@ -155,6 +200,14 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   // Recommendations
   const [expandedRecs, setExpandedRecs] = useState<Record<number, Recommendation[]>>({});
   const [loadingRecs, setLoadingRecs] = useState<Record<number, boolean>>({});
+
+  // Capacity Forecast
+  const [forecasts, setForecasts] = useState<ProjectForecast[]>([]);
+  const [forecastLoading, setForecastLoading] = useState(false);
+
+  // Region Comparison
+  const [regions, setRegions] = useState<RegionRow[]>([]);
+  const [regionsLoading, setRegionsLoading] = useState(false);
 
   // Snooze modal
   const [snoozeTarget, setSnoozeTarget] = useState<number | null>(null);
@@ -213,9 +266,35 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
     }
   }, []);
 
+  const loadForecast = useCallback(async () => {
+    setForecastLoading(true);
+    try {
+      const data = await apiFetch<{ forecasts: ProjectForecast[] }>("/api/intelligence/forecast");
+      setForecasts(data.forecasts ?? []);
+    } catch (e) {
+      setForecasts([]);
+    } finally {
+      setForecastLoading(false);
+    }
+  }, []);
+
+  const loadRegions = useCallback(async () => {
+    setRegionsLoading(true);
+    try {
+      const data = await apiFetch<{ regions: RegionRow[] }>("/api/intelligence/regions");
+      setRegions(data.regions ?? []);
+    } catch (e) {
+      setRegions([]);
+    } finally {
+      setRegionsLoading(false);
+    }
+  }, []);
+
   useEffect(() => { loadInsights(1); }, [filterStatus, filterSeverity, filterType, workspace]);
   useEffect(() => { loadSummary(); }, [workspace]);
   useEffect(() => { if (innerTab === "sla") loadSlaSummary(); }, [innerTab]);
+  useEffect(() => { if (innerTab === "forecast") loadForecast(); }, [innerTab]);
+  useEffect(() => { if (innerTab === "regions") loadRegions(); }, [innerTab]);
 
   async function openSlaModal() {
     setSlaError("");
@@ -376,14 +455,37 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
           </select>
           <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
             <option value="">All types</option>
-            <option value="capacity_storage">Capacity</option>
-            <option value="waste_idle_vm">Idle VM</option>
-            <option value="waste_unattached_volume">Unattached Volume</option>
-            <option value="waste_old_snapshots">Stale Snapshots</option>
-            <option value="risk_snapshot_gap">Snapshot Gap</option>
-            <option value="risk_health_decline">Health Decline</option>
-            <option value="risk_unack_drift">Unack Drift</option>
-            <option value="sla_risk">SLA Risk</option>
+            <optgroup label="Capacity">
+              <option value="capacity_storage">Storage Capacity</option>
+              <option value="capacity_compute">Compute Capacity</option>
+              <option value="capacity_quota_vcpu">vCPU Quota</option>
+              <option value="capacity_quota_ram">RAM Quota</option>
+            </optgroup>
+            <optgroup label="Waste">
+              <option value="waste_idle_vm">Idle VM</option>
+              <option value="waste_unattached_volume">Unattached Volume</option>
+              <option value="waste_old_snapshots">Stale Snapshots</option>
+            </optgroup>
+            <optgroup label="Risk">
+              <option value="risk_snapshot_gap">Snapshot Gap</option>
+              <option value="risk_health_decline">Health Decline</option>
+              <option value="risk_unack_drift">Unack Drift</option>
+              <option value="sla_risk">SLA Risk</option>
+            </optgroup>
+            <optgroup label="Anomaly">
+              <option value="anomaly_snapshot_spike">Snapshot Spike</option>
+              <option value="anomaly_vm_spike">VM Count Spike</option>
+              <option value="anomaly_api_errors">API Error Spike</option>
+            </optgroup>
+            <optgroup label="Cross-Region">
+              <option value="cross_region_imbalance">Utilization Imbalance</option>
+              <option value="cross_region_concentration">Risk Concentration</option>
+              <option value="cross_region_growth">Growth Divergence</option>
+            </optgroup>
+            <optgroup label="Revenue Leakage">
+              <option value="leakage_overconsumption">Over-Consumption</option>
+              <option value="leakage_ghost">Ghost Resources</option>
+            </optgroup>
           </select>
           {(filterStatus || filterSeverity || filterType) && (
             <button className="insights-filter-reset" onClick={() => {
@@ -593,8 +695,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
     );
   }
 
-  function renderRisk() {
-    // Filter to risk + capacity insights from current feed (or re-use summary by_type)
+  function renderRisk() {    // Filter to risk + capacity insights from current feed (or re-use summary by_type)
     const riskInsights = insights.filter(
       (i) => i.type.startsWith("risk_") || i.type.startsWith("capacity_") || i.type.startsWith("waste_")
     );
@@ -655,6 +756,202 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Capacity Forecast tab
+  // ---------------------------------------------------------------------------
+
+  function renderForecast() {
+    if (forecastLoading) {
+      return (
+        <div style={{ padding: "2rem 1.5rem", color: "var(--text-secondary,#6b7280)" }}>
+          Loading capacity forecast…
+        </div>
+      );
+    }
+
+    const RESOURCE_LABELS: Record<string, string> = {
+      storage_gb:  "Storage (GB)",
+      vcpus:       "vCPUs",
+      ram_mb:      "RAM (MB)",
+      instances:   "Instances",
+      floating_ips: "Floating IPs",
+    };
+
+    function runwayColor(days: number | null): string {
+      if (days === null) return "var(--text-secondary,#6b7280)";
+      if (days <= 7)  return "var(--color-danger,#ef4444)";
+      if (days <= 14) return "var(--color-warning,#f59e0b)";
+      return "var(--success,#059669)";
+    }
+
+    function confidenceBadge(c: number) {
+      const pct = Math.round(c * 100);
+      const color = c >= 0.7 ? "var(--success,#059669)"
+                  : c >= 0.4 ? "var(--color-warning,#f59e0b)"
+                  : "var(--text-secondary,#6b7280)";
+      return (
+        <span style={{ fontSize: "0.7rem", color, marginLeft: "0.25rem" }} title={`Forecast confidence: ${pct}%`}>
+          {pct}% conf.
+        </span>
+      );
+    }
+
+    return (
+      <div className="insights-feed">
+        <div style={{ padding: "0.75rem 1rem 0.25rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <span style={{ fontSize: "0.82rem", color: "var(--text-secondary,#6b7280)" }}>
+            Per-project resource runway — days until 90% quota. Sorted by soonest exhaustion.
+          </span>
+          <button className="btn-sm" onClick={loadForecast} title="Refresh forecast">↻ Refresh</button>
+        </div>
+
+        {forecasts.length === 0 ? (
+          <div className="insights-empty">
+            <div className="insights-empty-icon">📊</div>
+            <p className="insights-empty-text">No forecast data yet — requires at least 3 days of metering history.</p>
+          </div>
+        ) : (
+          <table className="insights-table">
+            <thead>
+              <tr>
+                <th>Project</th>
+                {Object.keys(forecasts[0]?.resources ?? {}).map((k) => (
+                  <th key={k}>{RESOURCE_LABELS[k] ?? k}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {forecasts.map((f) => (
+                <tr key={f.project_id}>
+                  <td style={{ fontWeight: 600 }}>{f.project_name}</td>
+                  {Object.entries(f.resources).map(([key, res]) => (
+                    <td key={key}>
+                      <div style={{ fontSize: "0.82rem" }}>
+                        <span style={{ color: runwayColor(res.days_to_90), fontWeight: 600 }}>
+                          {res.days_to_90 === null ? "—"
+                           : res.days_to_90 === 0  ? "⚠️ Now"
+                           : `${res.days_to_90}d`}
+                        </span>
+                        {confidenceBadge(res.confidence)}
+                      </div>
+                      <div style={{ fontSize: "0.72rem", color: "var(--text-secondary,#6b7280)" }}>
+                        {res.used_pct !== null ? `${res.used_pct}% used` : "—"}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cross-Region Comparison tab
+  // ---------------------------------------------------------------------------
+
+  function renderRegions() {
+    if (regionsLoading) {
+      return (
+        <div style={{ padding: "2rem 1.5rem", color: "var(--text-secondary,#6b7280)" }}>
+          Loading region data…
+        </div>
+      );
+    }
+
+    function utilBar(pct: number) {
+      const color = pct >= 85 ? "var(--color-danger,#ef4444)"
+                  : pct >= 65 ? "var(--color-warning,#f59e0b)"
+                  : "var(--success,#059669)";
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <div style={{
+            width: 60, height: 8, borderRadius: 4,
+            background: "var(--border,#374151)", overflow: "hidden",
+          }}>
+            <div style={{ width: `${Math.min(100, pct)}%`, height: "100%", background: color, borderRadius: 4 }} />
+          </div>
+          <span style={{ fontSize: "0.8rem", color }}>{pct}%</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="insights-feed">
+        <div style={{ padding: "0.75rem 1rem 0.25rem" }}>
+          <span style={{ fontSize: "0.82rem", color: "var(--text-secondary,#6b7280)" }}>
+            Per-region compute utilization, active insights, and capacity runway.
+          </span>
+          <button className="btn-sm" style={{ marginLeft: "0.75rem" }} onClick={loadRegions}>↻ Refresh</button>
+        </div>
+
+        {regions.length === 0 ? (
+          <div className="insights-empty">
+            <div className="insights-empty-icon">🌍</div>
+            <p className="insights-empty-text">No region data available.</p>
+          </div>
+        ) : (
+          <table className="insights-table">
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>Hypervisors</th>
+                <th>vCPU Utilization</th>
+                <th>RAM Utilization</th>
+                <th>Running VMs</th>
+                <th>Critical</th>
+                <th>High</th>
+                <th>Storage Runway</th>
+                <th>VM Growth</th>
+              </tr>
+            </thead>
+            <tbody>
+              {regions.map((r) => (
+                <tr key={r.region_id}>
+                  <td style={{ fontWeight: 600, fontSize: "0.85rem" }}>{r.region_id}</td>
+                  <td style={{ textAlign: "center" }}>{r.hypervisors}</td>
+                  <td>{utilBar(r.vcpu_utilization)}</td>
+                  <td>{utilBar(r.ram_utilization)}</td>
+                  <td style={{ textAlign: "center" }}>{r.running_vms}</td>
+                  <td style={{ textAlign: "center" }}>
+                    {r.open_critical > 0
+                      ? <span style={{ color: "var(--color-danger,#ef4444)", fontWeight: 700 }}>{r.open_critical}</span>
+                      : <span style={{ color: "var(--text-secondary,#6b7280)" }}>—</span>}
+                  </td>
+                  <td style={{ textAlign: "center" }}>
+                    {r.open_high > 0
+                      ? <span style={{ color: "var(--color-warning,#f59e0b)", fontWeight: 600 }}>{r.open_high}</span>
+                      : <span style={{ color: "var(--text-secondary,#6b7280)" }}>—</span>}
+                  </td>
+                  <td>
+                    {r.capacity_runway_days === null ? (
+                      <span style={{ color: "var(--text-secondary,#6b7280)" }}>—</span>
+                    ) : r.capacity_runway_days <= 7 ? (
+                      <span style={{ color: "var(--color-danger,#ef4444)", fontWeight: 700 }}>
+                        {r.capacity_runway_days}d ⚠️
+                      </span>
+                    ) : (
+                      <span style={{ color: "var(--success,#059669)" }}>{r.capacity_runway_days}d</span>
+                    )}
+                  </td>
+                  <td>
+                    {r.growth_rate_pct > 0
+                      ? <span style={{ color: r.growth_rate_pct > 15 ? "var(--color-warning,#f59e0b)" : "var(--text-secondary,#6b7280)" }}>
+                          +{r.growth_rate_pct}%
+                        </span>
+                      : <span style={{ color: "var(--text-secondary,#6b7280)" }}>—</span>}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
@@ -875,8 +1172,8 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
         ))}
         <span className="insights-workspace-hint">
           {workspace === "support"     && "Showing: drift · snapshot · incident · risk (high+)"}
-          {workspace === "engineering" && "Showing: capacity · waste · anomaly (medium+)"}
-          {workspace === "operations"  && "Showing: risk · health (medium+)"}
+          {workspace === "engineering" && "Showing: capacity · waste · anomaly · cross-region (medium+)"}
+          {workspace === "operations"  && "Showing: risk · health · leakage (medium+)"}
           {workspace === "global"      && "Showing: all insight types"}
         </span>
       </div>
@@ -885,9 +1182,12 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
       <div className="insights-inner-tabs">
         {(
           [
-            { id: "feed" as const, label: "🔔 Insights Feed" },
-            { id: "risk" as const, label: "⚠️ Risk & Capacity" },
-            { id: "sla"  as const, label: "📋 SLA Summary" },
+            { id: "feed"     as const, label: "🔔 Insights Feed" },
+            { id: "risk"     as const, label: "⚠️ Risk & Capacity" },
+            { id: "forecast" as const, label: "📈 Capacity Forecast" },
+            { id: "regions"  as const, label: "🌍 Cross-Region" },
+            { id: "sla"      as const, label: "📋 SLA Summary" },
+            ...(canWrite ? [{ id: "settings" as const, label: "⚙️ Settings" }] : []),
           ] as { id: InnerTab; label: string }[]
         ).map((t) => (
           <button
@@ -900,9 +1200,12 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
         ))}
       </div>
 
-      {innerTab === "feed" && renderFeed()}
-      {innerTab === "risk" && renderRisk()}
-      {innerTab === "sla"  && renderSla()}
+      {innerTab === "feed"     && renderFeed()}
+      {innerTab === "risk"     && renderRisk()}
+      {innerTab === "forecast" && renderForecast()}
+      {innerTab === "regions"  && renderRegions()}
+      {innerTab === "sla"      && renderSla()}
+      {innerTab === "settings" && <IntelligenceSettingsPanel userRole={userRole} />}
 
       {/* Snooze modal */}
       {snoozeTarget !== null && (

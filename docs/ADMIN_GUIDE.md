@@ -661,6 +661,28 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.90.0 — MSP Business Value Layer (✅ Complete)
+
+- **Revenue Leakage engine**: Two new insight types — `leakage_overconsumption` (tenant in-use resources exceed contracted entitlement by ≥10%; medium at 10–25%, high at >25%) and `leakage_ghost` (tenant has active resources but no contract entitlement row). Both auto-resolve when conditions clear. Engine skips gracefully when no entitlements configured.
+- **Contract entitlements** (`msp_contract_entitlements` table): Per-tenant, per-resource, per-region contracted limits. CSV import available in Intelligence Settings panel. Resources: `vcpu`, `ram_gb`, `storage_gb`, `floating_ip`.
+- **Labor rate configuration** (`msp_labor_rates` table): Per-insight-type hours-saved estimates and billed rate (default 8 types seeded at $150/hr). Editable via Intelligence Settings panel → Labor Rates tab.
+- **QBR PDF generator**: `POST /api/intelligence/qbr/generate/{tenant_id}` — configurable sections (cover, executive summary, interventions, health trend, open items, methodology). JSON preview: `GET /api/intelligence/qbr/preview/{tenant_id}`. Business Review button added to Tenant Health detail panel.
+- **PSA outbound webhook**: `GET/POST /api/psa/configs`, `PUT/DELETE /api/psa/configs/{id}`, `POST /api/psa/configs/{id}/test-fire`. Per-config filtering by min severity, insight types, region IDs. Auth header encrypted at rest (Fernet). Webhooks fire from within the intelligence worker on new high/critical insights — no cross-service dependency.
+- **Intelligence Settings panel** (admin/superadmin): New `⚙️ Settings` tab in Insights Feed. Three sections: Labor Rates editable table, PSA Webhook CRUD with test-fire, Contract Entitlements CSV importer.
+- **SLA PDF pipeline**: `generate_sla_report()` moved from `sla_routes.py` into `export_reports.py` — consistent with all other PDF generators.
+- **DB migration**: `db/migrate_intelligence_v4.sql` — adds `msp_contract_entitlements`, `msp_labor_rates`, `psa_webhook_config` + RBAC entries for `intelligence_settings`, `qbr`, `psa`. Applied to Docker + Kubernetes environments. 538 unit tests pass, 0 HIGH bandit findings.
+
+### v1.89.0 — Extended Forecasting, Cross-Region Intelligence & Anomaly Detection (✅ Complete)
+
+- **Extended capacity forecasting**: Capacity engine now runs three detectors — storage quota (as before), compute capacity per hypervisor (fires `capacity_compute` when VM-count trend predicts saturation ≤ 30 days), and project quota saturation (fires `capacity_quota_vcpu`, `capacity_quota_ram`, `capacity_quota_instances`, `capacity_quota_floating_ip`). All capacity insights include `confidence` (0–1) and `r_squared` in metadata.
+- **Cross-region intelligence engine**: Detects utilization imbalance (`cross_region_imbalance` — one region ≥ 80% vCPU while another is ≤ 40%), risk concentration (`cross_region_concentration` — ≥ 3 critical/high insights in a single region comprising ≥ 70% of fleet total), and growth divergence (`cross_region_growth` — region VM growth rate > 2× fleet average). Gracefully skips single-region deployments.
+- **Anomaly detection engine**: Threshold-based (no ML) — snapshot spike (`anomaly_snapshot_spike`, >50% WoW growth in `snapshots_used`), VM count spike (`anomaly_vm_spike`, >20% in 48 h), and API error spike (`anomaly_api_errors`, error rate >3× 7-day baseline per endpoint prefix). All auto-resolve when conditions clear.
+- **`GET /api/intelligence/forecast`**: On-demand capacity runway endpoint. Returns per-project linear-regression runway (days to 90% quota) for storage, vCPUs, RAM, instances, and floating IPs, with trend and confidence score. Optional `?project_id=` filter.
+- **`GET /api/intelligence/regions`**: Per-region aggregate — hypervisor count, vCPU/RAM totals and utilization, running VMs, open critical/high insight counts, storage runway, and VM growth rate.
+- **4-tab Intelligence Dashboard**: Capacity Forecast tab (runway table per project/resource with colour-coded urgency and confidence badge) and Cross-Region tab (utilization bars, insight counts, runway, growth rate) added. Type filter dropdown extended with Capacity subtypes, Anomaly group, and Cross-Region group.
+- **Department filter prefix matching**: Insight listing and summary now use `type LIKE 'anomaly_%'` style queries so engine subtypes are correctly routed to their workspace.
+- **DB**: `idx_insights_type_prefix` (text_pattern_ops) on `operational_insights.type` applied to live K8s cluster and Docker `init.sql`. 524 unit tests pass.
+
 ### v1.88.1 — SLA Summary Route Hotfix + Insights Feed Tenant Column (✅ Complete)
 
 - **SLA Summary blank bug fixed**: `GET /api/sla/compliance/summary` was being matched by the parameterised `GET /api/sla/compliance/{tenant_id}` route registered earlier in the router. FastAPI evaluates routes in registration order — the literal segment `summary` was treated as a `tenant_id` value, returning an empty compliance history. Fixed by registering `/compliance/summary` before `/compliance/{tenant_id}`.

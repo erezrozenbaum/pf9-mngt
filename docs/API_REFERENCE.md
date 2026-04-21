@@ -5099,3 +5099,103 @@ These endpoints are part of the **main API** (`api/tenant_portal_routes.py`) on 
 | Method | Path | Description |
 |--------|------|-------------|
 | `DELETE` | `/api/admin/tenant-portal/mfa/{cp_id}/{keystone_user_id}` | Reset MFA for a specific user — deletes TOTP secret and all backup codes from `tenant_portal_mfa`. Writes audit entry. Returns `{"cleared": true}`. |
+
+---
+
+## Operational Intelligence Endpoints (v1.86.0+)
+
+All endpoints require a valid Bearer token. Read endpoints: Viewer+. Write endpoints (acknowledge/snooze/resolve/bulk): Operator+. Admin endpoints: Admin/Superadmin.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/intelligence/insights` | List insights. Query: `tenant_id`, `dept`, `type`, `severity`, `status`, `page`, `page_size`. |
+| `GET` | `/api/intelligence/insights/{id}` | Get single insight with metadata. |
+| `PUT` | `/api/intelligence/insights/{id}/acknowledge` | Acknowledge an insight. Body: `{"note": "..."}`. |
+| `PUT` | `/api/intelligence/insights/{id}/snooze` | Snooze until ISO datetime. Body: `{"until": "2026-05-01T00:00:00Z"}`. |
+| `PUT` | `/api/intelligence/insights/{id}/resolve` | Manually resolve. Body: `{"note": "..."}`. |
+| `POST` | `/api/intelligence/bulk-action` | Bulk acknowledge/snooze/resolve. Body: `{"ids": [...], "action": "acknowledge", "note": "..."}`. |
+| `GET` | `/api/intelligence/summary` | Aggregated counts by severity and type. Query: `tenant_id`, `dept`. |
+| `GET` | `/api/intelligence/forecast` | Per-project capacity runway (linear regression). Query: `?project_id=`. |
+| `GET` | `/api/intelligence/regions` | Per-region utilization, insight counts, storage runway, VM growth rate. |
+
+### SLA Compliance Endpoints (v1.86.0+)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/sla/commitments` | List all SLA commitments. |
+| `POST` | `/api/sla/commitments` | Create commitment. Body: `{"tenant_id", "tier", "uptime_target_pct", "response_hours", "resolve_hours"}`. |
+| `PUT` | `/api/sla/commitments/{id}` | Update commitment. |
+| `DELETE` | `/api/sla/commitments/{id}` | Delete commitment. |
+| `GET` | `/api/sla/compliance/{tenant_id}` | Monthly compliance history for tenant. |
+| `GET` | `/api/sla/compliance/summary` | Aggregated compliance summary for all tenants with commitments. |
+| `POST` | `/api/sla/generate-report/{tenant_id}` | Generate SLA PDF report for tenant. Returns `application/pdf`. |
+
+---
+
+## QBR (Quarterly Business Review) Endpoints (v1.90.0)
+
+Requires Admin or Superadmin role.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/intelligence/qbr/labor-rates` | List all labor rates (8 insight types). Returns `[{insight_type, label, hours_saved, hourly_rate_usd}]`. |
+| `PUT` | `/api/intelligence/qbr/labor-rates/{insight_type}` | Update labor rate for a specific insight type. Body: `{"hours_saved": 2.0, "hourly_rate_usd": 175.0}`. |
+| `GET` | `/api/intelligence/qbr/preview/{tenant_id}` | Preview QBR data as JSON (cover metadata, ROI table, open items). No PDF generated. |
+| `POST` | `/api/intelligence/qbr/generate/{tenant_id}` | Generate QBR PDF. Body: `{"from_date": "2026-01-01", "to_date": "2026-03-31", "include_sections": ["cover", "executive_summary", "interventions", "health_trend", "open_items", "methodology"]}`. Returns `application/pdf`. |
+
+**QBR sections** (all included by default if `include_sections` omitted):
+- `cover` — Title page with tenant name, date range, MSP branding
+- `executive_summary` — Total ROI value, interventions count, health score trend
+- `interventions` — Table of resolved insights × labor rate × hours saved
+- `health_trend` — Month-over-month health score chart data
+- `open_items` — Active high/critical unresolved insights
+- `methodology` — Labor rate assumptions and disclaimer
+
+---
+
+## PSA Webhook Endpoints (v1.90.0)
+
+Requires Admin or Superadmin role for write operations.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/psa/configs` | List all PSA webhook configs (auth_header masked). |
+| `POST` | `/api/psa/configs` | Create webhook config. Body: `{"name", "webhook_url", "auth_header", "min_severity", "filter_types", "filter_regions", "enabled"}`. |
+| `PUT` | `/api/psa/configs/{id}` | Update config. Same body as POST. |
+| `DELETE` | `/api/psa/configs/{id}` | Delete config. |
+| `POST` | `/api/psa/configs/{id}/test-fire` | Send a synthetic test webhook payload to the config URL. Returns `{"status": "ok"|"error", "http_status": 200, "body": "..."}`. |
+
+**Field notes**:
+- `webhook_url` — Must start with `http://` or `https://`. Validated at create/update time.
+- `auth_header` — Stored Fernet-encrypted. Never returned in plaintext. Accepts `Bearer <token>`, `Token <value>`, or `Key: Value` format.
+- `min_severity` — One of `info`, `medium`, `high`, `critical`.
+- `filter_types` — Optional JSON array of insight type strings. Empty = all types allowed.
+- `filter_regions` — Optional JSON array of region IDs. Empty = all regions allowed.
+- Webhooks fire automatically from the intelligence worker when a **new** high/critical insight is created and conditions match the config filters.
+
+### PSA Webhook Payload
+
+```json
+{
+  "event": "new_insight",
+  "insight": {
+    "id": 42,
+    "type": "leakage_overconsumption",
+    "severity": "high",
+    "tenant_id": "tenant-uuid",
+    "region_id": "RegionOne",
+    "title": "Over-Consumption: vCPU",
+    "description": "Tenant is using 120% of contracted vCPU entitlement.",
+    "metadata": { "resource": "vcpu", "used": 120, "entitled": 100 },
+    "created_at": "2026-04-21T10:30:00Z"
+  }
+}
+```
+
+---
+
+## Contract Entitlements (v1.90.0)
+
+Managed via Intelligence Settings panel (CSV import) or directly via DB. No dedicated REST endpoint — use CSV import in UI or apply via migration script.
+
+**`msp_contract_entitlements` columns**: `tenant_id`, `resource` (`vcpu`/`ram_gb`/`storage_gb`/`floating_ip`), `limit_value`, `region_id` (nullable for global), `effective_from`, `effective_to` (nullable = open-ended), `notes`.

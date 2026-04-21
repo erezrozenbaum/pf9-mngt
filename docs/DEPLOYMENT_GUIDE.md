@@ -1629,6 +1629,14 @@ docker exec pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
 
 There are currently ~66 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
 
+**v1.90.0** adds `db/migrate_intelligence_v4.sql`: three new tables (`msp_contract_entitlements`, `msp_labor_rates`, `psa_webhook_config`) and 13 RBAC entries for the MSP Business Value Layer (Revenue Leakage engine, QBR generator, PSA webhooks). Seeds 8 labor rate rows at $150/hr. Apply with:
+```bash
+# Docker
+docker exec pf9_api python run_migration.py
+# Kubernetes
+kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py
+```
+
 **v1.86.1** adds `db/migrate_v1_86_1_insights_nav.sql`: registers the `insights` nav item in `nav_items` (under the `metering_reporting` group) and seeds `department_nav_items` for all departments. Without this, the Insights tab is invisible in the grouped navigation on existing installs. Apply with `docker exec pf9_api python run_migration.py` or `kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py`.
 
 **v1.83.47** adds `db/migrate_v1_83_47.sql`: three new columns on `migration_projects` (`wan_bandwidth_mbps`, `throttle_mbps`, `max_concurrent_migrations`) and a new `ldap_sync_dept_mappings` table. Apply with `docker exec pf9_api python run_migration.py` or `kubectl exec ... -- python run_migration.py`.

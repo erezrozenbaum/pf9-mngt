@@ -17,9 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
 
-from auth import require_permission, get_current_user, User
+from auth import require_permission, User
 from db_pool import get_connection
-from intelligence_utils import types_for_department, VALID_DEPARTMENTS
+from intelligence_utils import types_for_department
 
 logger = logging.getLogger("pf9.intelligence")
 
@@ -114,11 +114,18 @@ def list_insights(
         conditions.append("type = %s")
         params.append(type)
     elif department:
-        # Department workspace filter — applies only when no explicit type filter given
+        # Department workspace filter — applies only when no explicit type filter given.
+        # Use prefix matching so "anomaly" covers "anomaly_vm_spike", etc.
         dept_types = types_for_department(department)
         if dept_types is not None:
-            conditions.append("type = ANY(%s)")
-            params.append(dept_types)
+            # Build: type = ANY(%s) OR type LIKE 'prefix_%' for each prefix type
+            prefix_clauses = []
+            for dt in dept_types:
+                prefix_clauses.append("type = %s")
+                params.append(dt)
+                prefix_clauses.append("type LIKE %s")
+                params.append(dt + "_%")
+            conditions.append("(" + " OR ".join(prefix_clauses) + ")")
 
     if entity_type:
         conditions.append("entity_type = %s")
@@ -162,8 +169,20 @@ def insights_summary(
     _user: User = Depends(require_permission("intelligence", "read")),
 ):
     dept_types = types_for_department(department)
-    type_clause = "AND type = ANY(%s)" if dept_types is not None else ""
-    base_params: list = [dept_types] if dept_types is not None else []
+
+    # Build prefix-aware type filter
+    if dept_types is not None:
+        prefix_clauses = []
+        base_params: list = []
+        for dt in dept_types:
+            prefix_clauses.append("type = %s")
+            base_params.append(dt)
+            prefix_clauses.append("type LIKE %s")
+            base_params.append(dt + "_%")
+        type_clause = "AND (" + " OR ".join(prefix_clauses) + ")"
+    else:
+        type_clause = ""
+        base_params = []
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -479,3 +498,343 @@ def dismiss_recommendation(
     logger.info("Recommendation %d dismissed by %s", rec_id, user["username"])
     return {"dismissed": True}
 
+
+# ---------------------------------------------------------------------------
+# GET /api/intelligence/forecast
+# Capacity Forecast — per-project resource runway (storage, vCPU, RAM, etc.)
+# Computes linear regression on-demand from the last 14 days of metering data.
+# ---------------------------------------------------------------------------
+
+def _linear_forecast(xs: List[float], ys: List[float]) -> float:
+    """Return slope (units per day). Returns 0 if insufficient data."""
+    n = len(xs)
+    if n < 3:
+        return 0.0
+    sx = sum(xs)
+    sy = sum(ys)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+    sxx = sum(x * x for x in xs)
+    denom = n * sxx - sx * sx
+    if denom == 0:
+        return 0.0
+    return (n * sxy - sx * sy) / denom
+
+
+def _days_runway(used: float, quota: float, slope: float, target_pct: float = 90.0) -> Optional[int]:
+    if quota <= 0 or slope <= 0:
+        return None
+    gap = quota * target_pct / 100.0 - used
+    if gap <= 0:
+        return 0
+    return max(0, int(gap / slope))
+
+
+@router.get("/forecast")
+def get_capacity_forecast(
+    project_id: Optional[str] = Query(None),
+    _user: User = Depends(require_permission("intelligence", "read")),
+):
+    """
+    Return per-project multi-resource capacity forecast.
+
+    Response:
+      {
+        "forecasts": [
+          {
+            "project_id":   "...",
+            "project_name": "...",
+            "resources": {
+              "storage_gb":     { "used": 40, "quota": 100, "used_pct": 40, "days_to_90": 18,
+                                  "trend_per_day": 0.5, "confidence": 0.8 },
+              "vcpus":          { ... },
+              "ram_mb":         { ... },
+              "instances":      { ... },
+              "floating_ips":   { ... }
+            }
+          }, ...
+        ]
+      }
+    """
+    _RESOURCES = [
+        ("storage_gb",  "storage_used_gb",   "storage_quota_gb"),
+        ("vcpus",       "vcpus_used",         "vcpus_quota"),
+        ("ram_mb",      "ram_used_mb",         "ram_quota_mb"),
+        ("instances",   "instances_used",      "instances_quota"),
+        ("floating_ips", "floating_ips_used",  "floating_ips_quota"),
+    ]
+
+    # Columns we actually need
+    used_cols  = [rc[1] for rc in _RESOURCES]
+    quota_cols = [rc[2] for rc in _RESOURCES]
+    all_cols   = ", ".join(
+        ["EXTRACT(EPOCH FROM collected_at) AS ts", "project_id", "project_name"]
+        + used_cols + quota_cols
+    )
+
+    pid_clause = "AND project_id = %s" if project_id else ""
+    pid_params: list = [project_id] if project_id else []
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                SELECT {all_cols}
+                FROM metering_quotas
+                WHERE collected_at >= NOW() - INTERVAL '14 days'
+                  AND project_id IS NOT NULL
+                  {pid_clause}
+                ORDER BY project_id, collected_at ASC
+                """, pid_params)
+            rows = cur.fetchall()
+
+    # Group by project
+    projects: dict = {}
+    for r in rows:
+        pid = r["project_id"]
+        if pid not in projects:
+            projects[pid] = {"name": r["project_name"] or pid, "rows": []}
+        projects[pid]["rows"].append(r)
+
+    forecasts = []
+    for pid, pdata in projects.items():
+        prows = pdata["rows"]
+        if len(prows) < 3:
+            continue
+        t0 = float(prows[0]["ts"])
+        xs = [(float(r["ts"]) - t0) / 86400.0 for r in prows]
+
+        resources: dict = {}
+        for res_key, used_col, quota_col in _RESOURCES:
+            try:
+                ys    = [float(r[used_col] or 0) for r in prows]
+                quota = float(prows[-1][quota_col] or 0)
+                used  = ys[-1]
+                slope = _linear_forecast(xs, ys)
+                # R² for confidence
+                if len(ys) >= 2:
+                    _, intercept = (0.0, 0.0)
+                    n = len(xs)
+                    sx = sum(xs)
+                    sy = sum(ys)
+                    sxy = sum(x * y for x, y in zip(xs, ys))
+                    sxx = sum(x * x for x in xs)
+                    d = n * sxx - sx * sx
+                    if d:
+                        slope_c = (n * sxy - sx * sy) / d
+                        intercept = (sy - slope_c * sx) / n
+                    y_mean = sum(ys) / len(ys)
+                    ss_tot = sum((y - y_mean) ** 2 for y in ys)
+                    ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in zip(xs, ys)) if ss_tot else 0
+                    r2     = max(0.0, 1.0 - ss_res / ss_tot) if ss_tot else 1.0
+                else:
+                    r2 = 0.0
+                confidence = round(min(1.0, len(prows) / 30.0) * max(0.0, r2), 3)
+                resources[res_key] = {
+                    "used":         round(used, 2),
+                    "quota":        round(quota, 2),
+                    "used_pct":     round(used / quota * 100, 1) if quota > 0 else None,
+                    "days_to_90":   _days_runway(used, quota, slope),
+                    "trend_per_day": round(slope, 4),
+                    "confidence":   confidence,
+                }
+            except Exception:
+                pass
+
+        if resources:
+            forecasts.append({
+                "project_id":   pid,
+                "project_name": pdata["name"],
+                "resources":    resources,
+            })
+
+    # Sort: soonest runway first (projects with no runway go last)
+    def _min_runway(f: dict) -> int:
+        days = [v["days_to_90"] for v in f["resources"].values()
+                if v.get("days_to_90") is not None]
+        return min(days) if days else 9999
+
+    forecasts.sort(key=_min_runway)
+    return {"forecasts": forecasts}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/intelligence/regions
+# Cross-Region Comparison — per-region health and utilization summary
+# ---------------------------------------------------------------------------
+
+@router.get("/regions")
+def get_region_comparison(
+    _user: User = Depends(require_permission("intelligence", "read")),
+):
+    """
+    Return per-region compute utilization, health score, and insight summary.
+
+    Response:
+      {
+        "regions": [
+          {
+            "region_id":            "default:region-one",
+            "hypervisors":          4,
+            "total_vcpus":          48,
+            "allocated_vcpus":      20,
+            "vcpu_utilization":     41.7,
+            "total_ram_mb":         65536,
+            "allocated_ram_mb":     32768,
+            "ram_utilization":      50.0,
+            "running_vms":          10,
+            "open_critical":        2,
+            "open_high":            3,
+            "capacity_runway_days": 18,
+            "growth_rate_pct":      5.2
+          }
+        ]
+      }
+    """
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Basic hypervisor aggregates per region
+            cur.execute("""
+                SELECT
+                    region_id,
+                    COUNT(*)          AS hypervisors,
+                    SUM(vcpus)        AS total_vcpus,
+                    SUM(memory_mb)    AS total_ram_mb,
+                    SUM(running_vms)  AS running_vms
+                FROM hypervisors
+                WHERE state = 'up'
+                GROUP BY region_id
+                ORDER BY region_id
+            """)
+            base_rows = {r["region_id"]: dict(r) for r in cur.fetchall()}
+
+            if not base_rows:
+                return {"regions": []}
+
+            # Allocated vCPUs + RAM per region from active servers
+            cur.execute("""
+                SELECT
+                    h.region_id,
+                    COALESCE(SUM(f.vcpus),  0) AS allocated_vcpus,
+                    COALESCE(SUM(f.ram_mb), 0) AS allocated_ram_mb
+                FROM servers s
+                JOIN hypervisors h ON h.id = s.hypervisor_id
+                JOIN flavors     f ON f.id = s.flavor_id
+                WHERE s.status = 'ACTIVE'
+                GROUP BY h.region_id
+            """)
+            for r in cur.fetchall():
+                rid = r["region_id"]
+                if rid in base_rows:
+                    base_rows[rid]["allocated_vcpus"] = float(r["allocated_vcpus"] or 0)
+                    base_rows[rid]["allocated_ram_mb"] = float(r["allocated_ram_mb"] or 0)
+
+            # Open critical + high insights per region (via hypervisor entity_id)
+            cur.execute("""
+                SELECT
+                    h.region_id,
+                    oi.severity,
+                    COUNT(*) AS cnt
+                FROM operational_insights oi
+                JOIN hypervisors h ON h.id::text = oi.entity_id
+                WHERE oi.status IN ('open','acknowledged','snoozed')
+                  AND oi.severity IN ('critical','high')
+                GROUP BY h.region_id, oi.severity
+            """)
+            for r in cur.fetchall():
+                rid = r["region_id"]
+                if rid in base_rows:
+                    key = f"open_{r['severity']}"
+                    base_rows[rid][key] = int(r["cnt"] or 0)
+
+    # Compute storage capacity runway from metering_quotas (fleet-wide per region)
+    region_runways: dict = {}
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    region_id,
+                    DATE_TRUNC('day', collected_at) AS day,
+                    SUM(storage_used_gb)  AS used,
+                    SUM(storage_quota_gb) AS quota
+                FROM metering_quotas
+                WHERE collected_at >= NOW() - INTERVAL '14 days'
+                  AND region_id IS NOT NULL
+                  AND storage_quota_gb IS NOT NULL
+                GROUP BY region_id, 2
+                ORDER BY region_id, 2
+            """)
+            quota_rows = cur.fetchall()
+
+    from collections import defaultdict
+    region_quota_data: dict = defaultdict(list)
+    for r in quota_rows:
+        region_quota_data[r["region_id"]].append(r)
+
+    for region_id, data_pts in region_quota_data.items():
+        if len(data_pts) < 3:
+            continue
+        xs   = list(range(len(data_pts)))
+        ys   = [float(d["used"] or 0) for d in data_pts]
+        quot = float(data_pts[-1]["quota"] or 0)
+        slope = _linear_forecast(xs, ys)
+        runway = _days_runway(ys[-1], quot, slope) if quot > 0 else None
+        region_runways[region_id] = runway
+
+    # VM growth rate per region (last 7 days)
+    region_growth: dict = {}
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    h.region_id,
+                    DATE_TRUNC('day', s.collected_at) AS day,
+                    COUNT(DISTINCT s.id)              AS vms
+                FROM servers_history s
+                JOIN hypervisors h ON h.id = s.hypervisor_id
+                WHERE s.status = 'ACTIVE'
+                  AND s.collected_at >= NOW() - INTERVAL '14 days'
+                GROUP BY h.region_id, 2
+                ORDER BY h.region_id, 2
+            """)
+            growth_rows = cur.fetchall()
+
+    from collections import defaultdict as _dd
+    region_vm_history: dict = _dd(list)
+    for r in growth_rows:
+        region_vm_history[r["region_id"]].append(int(r["vms"] or 0))
+
+    for rid, vm_counts in region_vm_history.items():
+        if len(vm_counts) >= 7:
+            half = len(vm_counts) // 2
+            early_avg = sum(vm_counts[:half]) / half
+            late_avg  = sum(vm_counts[half:]) / max(1, len(vm_counts) - half)
+            region_growth[rid] = round(
+                (late_avg - early_avg) / max(1, early_avg) * 100, 1
+            )
+        else:
+            region_growth[rid] = 0.0
+
+    # Build response
+    result = []
+    for region_id, row in sorted(base_rows.items()):
+        total_vcpu = float(row.get("total_vcpus") or 0)
+        alloc_vcpu = float(row.get("allocated_vcpus", 0))
+        total_ram  = float(row.get("total_ram_mb") or 0)
+        alloc_ram  = float(row.get("allocated_ram_mb", 0))
+        result.append({
+            "region_id":            region_id,
+            "hypervisors":          int(row.get("hypervisors") or 0),
+            "total_vcpus":          int(total_vcpu),
+            "allocated_vcpus":      int(alloc_vcpu),
+            "vcpu_utilization":     round(alloc_vcpu / total_vcpu * 100, 1) if total_vcpu else 0,
+            "total_ram_mb":         int(total_ram),
+            "allocated_ram_mb":     int(alloc_ram),
+            "ram_utilization":      round(alloc_ram / total_ram * 100, 1) if total_ram else 0,
+            "running_vms":          int(row.get("running_vms") or 0),
+            "open_critical":        row.get("open_critical", 0),
+            "open_high":            row.get("open_high", 0),
+            "capacity_runway_days": region_runways.get(region_id),
+            "growth_rate_pct":      region_growth.get(region_id, 0.0),
+        })
+
+    return {"regions": result}
