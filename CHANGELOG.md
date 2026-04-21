@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.92.0] - 2026-04-22
+
+### Added
+
+- **Account Manager Portfolio Dashboard** (`AccountManagerDashboard.tsx`): New role-specific view accessible via the "My Portfolio" nav item. Displays a KPI strip (healthy / at-risk / breached / not-configured / open-critical / leakage-alerts counts), filterable per-tenant table with SLA status badge, contract vCPU usage bar, critical issue count, and leakage alert count. Powered by new `GET /api/sla/portfolio/summary` endpoint.
+
+- **Executive Portfolio Health Dashboard** (`ExecutiveDashboard.tsx`): Fleet-wide view for leadership via the "Portfolio Health" nav item. Shows SLA health percentage gauge (stacked bar), six KPI cards (fleet health %, breached count, at-risk count, open critical insights, estimated monthly revenue leakage, avg MTTR), and narrative sections for leakage detail and MTTR compliance. Powered by new `GET /api/sla/portfolio/executive-summary` endpoint.
+
+- **Portfolio API Endpoints** (`api/sla_routes.py`):
+  - `GET /api/sla/portfolio/summary` — per-tenant portfolio array with SLA status, contract vCPU usage, open insight counts; requires `sla:read`.
+  - `GET /api/sla/portfolio/executive-summary` — fleet aggregation with SLA health %, revenue leakage estimate (null when unit prices not configured), avg MTTR vs commitment, open critical count; requires `sla:read`.
+
+- **Role-Based Navigation** (`db/migrate_v1_92_0_phase6.sql`):
+  - Two new departments: **Account Management** (default tab: `account_manager_dashboard`) and **Executive Leadership** (default tab: `executive_dashboard`).
+  - New `intelligence_views` nav group with `account_manager_dashboard` and `executive_dashboard` nav items.
+  - RBAC rows for new `account_manager` role (read: intelligence, SLA, servers, volumes, snapshots, networks, domains, projects, tenant_health, reports, metering, monitoring; write: qbr) and `executive` role (read: intelligence, SLA, domains, projects, tenant_health, monitoring, dashboard).
+  - `unit_price DECIMAL(10,4)` column added to `msp_contract_entitlements` (nullable; existing rows unaffected; revenue leakage dollar totals degrade gracefully to `null` until prices are configured).
+
+- **Persona-Driven Default Landing Tab** (`pf9-ui/src/hooks/useNavigation.ts`, `App.tsx`): `NavigationData` interface now includes optional `default_tab` field (backend already returned it). When a user belongs to a department with `default_nav_item_key` set, the nav `useEffect` routes them directly to that tab on login rather than the generic dashboard — enabling Account Managers to land on "My Portfolio" and Executives on "Portfolio Health" automatically. Existing users with no department assignment are unaffected.
+
+- **Extended SLA Tests** (`tests/test_sla.py`): Tests `[5]` and `[6]` cover `GET /api/sla/portfolio/summary` and `GET /api/sla/portfolio/executive-summary` — schema validation, type checks, auth guard (401/403 when unauthenticated), and boundary assertions (health_pct in 0–100, sla_healthy ≤ total_clients, leakage nullable).
+
 ## [1.91.3] - 2026-04-22
 
 ### Added

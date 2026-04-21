@@ -77,6 +77,56 @@ def test_sla_compliance():  # noqa: C901
     r = requests.get(f"{BASE}/api/sla/commitments/nonexistent-tenant-id-xyz", headers=hdrs)
     check("GET commitment for unknown tenant returns 404", r.status_code == 404)
 
+    # ── [5] Portfolio summary ─────────────────────────────────────────────────
+    print("\n[5] Portfolio summary")
+    r = requests.get(f"{BASE}/api/sla/portfolio/summary", headers=hdrs)
+    check("GET /api/sla/portfolio/summary 200", r.status_code == 200, r.text[:120])
+    ps = r.json()
+    check("portfolio key present", "portfolio" in ps)
+    check("month key present",     "month" in ps)
+    check("total key present",     "total" in ps)
+    check("total is int",          isinstance(ps.get("total"), int))
+    portfolio = ps.get("portfolio", [])
+    check("portfolio is list",     isinstance(portfolio, list))
+    if portfolio:
+        first = portfolio[0]
+        for field in ("tenant_id", "tenant_name", "tier", "sla_status",
+                      "contracted_vcpu", "used_vcpu", "open_critical_count",
+                      "open_total_count", "leakage_insight_count"):
+            check(f"portfolio row has {field}", field in first)
+        check("sla_status is valid value",
+              first.get("sla_status") in ("ok", "at_risk", "breached", "not_configured"))
+        info(f"  Portfolio sample: tenant={first.get('tenant_name')}, sla={first.get('sla_status')}")
+    check("portfolio unauthenticated denied",
+          requests.get(f"{BASE}/api/sla/portfolio/summary").status_code in (401, 403))
+
+    # ── [6] Executive summary ─────────────────────────────────────────────────
+    print("\n[6] Executive summary")
+    r = requests.get(f"{BASE}/api/sla/portfolio/executive-summary", headers=hdrs)
+    check("GET /api/sla/portfolio/executive-summary 200", r.status_code == 200, r.text[:120])
+    es = r.json()
+    check("summary key present", "summary" in es)
+    check("month key present",   "month" in es)
+    esdata = es.get("summary", {})
+    for field in ("total_clients", "sla_healthy", "sla_at_risk", "sla_breached",
+                  "sla_not_configured", "sla_health_pct", "open_critical_insights",
+                  "leakage_client_count", "leakage_insight_count"):
+        check(f"exec summary has {field}", field in esdata)
+    check("sla_health_pct 0–100",
+          0 <= (esdata.get("sla_health_pct") or 0) <= 100)
+    check("total_clients non-negative",   (esdata.get("total_clients") or 0) >= 0)
+    check("sla_healthy <= total_clients",
+          (esdata.get("sla_healthy") or 0) <= (esdata.get("total_clients") or 0))
+    # revenue_leakage_monthly may be None when no unit prices are set
+    lm = esdata.get("revenue_leakage_monthly")
+    check("revenue_leakage_monthly is None or float",
+          lm is None or isinstance(lm, (int, float)))
+    info(f"  Exec summary: {esdata.get('total_clients')} clients, "
+         f"{esdata.get('sla_health_pct')}% healthy, "
+         f"leakage=${lm}")
+    check("exec summary unauthenticated denied",
+          requests.get(f"{BASE}/api/sla/portfolio/executive-summary").status_code in (401, 403))
+
     # ── Final ─────────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     if errors:

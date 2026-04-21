@@ -1627,7 +1627,15 @@ docker exec pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
   -c "SELECT filename, applied_at FROM schema_migrations ORDER BY applied_at;"
 ```
 
-There are currently ~66 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
+There are currently ~67 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
+
+**v1.92.0** adds `db/migrate_v1_92_0_phase6.sql`: `ALTER TABLE msp_contract_entitlements ADD COLUMN IF NOT EXISTS unit_price DECIMAL(10,4)`, two new departments (`Account Management`, `Executive Leadership`) with `default_nav_item_key`, `intelligence_views` nav group, two nav items (`account_manager_dashboard`, `executive_dashboard`), 14 RBAC `role_permissions` rows for `account_manager` and `executive` roles, and `department_nav_items` seeding. Apply with:
+```bash
+# Docker
+docker exec pf9_api python run_migration.py
+# Kubernetes
+kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py
+```
 
 **v1.90.0** adds `db/migrate_intelligence_v4.sql`: three new tables (`msp_contract_entitlements`, `msp_labor_rates`, `psa_webhook_config`) and 13 RBAC entries for the MSP Business Value Layer (Revenue Leakage engine, QBR generator, PSA webhooks). Seeds 8 labor rate rows at $150/hr. Apply with:
 ```bash

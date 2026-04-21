@@ -762,7 +762,7 @@ CREATE OR REPLACE VIEW tenant_cp_view AS
 ## MSP Business Value Layer (v1.90.0)
 
 ### msp_contract_entitlements
-Per-tenant contracted resource limits for Revenue Leakage detection. Two partial unique indexes handle NULL `region_id` (global limit) vs non-NULL (region-specific limit).
+Per-tenant contracted resource limits for Revenue Leakage detection. Two partial unique indexes handle NULL `region_id` (global limit) vs non-NULL (region-specific limit). `unit_price` column added in v1.92.0 for revenue leakage dollar estimates in the Executive Dashboard.
 
 ```sql
 CREATE TABLE msp_contract_entitlements (
@@ -770,6 +770,7 @@ CREATE TABLE msp_contract_entitlements (
     tenant_id       TEXT NOT NULL,
     resource        TEXT NOT NULL,        -- vcpu | ram_gb | storage_gb | floating_ip
     limit_value     NUMERIC(12,3) NOT NULL,
+    unit_price      DECIMAL(10,4),        -- (v1.92.0) nullable; enables revenue_leakage_monthly in executive summary
     region_id       TEXT,                 -- NULL = applies to all regions
     effective_from  DATE NOT NULL DEFAULT CURRENT_DATE,
     effective_to    DATE,                 -- NULL = open-ended (currently active)

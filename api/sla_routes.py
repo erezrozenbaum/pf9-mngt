@@ -390,4 +390,207 @@ def generate_compliance_report(
     )
 
 
+# ---------------------------------------------------------------------------
+# GET /api/sla/portfolio/summary — account-manager view: per-tenant portfolio
+# Must be registered BEFORE /portfolio/executive-summary to avoid conflicts.
+# ---------------------------------------------------------------------------
+
+@router.get("/portfolio/summary")
+def get_portfolio_summary(
+    _user: User = Depends(require_permission("sla", "read")),
+):
+    """Per-tenant portfolio summary: SLA status, contract usage, open insights."""
+    from datetime import date
+    month_start = date.today().replace(day=1)
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    p.id                                        AS tenant_id,
+                    p.name                                      AS tenant_name,
+                    sc.tier,
+                    cm.breach_fields,
+                    cm.at_risk_fields,
+                    COALESCE(ce.total_contracted_vcpu, 0)       AS contracted_vcpu,
+                    COALESCE(pq.used_vcpu, 0)                   AS used_vcpu,
+                    COALESCE(oi.critical_count, 0)              AS open_critical_count,
+                    COALESCE(oi.total_count, 0)                 AS open_total_count,
+                    COALESCE(lk.leakage_count, 0)               AS leakage_insight_count
+                FROM projects p
+                LEFT JOIN sla_commitments sc ON sc.tenant_id = p.id
+                    AND sc.effective_to IS NULL
+                LEFT JOIN sla_compliance_monthly cm ON cm.tenant_id = p.id
+                    AND cm.month = %s AND cm.region_id = ''
+                LEFT JOIN (
+                    SELECT tenant_id, SUM(contracted) AS total_contracted_vcpu
+                    FROM   msp_contract_entitlements
+                    WHERE  resource = 'vcpu' AND effective_to IS NULL
+                    GROUP BY tenant_id
+                ) ce ON ce.tenant_id = p.id
+                LEFT JOIN (
+                    SELECT project_id, SUM(in_use) AS used_vcpu
+                    FROM   project_quotas
+                    WHERE  resource = 'cores' AND service = 'nova'
+                    GROUP BY project_id
+                ) pq ON pq.project_id = p.id
+                LEFT JOIN (
+                    SELECT
+                        metadata->>'tenant_id'                            AS tenant_id,
+                        COUNT(*) FILTER (WHERE severity = 'critical')     AS critical_count,
+                        COUNT(*)                                           AS total_count
+                    FROM   operational_insights
+                    WHERE  status = 'open'
+                    GROUP BY metadata->>'tenant_id'
+                ) oi ON oi.tenant_id = p.id
+                LEFT JOIN (
+                    SELECT metadata->>'tenant_id' AS tenant_id, COUNT(*) AS leakage_count
+                    FROM   operational_insights
+                    WHERE  type = 'leakage' AND status = 'open'
+                    GROUP BY metadata->>'tenant_id'
+                ) lk ON lk.tenant_id = p.id
+                ORDER BY p.name ASC
+            """, (month_start,))
+            rows = cur.fetchall()
+
+    results = []
+    for row in rows:
+        breach = row.get("breach_fields") or []
+        at_risk = row.get("at_risk_fields") or []
+        if not row.get("tier"):
+            sla_status = "not_configured"
+        elif breach:
+            sla_status = "breached"
+        elif at_risk:
+            sla_status = "at_risk"
+        else:
+            sla_status = "ok"
+
+        contracted = int(row.get("contracted_vcpu") or 0)
+        used = int(row.get("used_vcpu") or 0)
+        usage_pct = round((used / contracted * 100), 1) if contracted > 0 else None
+
+        results.append({
+            "tenant_id":             row["tenant_id"],
+            "tenant_name":           row["tenant_name"] or row["tenant_id"],
+            "tier":                  row.get("tier") or "none",
+            "sla_status":            sla_status,
+            "breach_fields":         breach,
+            "at_risk_fields":        at_risk,
+            "contracted_vcpu":       contracted,
+            "used_vcpu":             used,
+            "contract_usage_pct":    usage_pct,
+            "open_critical_count":   int(row.get("open_critical_count") or 0),
+            "open_total_count":      int(row.get("open_total_count") or 0),
+            "leakage_insight_count": int(row.get("leakage_insight_count") or 0),
+        })
+
+    return {"portfolio": results, "month": str(month_start), "total": len(results)}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/sla/portfolio/executive-summary — fleet-level executive view
+# ---------------------------------------------------------------------------
+
+@router.get("/portfolio/executive-summary")
+def get_portfolio_executive_summary(
+    _user: User = Depends(require_permission("sla", "read")),
+):
+    """Fleet-wide executive metrics: SLA health, leakage estimate, critical alerts."""
+    from datetime import date
+    month_start = date.today().replace(day=1)
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Total client count
+            cur.execute("SELECT COUNT(*) AS cnt FROM projects")
+            total_clients = int(cur.fetchone()["cnt"])
+
+            # SLA health breakdown this month
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE cm.breach_fields IS NOT NULL
+                          AND array_length(cm.breach_fields, 1) > 0
+                    ) AS breached,
+                    COUNT(*) FILTER (
+                        WHERE (cm.at_risk_fields IS NOT NULL
+                          AND array_length(cm.at_risk_fields, 1) > 0)
+                          AND (cm.breach_fields IS NULL
+                          OR  array_length(cm.breach_fields, 1) = 0)
+                    ) AS at_risk,
+                    COUNT(*) FILTER (
+                        WHERE sc.tenant_id IS NULL
+                    ) AS not_configured,
+                    AVG(cm.mttr_avg_hours)  AS avg_mttr_hours,
+                    AVG(sc.mttr_hours)      AS avg_mttr_commitment_hours
+                FROM projects p
+                LEFT JOIN sla_commitments sc ON sc.tenant_id = p.id
+                    AND sc.effective_to IS NULL
+                LEFT JOIN sla_compliance_monthly cm ON cm.tenant_id = p.id
+                    AND cm.month = %s AND cm.region_id = ''
+            """, (month_start,))
+            sla_row = dict(cur.fetchone())
+
+            # Revenue leakage estimate (dollar total only where unit_price is set)
+            cur.execute("""
+                SELECT
+                    COUNT(DISTINCT oi.metadata->>'tenant_id')   AS leakage_client_count,
+                    COUNT(*)                                     AS leakage_insight_count,
+                    SUM(
+                        CASE WHEN ce.unit_price IS NOT NULL THEN
+                            ce.contracted::DECIMAL * ce.unit_price
+                            * COALESCE((oi.metadata->>'overage_pct')::DECIMAL, 0)
+                        ELSE NULL END
+                    )                                            AS revenue_leakage_monthly
+                FROM operational_insights oi
+                LEFT JOIN msp_contract_entitlements ce
+                    ON ce.tenant_id = oi.metadata->>'tenant_id'
+                    AND ce.resource = 'vcpu' AND ce.effective_to IS NULL
+                WHERE oi.type = 'leakage' AND oi.status = 'open'
+            """)
+            leakage_row = dict(cur.fetchone())
+
+            # Open critical insights
+            cur.execute("""
+                SELECT COUNT(*) AS cnt FROM operational_insights
+                WHERE severity = 'critical' AND status = 'open'
+            """)
+            critical_count = int(cur.fetchone()["cnt"])
+
+    breached       = int(sla_row.get("breached") or 0)
+    at_risk        = int(sla_row.get("at_risk") or 0)
+    not_configured = int(sla_row.get("not_configured") or 0)
+    sla_healthy    = total_clients - breached - at_risk - not_configured
+
+    avg_mttr = (
+        round(float(sla_row["avg_mttr_hours"]), 2)
+        if sla_row.get("avg_mttr_hours") is not None else None
+    )
+    avg_mttr_commitment = (
+        round(float(sla_row["avg_mttr_commitment_hours"]), 2)
+        if sla_row.get("avg_mttr_commitment_hours") is not None else None
+    )
+    leakage_monthly = (
+        round(float(leakage_row["revenue_leakage_monthly"]), 2)
+        if leakage_row.get("revenue_leakage_monthly") is not None else None
+    )
+
+    return {
+        "summary": {
+            "total_clients":             total_clients,
+            "sla_healthy":               max(sla_healthy, 0),
+            "sla_at_risk":               at_risk,
+            "sla_breached":              breached,
+            "sla_not_configured":        not_configured,
+            "sla_health_pct":            round(sla_healthy / total_clients * 100, 1) if total_clients else 0,
+            "revenue_leakage_monthly":   leakage_monthly,
+            "leakage_client_count":      int(leakage_row.get("leakage_client_count") or 0),
+            "leakage_insight_count":     int(leakage_row.get("leakage_insight_count") or 0),
+            "open_critical_insights":    critical_count,
+            "avg_mttr_hours":            avg_mttr,
+            "avg_mttr_commitment_hours": avg_mttr_commitment,
+        },
+        "month": str(month_start),
+    }
 

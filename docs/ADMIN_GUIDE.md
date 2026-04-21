@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.91.3  
+**Version**: 1.92.0  
 **Last Updated**: April 21, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,16 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.92.0 — Role-Based Dashboard Layer: Account Manager & Executive Views (✅ Complete)
+
+- **Account Manager Dashboard** (`My Portfolio` tab, `account_manager_dashboard` nav item): Per-tenant portfolio grid showing each managed client with SLA status badge (healthy/at-risk/breached/not-configured), contracted vs used vCPU usage bar, open critical insight count, revenue leakage alert count, and SLA breach fields. KPI strip at top: 6 colour-coded cards (Healthy, At Risk, Breached, Not Configured, Critical Issues, Leakage Alerts). Filter buttons (All / OK / At Risk / Breached / Not Configured) + search bar. Powered by `GET /api/sla/portfolio/summary` (requires `sla:read`).
+- **Executive Dashboard** (`Portfolio Health` tab, `executive_dashboard` nav item): Fleet-level stacked SLA health bar (green/amber/red/grey segments), 6 KPI cards (Fleet Health %, SLA Breached, SLA At Risk, Open Critical Insights, Revenue Leakage/Month, Avg MTTR Hours), narrative leakage detail and MTTR compliance paragraphs. Powered by `GET /api/sla/portfolio/executive-summary` (requires `sla:read`).
+- **Two new RBAC roles**: `account_manager` and `executive` with scoped `sla:read`, `intelligence:read`, `client_health:read`, and read-only access to metering/inventory endpoints.
+- **Two new departments**: `Account Management` (default tab: `account_manager_dashboard`) and `Executive Leadership` (default tab: `executive_dashboard`). `departments.default_nav_item_key` wired in `navigation_routes.py`; `useNavigation.ts` exposes `default_tab`; `App.tsx` `useEffect` checks it at login.
+- **`unit_price DECIMAL(10,4)`** column added to `msp_contract_entitlements` (nullable). When set, `executive-summary` computes `revenue_leakage_monthly`; returns `null` otherwise.
+- DB migration: `db/migrate_v1_92_0_phase6.sql` — `ALTER TABLE`, 9 departments, `intelligence_views` nav group, 2 new nav items, 14 RBAC rows. Applied to Docker (`pf9_db`) and Kubernetes (`pf9-db-0`).
+- 538 unit tests pass, 0 HIGH bandit findings, TypeScript clean.
 
 ### v1.91.3 — SLA Commitment Editor & Compliance History in Tenant Detail (✅ Complete)
 
