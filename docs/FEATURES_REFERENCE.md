@@ -212,7 +212,7 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
 - **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
 
-### 📊 Operational Intelligence *(v1.86.0 → v1.91.0)*
+### 📊 Operational Intelligence *(v1.86.0 → v1.92.0)*
 
 **Continuous, background-running insight engine for MSP and enterprise infrastructure operators.**
 
@@ -239,7 +239,15 @@ The `intelligence_worker` runs 6 detection engines every 5 minutes and writes st
 
 **Client Health endpoint** *(v1.91.0)*: `GET /api/intelligence/client-health/{tenant_id}` — Efficiency score (avg `metering_efficiency.overall_score` last 7 days + verbal classification), Stability score (100 minus severity-weighted open insights: critical −20, high −10, medium −5), Capacity Runway (days until soonest resource hits 90% quota, from `metering_quotas` linear regression). RBAC: `client_health:read` (viewer, operator, admin, superadmin).
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.91.0)*
+**Portfolio summary endpoint** *(v1.92.0)*: `GET /api/sla/portfolio/summary` — Per-tenant portfolio view for account managers. Returns a row per managed client with `sla_status` (healthy/at_risk/breached/not_configured), `contracted_vcpu`, `used_vcpu`, `contract_usage_pct`, `open_critical_count`, `open_total_count`, `leakage_insight_count`. RBAC: `sla:read`.
+
+**Executive summary endpoint** *(v1.92.0)*: `GET /api/sla/portfolio/executive-summary` — Fleet-level aggregation: `total_clients`, `sla_healthy/at_risk/breached/not_configured`, `sla_health_pct`, `revenue_leakage_monthly` (null when no `unit_price` set), `leakage_client_count`, `open_critical_insights`, `avg_mttr_hours`, `avg_mttr_commitment_hours`. RBAC: `sla:read`.
+
+**Account Manager Dashboard** *(v1.92.0, `account_manager_dashboard` tab)*: React component with 6-card KPI strip, filter/search bar, and per-tenant table (SLA badge, vCPU usage bar, critical badge, leakage badge, breach fields). New `account_manager` RBAC role; `Account Management` department with `default_nav_item_key = account_manager_dashboard` for persona auto-routing on login.
+
+**Executive Dashboard** *(v1.92.0, `executive_dashboard` tab)*: Fleet-level stacked SLA health bar, 6 KPI cards (Fleet Health %, Breached, At Risk, Open Critical, Revenue Leakage/Month, Avg MTTR), and narrative sections for leakage and MTTR compliance. New `executive` RBAC role; `Executive Leadership` department with `default_nav_item_key = executive_dashboard`.
+
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.92.0)*
 
 **For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning, security group management, and read-only observer access — without exposing the admin panel.**
 
@@ -274,7 +282,7 @@ A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolat
 ### 📈 30+ Tab Management Dashboard
 A single engineering console covering every operational surface:
 
-> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks** · **Ops Copilot** · **Tickets** · **Dependency Graph** · **Operational Intelligence** · **SLA Compliance** · **Business Review (QBR)**
+> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks** · **Ops Copilot** · **Tickets** · **Dependency Graph** · **Operational Intelligence** · **SLA Compliance** · **Business Review (QBR)** · **My Portfolio (Account Manager)** · **Portfolio Health (Executive)**
 
 <details>
 <summary><strong>Landing Dashboard Widgets</strong></summary>

@@ -34,6 +34,8 @@ import ClusterManagement from "./components/ClusterManagement";
 import TenantPortalTab from "./components/TenantPortalTab";
 import RunbooksTab from "./components/RunbooksTab";
 import InsightsTab from "./components/InsightsTab";
+import AccountManagerDashboard from "./components/AccountManagerDashboard";
+import ExecutiveDashboard from "./components/ExecutiveDashboard";
 import DocsTab from "./components/DocsTab";
 import TicketsTab from "./components/TicketsTab";
 import MigrationPlannerTab from "./components/MigrationPlannerTab";
@@ -413,7 +415,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal" | "account_manager_dashboard" | "executive_dashboard";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -475,8 +477,10 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "system_metadata",       label: "🗂️ System Metadata",    actionStyle: true },
   { id: "tickets",               label: "🎫 Support Tickets",    adminOnly: false, actionStyle: true },
   { id: "my_queue",              label: "📥 My Queue",           adminOnly: false, actionStyle: true },
-  { id: "cluster_management",   label: "🌐 Cluster Mgmt",       adminOnly: true,  actionStyle: true },
-  { id: "tenant_portal",        label: "🏢 Tenant Portal",      adminOnly: true,  actionStyle: true },
+  { id: "cluster_management",        label: "🌐 Cluster Mgmt",       adminOnly: true,  actionStyle: true },
+  { id: "tenant_portal",             label: "🏢 Tenant Portal",      adminOnly: true,  actionStyle: true },
+  { id: "account_manager_dashboard", label: "📋 My Portfolio",       adminOnly: false, actionStyle: false },
+  { id: "executive_dashboard",       label: "📊 Portfolio Health",   adminOnly: false, actionStyle: false },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1285,18 +1289,24 @@ const App: React.FC = () => {
   // other groups expand only when clicked and collapse on re-click.
   const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
 
-  // Auto-expand the default group when navData first loads
+  // Auto-expand the default group when navData first loads.
+  // Uses departments.default_nav_item_key for persona routing when available.
   useEffect(() => {
     if (navData && navData.nav.length > 0 && expandedGroupKey === null) {
+      // Department-level default tab takes priority over group auto-select.
+      if (navData.default_tab) {
+        setActiveTab(navData.default_tab as ActiveTab);
+      }
+
       const defaultGroup = navData.nav.find((g: any) => g.is_default);
       if (defaultGroup) {
         setExpandedGroupKey(defaultGroup.key);
-        // Also auto-select the first item in the default group as active tab
-        if (defaultGroup.items && defaultGroup.items.length > 0) {
+        // Fall back to first item of the default group if no department default.
+        if (!navData.default_tab && defaultGroup.items && defaultGroup.items.length > 0) {
           setActiveTab(defaultGroup.items[0].key as ActiveTab);
         }
       } else {
-        // No default group — expand the active group
+        // No default group — expand the active group.
         setExpandedGroupKey(activeGroupKey);
       }
     }
@@ -6357,6 +6367,16 @@ const App: React.FC = () => {
           {/* Tenant Portal Management */}
           {activeTab === "tenant_portal" && (
             <TenantPortalTab userRole={authUser?.role} />
+          )}
+
+          {/* Account Manager Portfolio Dashboard */}
+          {activeTab === "account_manager_dashboard" && (
+            <AccountManagerDashboard userRole={authUser?.role || ""} />
+          )}
+
+          {/* Executive Portfolio Health Dashboard */}
+          {activeTab === "executive_dashboard" && (
+            <ExecutiveDashboard userRole={authUser?.role || ""} />
           )}
 
         </div>

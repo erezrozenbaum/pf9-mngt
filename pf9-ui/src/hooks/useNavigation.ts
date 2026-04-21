@@ -40,6 +40,7 @@ export interface NavigationData {
   };
   nav: NavGroupDef[];
   permissions: PermissionEntry[];
+  default_tab?: string;
 }
 
 /** Per-user custom order stored in localStorage / backend preferences */

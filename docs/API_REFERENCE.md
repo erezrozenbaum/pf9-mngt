@@ -5133,6 +5133,8 @@ All endpoints require a valid Bearer token. Read endpoints: Viewer+. Write endpo
 | `GET` | `/api/sla/compliance/{tenant_id}` | Monthly compliance history for tenant. |
 | `GET` | `/api/sla/compliance/summary` | Aggregated compliance summary for all tenants with commitments. |
 | `POST` | `/api/sla/generate-report/{tenant_id}` | Generate SLA PDF report for tenant. Returns `application/pdf`. |
+| `GET` | `/api/sla/portfolio/summary` | *(v1.92.0)* Per-tenant portfolio for account managers. Returns `{portfolio:[{tenant_id, tenant_name, sla_status, contracted_vcpu, used_vcpu, contract_usage_pct, open_critical_count, open_total_count, leakage_insight_count}], month, total}`. RBAC: `sla:read`. |
+| `GET` | `/api/sla/portfolio/executive-summary` | *(v1.92.0)* Fleet-level aggregation for executives. Returns `{summary:{total_clients, sla_healthy, sla_at_risk, sla_breached, sla_not_configured, sla_health_pct, revenue_leakage_monthly, leakage_client_count, open_critical_insights, avg_mttr_hours, avg_mttr_commitment_hours}, month}`. `revenue_leakage_monthly` is `null` when no `unit_price` configured. RBAC: `sla:read`. |
 
 ---
 

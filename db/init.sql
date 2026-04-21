@@ -696,14 +696,16 @@ CREATE TABLE IF NOT EXISTS departments (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-INSERT INTO departments (name, description, sort_order) VALUES
-    ('Engineering',  'Engineering and development team',     1),
-    ('Tier1 Support','Tier 1 support team',                  2),
-    ('Tier2 Support','Tier 2 support team',                  3),
-    ('Tier3 Support','Tier 3 support team',                  4),
-    ('Sales',        'Sales team',                           5),
-    ('Marketing',    'Marketing team',                       6),
-    ('Management',   'Management and leadership',            7)
+INSERT INTO departments (name, description, sort_order, default_nav_item_key) VALUES
+    ('Engineering',         'Engineering and development team',                               1, NULL),
+    ('Tier1 Support',       'Tier 1 support team',                                           2, NULL),
+    ('Tier2 Support',       'Tier 2 support team',                                           3, NULL),
+    ('Tier3 Support',       'Tier 3 support team',                                           4, NULL),
+    ('Sales',               'Sales team',                                                    5, NULL),
+    ('Marketing',           'Marketing team',                                                6, NULL),
+    ('Management',          'Management and leadership',                                     7, NULL),
+    ('Account Management',  'Client-facing account managers — per-tenant portfolio view',    8, 'account_manager_dashboard'),
+    ('Executive Leadership','MSP leadership — fleet-wide executive overview',                9, 'executive_dashboard')
 ON CONFLICT (name) DO NOTHING;
 
 -- User roles for the management system (separate from OpenStack roles)
@@ -2784,7 +2786,8 @@ INSERT INTO nav_groups (key, label, icon, description, sort_order) VALUES
     ('customer_onboarding',  'Customer Onboarding',          '🏢', 'Domains, projects, and tenant management',       4),
     ('metering_reporting',   'Metering & Reporting',         '📊', 'API metrics, metering, reports, and health',     5),
     ('admin_tools',          'Admin Tools',                  '⚙️', 'Authentication, roles, branding, and audit',     6),
-    ('technical_tools',      'Technical Tools',              '🔧', 'Backup, provisioning, and system operations',    7)
+    ('technical_tools',      'Technical Tools',              '🔧', 'Backup, provisioning, and system operations',    7),
+    ('intelligence_views',   'Intelligence Views',           '🧠', 'Role-specific portfolio dashboards',             0)
 ON CONFLICT (key) DO NOTHING;
 
 -- =====================================================================
@@ -2880,6 +2883,14 @@ INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort
     ((SELECT id FROM nav_groups WHERE key='technical_tools'), 'backup',    'Backup',    '💾', '/backup',    'backup',   1),
     ((SELECT id FROM nav_groups WHERE key='technical_tools'), 'runbooks',  'Runbooks',  '📋', '/runbooks',  'runbooks', 2),
     ((SELECT id FROM nav_groups WHERE key='technical_tools'), 'docs',      'Docs',      '📚', '/docs',      'docs',     3)
+ON CONFLICT (key) DO NOTHING;
+
+-- Intelligence Views group (Phase 6 — persona dashboards)
+INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order) VALUES
+    ((SELECT id FROM nav_groups WHERE key='intelligence_views'),
+     'account_manager_dashboard', 'My Portfolio',    '📋', '/account_manager_dashboard', 'sla', 1),
+    ((SELECT id FROM nav_groups WHERE key='intelligence_views'),
+     'executive_dashboard',       'Portfolio Health', '📊', '/executive_dashboard',       'sla', 2)
 ON CONFLICT (key) DO NOTHING;
 
 -- Mark action/config items (displayed with accent color in nav)
@@ -3879,6 +3890,7 @@ CREATE TABLE IF NOT EXISTS msp_contract_entitlements (
     sku_name        TEXT NOT NULL DEFAULT '',
     resource        TEXT NOT NULL,
     contracted      INT  NOT NULL,
+    unit_price      DECIMAL(10,4),
     region_id       TEXT,
     billing_id      TEXT,
     effective_from  DATE NOT NULL,
@@ -3962,7 +3974,30 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('superadmin', 'psa', 'read'),
     ('superadmin', 'psa', 'write'),
     ('admin',      'psa', 'read'),
-    ('admin',      'psa', 'write')
+    ('admin',      'psa', 'write'),
+    -- Phase 6: account_manager role
+    ('account_manager', 'intelligence',   'read'),
+    ('account_manager', 'sla',            'read'),
+    ('account_manager', 'servers',        'read'),
+    ('account_manager', 'volumes',        'read'),
+    ('account_manager', 'snapshots',      'read'),
+    ('account_manager', 'networks',       'read'),
+    ('account_manager', 'domains',        'read'),
+    ('account_manager', 'projects',       'read'),
+    ('account_manager', 'tenant_health',  'read'),
+    ('account_manager', 'reports',        'read'),
+    ('account_manager', 'metering',       'read'),
+    ('account_manager', 'monitoring',     'read'),
+    ('account_manager', 'qbr',            'write'),
+    ('account_manager', 'dashboard',      'read'),
+    -- Phase 6: executive role
+    ('executive', 'intelligence',   'read'),
+    ('executive', 'sla',            'read'),
+    ('executive', 'domains',        'read'),
+    ('executive', 'projects',       'read'),
+    ('executive', 'tenant_health',  'read'),
+    ('executive', 'monitoring',     'read'),
+    ('executive', 'dashboard',      'read')
 ON CONFLICT (role, resource, action) DO NOTHING;
 CREATE INDEX IF NOT EXISTS idx_volumes_region_id      ON volumes(region_id);
 CREATE INDEX IF NOT EXISTS idx_networks_region_id     ON networks(region_id);
