@@ -71,8 +71,18 @@ def _branding(base_url: str) -> httpx.Response:
 # ---------------------------------------------------------------------------
 class TestBrandingReachability:
     def test_T01_branding_via_proxy(self):
-        """Branding loads through the Vite proxy — proxy routing is working."""
-        r = _branding(PROXY_URL)
+        """Branding loads through the Vite proxy — proxy routing is working.
+
+        Skipped automatically when PROXY_URL is not reachable (e.g. in the CI
+        live-stack environment where the Vite dev server is not running).
+        """
+        try:
+            r = _branding(PROXY_URL)
+        except httpx.ConnectError:
+            pytest.skip(
+                f"PROXY_URL {PROXY_URL} is not reachable — Vite dev server not running "
+                f"(expected in CI; run locally with 'npm run dev' to test proxy routing)"
+            )
         assert r.status_code != 504, (
             f"504: nginx/Vite proxy cannot reach tenant_portal container. "
             f"Check VITE_TENANT_API_TARGET in docker-compose.override.yml"
@@ -144,12 +154,16 @@ class TestLoginBadCredentials:
 
 # ---------------------------------------------------------------------------
 # T07-T09  Domain field validation (no live Keystone call needed)
+#
+# These tests validate FastAPI/Pydantic request-level guards on the tenant
+# portal backend.  Proxy routing is irrelevant here, so they use DIRECT_URL
+# (port 8010) — which is reachable in both local dev and the CI live stack.
 # ---------------------------------------------------------------------------
 class TestDomainValidation:
     def test_T07_empty_domain_rejected_422(self):
         """Empty domain string is rejected by Pydantic before reaching Keystone."""
         r = httpx.post(
-            f"{PROXY_URL}/tenant/auth/login",
+            f"{DIRECT_URL}/tenant/auth/login",
             json={"username": "u", "password": "p", "domain": "   "},
             timeout=10,
         )
@@ -158,7 +172,7 @@ class TestDomainValidation:
     def test_T08_overlength_domain_rejected_422(self):
         """Domain > 255 chars is rejected by max_length validator."""
         r = httpx.post(
-            f"{PROXY_URL}/tenant/auth/login",
+            f"{DIRECT_URL}/tenant/auth/login",
             json={"username": "u", "password": "p", "domain": "A" * 256},
             timeout=10,
         )
@@ -168,7 +182,7 @@ class TestDomainValidation:
         """Injection chars in domain (SQL/script) are rejected by regex whitelist."""
         for payload in ["'; DROP TABLE--", "<script>", "domain/../../etc", "dom\x00ain"]:
             r = httpx.post(
-                f"{PROXY_URL}/tenant/auth/login",
+                f"{DIRECT_URL}/tenant/auth/login",
                 json={"username": "u", "password": "p", "domain": payload},
                 timeout=10,
             )
