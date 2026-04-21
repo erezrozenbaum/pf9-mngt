@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.91.2  
+**Version**: 1.91.3  
 **Last Updated**: April 21, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.91.3 — SLA Commitment Editor & Compliance History in Tenant Detail (✅ Complete)
+
+- **SLA Commitment Editor**: The tenant detail drawer in Tenant Health Overview now includes an **SLA** section with a *Commitment* sub-tab. Admins can select a tier template (Gold/Silver/Bronze; numeric thresholds auto-fill from `/api/sla/tiers`) or choose *Custom* and enter Uptime %, RTO, RPO, MTTA, MTTR, Backup Frequency, effective date, and optional notes. Saving calls `PUT /api/sla/commitments/{tenant_id}` (upserts on `tenant_id, effective_from` conflict) and reflects the persisted commitment immediately.
+- **SLA Compliance History**: The *History* sub-tab shows a 12-month scorecard table from `GET /api/sla/compliance/{tenant_id}?months=12`. Each KPI cell is highlighted red for breach and amber for at-risk using the `breach_fields`/`at_risk_fields` arrays computed by `sla_worker`. Row-level background tinting gives at-a-glance monthly status.
+- **Load strategy**: SLA data fetches run in parallel when the detail panel opens (alongside the existing quota fetch). A cancel-on-unmount guard prevents state updates if the panel is closed before the requests resolve.
+- SLA CSS classes added to `TenantHealthView.css` with full dark-mode overrides (`th-sla-tab-bar`, `th-sla-tab`, `th-sla-form`, `th-sla-fields`, `th-sla-field`, `th-sla-breach`, `th-sla-risk`).
+- 538 unit tests pass, 0 HIGH bandit findings, TypeScript clean.
 
 ### v1.91.2 — Bug Fixes: PSA Webhooks /api, Health Overview 500, Clickable Sort Headers (✅ Complete)
 

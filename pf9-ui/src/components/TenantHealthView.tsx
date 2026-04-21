@@ -124,6 +124,47 @@ interface QuotaData {
   };
 }
 
+interface SlaCommitment {
+  tenant_id: string;
+  tier: string;
+  uptime_pct: number | null;
+  rto_hours: number | null;
+  rpo_hours: number | null;
+  mtta_hours: number | null;
+  mttr_hours: number | null;
+  backup_freq_hours: number;
+  effective_from: string;
+  effective_to: string | null;
+  region_id: string | null;
+  notes: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+interface SlaTierTemplate {
+  tier: string;
+  display_name: string;
+  uptime_pct: number | null;
+  rto_hours: number | null;
+  rpo_hours: number | null;
+  mtta_hours: number | null;
+  mttr_hours: number | null;
+  backup_freq_hours: number;
+}
+
+interface SlaComplianceRow {
+  month: string;
+  region_id: string;
+  uptime_actual_pct: number | null;
+  rto_worst_hours: number | null;
+  rpo_worst_hours: number | null;
+  mtta_avg_hours: number | null;
+  mttr_avg_hours: number | null;
+  backup_success_pct: number | null;
+  breach_fields: string[];
+  at_risk_fields: string[];
+}
+
 interface HeatmapTenant {
   project_id: string;
   project_name: string;
@@ -1010,6 +1051,81 @@ function DetailContent({
   const [incidentLoading, setIncidentLoading] = useState(false);
   const [incidentRef, setIncidentRef] = useState<string | null>(null);
 
+  // SLA state
+  const [slaSubTab, setSlaSubTab] = useState<"commitment" | "history">("commitment");
+  const [slaCommitment, setSlaCommitment] = useState<SlaCommitment | null>(null);
+  const [slaTiers, setSlaTiers] = useState<SlaTierTemplate[]>([]);
+  const [slaHistory, setSlaHistory] = useState<SlaComplianceRow[]>([]);
+  const [slaLoading, setSlaLoading] = useState(false);
+  const [slaSaving, setSlaSaving] = useState(false);
+  const [slaError, setSlaError] = useState("");
+  const [slaForm, setSlaForm] = useState<Partial<SlaCommitment>>({ tier: "bronze", backup_freq_hours: 24 });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSla() {
+      setSlaLoading(true);
+      setSlaError("");
+      try {
+        const [commitResp, tiersResp, histResp] = await Promise.all([
+          apiFetch<{ commitment: SlaCommitment | null }>(`/api/sla/commitments/${t.project_id}`),
+          apiFetch<{ tiers: SlaTierTemplate[] }>("/api/sla/tiers"),
+          apiFetch<{ history: SlaComplianceRow[] }>(`/api/sla/compliance/${t.project_id}?months=12`),
+        ]);
+        if (cancelled) return;
+        setSlaCommitment(commitResp.commitment);
+        setSlaTiers(tiersResp.tiers);
+        setSlaHistory(histResp.history);
+        setSlaForm(
+          commitResp.commitment
+            ? { ...commitResp.commitment }
+            : { tier: "bronze", backup_freq_hours: 24 }
+        );
+      } catch (e: any) {
+        if (!cancelled) setSlaError(e.message || "Failed to load SLA data");
+      } finally {
+        if (!cancelled) setSlaLoading(false);
+      }
+    }
+    loadSla();
+    return () => { cancelled = true; };
+  }, [t.project_id]);
+
+  function applyTierTemplate(tier: string) {
+    const tmpl = slaTiers.find((tp) => tp.tier === tier);
+    if (tmpl) {
+      setSlaForm((f) => ({
+        ...f,
+        tier,
+        uptime_pct: tmpl.uptime_pct,
+        rto_hours: tmpl.rto_hours,
+        rpo_hours: tmpl.rpo_hours,
+        mtta_hours: tmpl.mtta_hours,
+        mttr_hours: tmpl.mttr_hours,
+        backup_freq_hours: tmpl.backup_freq_hours ?? 24,
+      }));
+    } else {
+      setSlaForm((f) => ({ ...f, tier }));
+    }
+  }
+
+  async function saveSlaCommitment() {
+    setSlaSaving(true);
+    setSlaError("");
+    try {
+      const resp = await apiFetch<{ commitment: SlaCommitment }>(
+        `/api/sla/commitments/${t.project_id}`,
+        { method: "PUT", body: JSON.stringify(slaForm) }
+      );
+      setSlaCommitment(resp.commitment);
+      setSlaForm({ ...resp.commitment });
+    } catch (e: any) {
+      setSlaError(e.message || "Failed to save SLA commitment");
+    } finally {
+      setSlaSaving(false);
+    }
+  }
+
   // QBR generation state
   const [qbrFromDate, setQbrFromDate] = useState(() => {
     const d = new Date(); d.setMonth(d.getMonth() - 3);
@@ -1523,6 +1639,205 @@ function DetailContent({
               </table>
             )}
           </>
+        )}
+      </div>
+      {/* ── SLA Commitment & Compliance History ── */}
+      <div className="th-detail-section">
+        <h4>📋 SLA</h4>
+        <div className="th-sla-tab-bar">
+          <button
+            className={`th-sla-tab${slaSubTab === "commitment" ? " active" : ""}`}
+            onClick={() => setSlaSubTab("commitment")}
+          >
+            Commitment
+          </button>
+          <button
+            className={`th-sla-tab${slaSubTab === "history" ? " active" : ""}`}
+            onClick={() => setSlaSubTab("history")}
+          >
+            History
+          </button>
+        </div>
+        {slaLoading && (
+          <div className="th-loading" style={{ padding: "12px 0" }}>Loading SLA data…</div>
+        )}
+        {slaError && (
+          <div style={{ color: "#f87171", fontSize: "0.8rem", margin: "6px 0" }}>{slaError}</div>
+        )}
+        {!slaLoading && slaSubTab === "commitment" && (
+          <div className="th-sla-form">
+            <div className="th-sla-row">
+              <label>Tier</label>
+              <select
+                value={slaForm.tier || ""}
+                onChange={(e) => applyTierTemplate(e.target.value)}
+                className="th-sla-select"
+              >
+                <option value="">— select tier —</option>
+                {slaTiers.map((tpl) => (
+                  <option key={tpl.tier} value={tpl.tier}>{tpl.display_name}</option>
+                ))}
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div className="th-sla-fields">
+              <div className="th-sla-field">
+                <label>Uptime %</label>
+                <input
+                  type="number" min={0} max={100} step={0.01}
+                  value={slaForm.uptime_pct ?? ""}
+                  onChange={(e) => setSlaForm((f) => ({ ...f, uptime_pct: e.target.value === "" ? null : parseFloat(e.target.value) }))}
+                />
+              </div>
+              <div className="th-sla-field">
+                <label>RTO (hrs)</label>
+                <input
+                  type="number" min={0} step={0.5}
+                  value={slaForm.rto_hours ?? ""}
+                  onChange={(e) => setSlaForm((f) => ({ ...f, rto_hours: e.target.value === "" ? null : parseFloat(e.target.value) }))}
+                />
+              </div>
+              <div className="th-sla-field">
+                <label>RPO (hrs)</label>
+                <input
+                  type="number" min={0} step={0.5}
+                  value={slaForm.rpo_hours ?? ""}
+                  onChange={(e) => setSlaForm((f) => ({ ...f, rpo_hours: e.target.value === "" ? null : parseFloat(e.target.value) }))}
+                />
+              </div>
+              <div className="th-sla-field">
+                <label>MTTA (hrs)</label>
+                <input
+                  type="number" min={0} step={0.5}
+                  value={slaForm.mtta_hours ?? ""}
+                  onChange={(e) => setSlaForm((f) => ({ ...f, mtta_hours: e.target.value === "" ? null : parseFloat(e.target.value) }))}
+                />
+              </div>
+              <div className="th-sla-field">
+                <label>MTTR (hrs)</label>
+                <input
+                  type="number" min={0} step={0.5}
+                  value={slaForm.mttr_hours ?? ""}
+                  onChange={(e) => setSlaForm((f) => ({ ...f, mttr_hours: e.target.value === "" ? null : parseFloat(e.target.value) }))}
+                />
+              </div>
+              <div className="th-sla-field">
+                <label>Backup Freq (hrs)</label>
+                <input
+                  type="number" min={1} step={1}
+                  value={slaForm.backup_freq_hours ?? 24}
+                  onChange={(e) => setSlaForm((f) => ({ ...f, backup_freq_hours: parseInt(e.target.value, 10) || 24 }))}
+                />
+              </div>
+            </div>
+            <div className="th-sla-row" style={{ marginTop: 8 }}>
+              <label>Effective From</label>
+              <input
+                type="date"
+                value={slaForm.effective_from || new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setSlaForm((f) => ({ ...f, effective_from: e.target.value }))}
+                className="th-sla-date"
+              />
+            </div>
+            <div className="th-sla-row">
+              <label>Notes</label>
+              <input
+                type="text"
+                placeholder="Optional notes…"
+                value={slaForm.notes || ""}
+                onChange={(e) => setSlaForm((f) => ({ ...f, notes: e.target.value }))}
+                className="th-sla-notes"
+              />
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <button
+                className="th-btn primary"
+                style={{ padding: "6px 18px" }}
+                disabled={slaSaving || !slaForm.tier}
+                onClick={saveSlaCommitment}
+              >
+                {slaSaving ? "Saving…" : slaCommitment ? "Update Commitment" : "Set Commitment"}
+              </button>
+            </div>
+            {slaCommitment && slaCommitment.updated_at && (
+              <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: 6 }}>
+                Last updated: {new Date(slaCommitment.updated_at).toLocaleDateString()}
+              </div>
+            )}
+          </div>
+        )}
+        {!slaLoading && slaSubTab === "history" && (
+          slaHistory.length === 0 ? (
+            <p style={{ color: "var(--color-text-secondary, #64748b)", fontSize: "0.85rem", marginTop: 8 }}>
+              No compliance history recorded yet.
+            </p>
+          ) : (
+            <div style={{ overflowX: "auto", marginTop: 8 }}>
+              <table className="th-drift-mini">
+                <thead>
+                  <tr>
+                    <th>Month</th>
+                    <th>Uptime %</th>
+                    <th>RTO (h)</th>
+                    <th>RPO (h)</th>
+                    <th>MTTA (h)</th>
+                    <th>MTTR (h)</th>
+                    <th>Backup %</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {slaHistory.map((row) => {
+                    const isBreach = row.breach_fields.length > 0;
+                    const isRisk = !isBreach && row.at_risk_fields.length > 0;
+                    const rowBg = isBreach
+                      ? { background: "rgba(239,68,68,0.08)" }
+                      : isRisk
+                      ? { background: "rgba(245,158,11,0.08)" }
+                      : {};
+                    const cc = (field: string) =>
+                      row.breach_fields.includes(field)
+                        ? "th-sla-breach"
+                        : row.at_risk_fields.includes(field)
+                        ? "th-sla-risk"
+                        : "";
+                    return (
+                      <tr key={row.month} style={rowBg}>
+                        <td style={{ whiteSpace: "nowrap" }}>{row.month.slice(0, 7)}</td>
+                        <td className={cc("uptime_pct")}>
+                          {row.uptime_actual_pct !== null ? `${row.uptime_actual_pct.toFixed(3)}%` : "—"}
+                        </td>
+                        <td className={cc("rto_hours")}>
+                          {row.rto_worst_hours !== null ? row.rto_worst_hours.toFixed(1) : "—"}
+                        </td>
+                        <td className={cc("rpo_hours")}>
+                          {row.rpo_worst_hours !== null ? row.rpo_worst_hours.toFixed(1) : "—"}
+                        </td>
+                        <td className={cc("mtta_hours")}>
+                          {row.mtta_avg_hours !== null ? row.mtta_avg_hours.toFixed(1) : "—"}
+                        </td>
+                        <td className={cc("mttr_hours")}>
+                          {row.mttr_avg_hours !== null ? row.mttr_avg_hours.toFixed(1) : "—"}
+                        </td>
+                        <td className={cc("backup_freq_hours")}>
+                          {row.backup_success_pct !== null ? `${row.backup_success_pct.toFixed(0)}%` : "—"}
+                        </td>
+                        <td>
+                          {isBreach ? (
+                            <span className="th-badge th-badge-critical">Breach</span>
+                          ) : isRisk ? (
+                            <span className="th-badge th-badge-warning">At Risk</span>
+                          ) : (
+                            <span className="th-badge th-badge-healthy">OK</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
         )}
       </div>
     </>

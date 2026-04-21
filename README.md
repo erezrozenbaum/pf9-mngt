@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.91.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.91.3-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -302,7 +302,7 @@ Per-VM resource tracking, snapshot / restore metering, API usage metrics, effici
 ### 🤖 AI Ops Copilot — Query Layer for the Entire Platform
 Not just an LLM integration — a purpose-built operator assistant that queries your live infrastructure in plain language. Ask *"which tenants are over quota?"*, *"show drift events from last week"*, or *"how many VMs are powered off on host X?"* and get live SQL-backed answers instantly. 40+ built-in intents with tenant / project / host scoping. Ollama backend keeps all data on your network; OpenAI / Anthropic available with automatic sensitive-data redaction.
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.91.2)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.91.3)*
 A completely isolated, MFA-protected web portal that gives your customers read and restore access to their own infrastructure — without exposing your admin panel.
 
 - **Security by design**: data isolated at the PostgreSQL Row-Level Security layer (not just application code); separate JWT namespace; IP-bound Redis sessions; per-user rate limiting.
@@ -612,6 +612,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+
+### 📋 SLA Commitment Editor & Compliance History — v1.91.3
+
+**[v1.91.3](CHANGELOG.md)** — Tenant detail drawer now includes a full **SLA** section with two sub-tabs. The **Commitment** sub-tab lets admins select a tier template (Gold/Silver/Bronze/Custom) or manually enter Uptime %, RTO, RPO, MTTA, MTTR, Backup Frequency, effective date, and notes, then save via `PUT /api/sla/commitments/{tenant_id}` — with the form pre-populated from any existing commitment on open. The **History** sub-tab shows a 12-month compliance scorecard table with per-cell breach (red) and at-risk (amber) highlighting driven by `breach_fields`/`at_risk_fields` from `GET /api/sla/compliance/{tenant_id}`. SLA data loads in parallel with the existing quota fetch when the detail panel opens. No backend changes required. 538 unit tests pass, 0 HIGH bandit findings.
 
 ### 🩹 PSA Webhooks, Health 500, Clickable Sort Headers — v1.91.2
 

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.91.3] - 2026-04-22
+
+### Added
+
+- **SLA Commitment Editor in Tenant Detail** (`TenantHealthView.tsx`): The tenant detail drawer now includes a dedicated **SLA** section at the bottom with two sub-tabs — *Commitment* and *History*. The Commitment sub-tab presents a form pre-populated from any active `sla_commitments` row for the tenant (via `GET /api/sla/commitments/{tenant_id}`). Admins can select a Tier template (Gold/Silver/Bronze; fields auto-fill from `GET /api/sla/tiers`) or choose *Custom* and enter Uptime %, RTO, RPO, MTTA, MTTR, Backup Frequency, effective date, and notes. Submitting calls `PUT /api/sla/commitments/{tenant_id}` and reflects the saved commitment immediately. The *History* sub-tab renders a 12-month compliance scorecard table from `GET /api/sla/compliance/{tenant_id}?months=12` with per-cell breach (red) and at-risk (amber) highlighting driven by `breach_fields`/`at_risk_fields`. SLA data loads in parallel when the detail panel opens; cancel-on-unmount prevents state updates on closed panels. Accompanying CSS classes (`th-sla-tab-bar`, `th-sla-tab`, `th-sla-form`, `th-sla-fields`, `th-sla-field`, `th-sla-breach`, `th-sla-risk`, etc.) added to `TenantHealthView.css` with full dark-mode overrides.
+
 ## [1.91.2] - 2026-04-21
 
 ### Fixed

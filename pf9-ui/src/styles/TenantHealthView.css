@@ -889,6 +889,158 @@
 [data-theme="dark"] .th-power-error .th-power-value   { color: #fca5a5; }
 [data-theme="dark"] .th-power-other .th-power-value   { color: #c4b5fd; }
 
+/* ──────────────────────────────────────────────────────────── */
+/*  SLA Commitment Editor & Compliance History                  */
+/* ──────────────────────────────────────────────────────────── */
+
+.th-sla-tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--color-border, #e2e8f0);
+  padding-bottom: 4px;
+}
+
+.th-sla-tab {
+  padding: 4px 14px;
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--color-text-secondary, #64748b);
+  transition: background 0.15s, color 0.15s;
+}
+
+.th-sla-tab:hover {
+  background: var(--color-bg-secondary, #f1f5f9);
+  color: var(--color-text, #0f172a);
+}
+
+.th-sla-tab.active {
+  background: var(--color-primary, #3b82f6);
+  color: #fff;
+  border-color: var(--color-primary, #3b82f6);
+}
+
+.th-sla-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.th-sla-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+
+.th-sla-row label {
+  min-width: 110px;
+  color: var(--color-text-secondary, #64748b);
+  font-size: 0.8rem;
+}
+
+.th-sla-select {
+  flex: 1;
+  max-width: 200px;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  color: var(--color-text, #0f172a);
+}
+
+.th-sla-date {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  color: var(--color-text, #0f172a);
+}
+
+.th-sla-notes {
+  flex: 1;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  color: var(--color-text, #0f172a);
+}
+
+.th-sla-fields {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.th-sla-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.th-sla-field label {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary, #64748b);
+}
+
+.th-sla-field input {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  color: var(--color-text, #0f172a);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* History table breach / at-risk cell highlighting */
+.th-sla-breach {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.th-sla-risk {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+/* Dark mode overrides */
+[data-theme="dark"] .th-sla-tab {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-sla-tab:hover {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .th-sla-tab.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+[data-theme="dark"] .th-sla-tab-bar {
+  border-bottom-color: #334155;
+}
+
+[data-theme="dark"] .th-sla-select,
+[data-theme="dark"] .th-sla-date,
+[data-theme="dark"] .th-sla-notes,
+[data-theme="dark"] .th-sla-field input {
+  background: #0f172a;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+
 /* Dark mode — quota */
 [data-theme="dark"] .th-quota-bar {
   background: var(--color-bg-secondary, #0f172a);
