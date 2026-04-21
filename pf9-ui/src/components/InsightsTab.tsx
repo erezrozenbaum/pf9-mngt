@@ -182,6 +182,13 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   const [filterStatus,   setFilterStatus]   = useState("");
   const [filterSeverity, setFilterSeverity] = useState("");
   const [filterType,     setFilterType]     = useState("");
+  const [sortBy,         setSortBy]         = useState("severity");
+
+  // Risk table sort
+  const [riskSort, setRiskSort] = useState<{col: string; dir: 1|-1}>({col: "severity", dir: 1});
+
+  // Capacity Forecast sort
+  const [fcSort, setFcSort] = useState<{col: string; dir: 1|-1}>({col: "runway", dir: 1});
 
   // SLA Summary
   const [slaSummary, setSlaSummary] = useState<SlaSummaryRow[]>([]);
@@ -234,7 +241,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   // ------- Fetch insights + summary -------
 
   const loadInsights = useCallback(async (p: number = 1) => {
-    const params = new URLSearchParams({ page: String(p), page_size: String(PAGE_SIZE) });
+    const params = new URLSearchParams({ page: String(p), page_size: String(PAGE_SIZE), sort_by: sortBy });
     if (filterStatus)                        params.set("status",     filterStatus);
     if (filterSeverity)                      params.set("severity",   filterSeverity);
     if (filterType)                          params.set("type",       filterType);
@@ -290,7 +297,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
     }
   }, []);
 
-  useEffect(() => { loadInsights(1); }, [filterStatus, filterSeverity, filterType, workspace]);
+  useEffect(() => { loadInsights(1); }, [filterStatus, filterSeverity, filterType, workspace, sortBy]);
   useEffect(() => { loadSummary(); }, [workspace]);
   useEffect(() => { if (innerTab === "sla") loadSlaSummary(); }, [innerTab]);
   useEffect(() => { if (innerTab === "forecast") loadForecast(); }, [innerTab]);
@@ -494,6 +501,18 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
               Clear filters
             </button>
           )}
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            title="Sort insights by"
+            style={{ marginLeft: "auto" }}
+          >
+            <option value="severity">Sort: Severity</option>
+            <option value="detected_at">Sort: Newest first</option>
+            <option value="last_seen">Sort: Last seen</option>
+            <option value="type">Sort: Type</option>
+            <option value="entity">Sort: Entity</option>
+          </select>
           {canWrite && (
             <div className="insights-bulk-actions">
               <span style={{ fontSize: "0.78rem", color: "var(--text-secondary,#6b7280)", marginRight: "0.5rem" }}>
@@ -708,15 +727,35 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
       byEntity[key].push(ins);
     }
 
-    const rows = Object.entries(byEntity).sort(
-      ([, a], [, b]) => {
-        const maxSev = (arr: Insight[]) => {
-          const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-          return Math.min(...arr.map((i) => order[i.severity] ?? 9));
-        };
-        return maxSev(a) - maxSev(b);
-      }
-    );
+    const sevOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+    function sortRiskRows(entries: [string, Insight[]][]) {
+      return [...entries].sort(([, a], [, b]) => {
+        const { col, dir } = riskSort;
+        if (col === "severity") {
+          const maxSev = (arr: Insight[]) => Math.min(...arr.map((i) => sevOrder[i.severity] ?? 9));
+          return (maxSev(a) - maxSev(b)) * dir;
+        }
+        if (col === "entity") {
+          const ka = (a[0]?.entity_name || a[0]?.entity_id || "").toLowerCase();
+          const kb = (b[0]?.entity_name || b[0]?.entity_id || "").toLowerCase();
+          return ka < kb ? -dir : ka > kb ? dir : 0;
+        }
+        if (col === "count") return (a.length - b.length) * dir;
+        return 0;
+      });
+    }
+
+    function riskSortIcon(col: string) {
+      if (riskSort.col !== col) return <span style={{ color: "var(--text-secondary,#6b7280)", fontSize: "0.65rem" }}>⇅</span>;
+      return <span style={{ fontSize: "0.65rem" }}>{riskSort.dir === 1 ? "▲" : "▼"}</span>;
+    }
+
+    function toggleRiskSort(col: string) {
+      setRiskSort((s) => s.col === col ? { col, dir: (s.dir === 1 ? -1 : 1) } : { col, dir: 1 });
+    }
+
+    const rows = sortRiskRows(Object.entries(byEntity));
 
     return (
       <div className="insights-feed">
@@ -729,16 +768,21 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
           <table className="insights-table">
             <thead>
               <tr>
-                <th>Entity</th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleRiskSort("entity")}>
+                  Entity {riskSortIcon("entity")}
+                </th>
                 <th>Tenant / Project</th>
-                <th>Highest Severity</th>
-                <th>Active Insights</th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleRiskSort("severity")}>
+                  Highest Severity {riskSortIcon("severity")}
+                </th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleRiskSort("count")}>
+                  Active Insights {riskSortIcon("count")}
+                </th>
                 <th>Types</th>
               </tr>
             </thead>
             <tbody>
               {rows.map(([entity, arr]) => {
-                const sevOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
                 const worst = arr.reduce((w, i) =>
                   (sevOrder[i.severity] ?? 9) < (sevOrder[w.severity] ?? 9) ? i : w
                 );
@@ -803,11 +847,36 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
       );
     }
 
+    function fcSortIcon(col: string) {
+      if (fcSort.col !== col) return <span style={{ color: "var(--text-secondary,#6b7280)", fontSize: "0.65rem" }}>⇅</span>;
+      return <span style={{ fontSize: "0.65rem" }}>{fcSort.dir === 1 ? "▲" : "▼"}</span>;
+    }
+
+    function toggleFcSort(col: string) {
+      setFcSort((s) => s.col === col ? { col, dir: (s.dir === 1 ? -1 : 1) } : { col, dir: 1 });
+    }
+
+    function sortedForecasts() {
+      return [...forecasts].sort((a, b) => {
+        const { col, dir } = fcSort;
+        if (col === "project") {
+          return a.project_name.localeCompare(b.project_name) * dir;
+        }
+        // runway = min days_to_90 across all resources (null = infinite)
+        const minRunway = (f: ProjectForecast) => {
+          const vals = Object.values(f.resources).map((r) => r.days_to_90);
+          const finite = vals.filter((v): v is number => v !== null);
+          return finite.length > 0 ? Math.min(...finite) : Infinity;
+        };
+        return (minRunway(a) - minRunway(b)) * dir;
+      });
+    }
+
     return (
       <div className="insights-feed">
         <div style={{ padding: "0.75rem 1rem 0.25rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>
           <span style={{ fontSize: "0.82rem", color: "var(--text-secondary,#6b7280)" }}>
-            Per-project resource runway — days until 90% quota. Sorted by soonest exhaustion.
+            Per-project resource runway — days until 90% quota. Click column headers to sort.
           </span>
           <button className="btn-sm" onClick={loadForecast} title="Refresh forecast">↻ Refresh</button>
         </div>
@@ -821,14 +890,18 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
           <table className="insights-table">
             <thead>
               <tr>
-                <th>Project</th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleFcSort("project")}>
+                  Project {fcSortIcon("project")}
+                </th>
                 {Object.keys(forecasts[0]?.resources ?? {}).map((k) => (
-                  <th key={k}>{RESOURCE_LABELS[k] ?? k}</th>
+                  <th key={k} style={{ cursor: "pointer" }} onClick={() => toggleFcSort(k)}>
+                    {RESOURCE_LABELS[k] ?? k} {fcSortIcon(k)}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {forecasts.map((f) => (
+              {sortedForecasts().map((f) => (
                 <tr key={f.project_id}>
                   <td style={{ fontWeight: 600 }}>{f.project_name}</td>
                   {Object.entries(f.resources).map(([key, res]) => (

@@ -5,7 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.90.1] - 2026-04-21
+
+### Fixed
+
+- **`GET /api/intelligence/regions` 500 crash** — SQL column names were wrong on two queries:
+  - `servers` table: `JOIN hypervisors h ON h.id = s.hypervisor_id` → `h.hostname = s.hypervisor_hostname` (`hypervisor_id` does not exist on the `servers` table).
+  - `servers_history` table: same wrong join + `s.collected_at` → `s.recorded_at` (`servers_history` uses `recorded_at`, not `collected_at`).
+  - Root cause of cascading 502/503 pod-restart loop on the Intelligence and Cross-Region tabs; all three column references were introduced in v1.89.0.
+- **Cross-region growth rate always 0.0** — `cross_region.py` had the identical `hypervisor_id` / `collected_at` column bugs, silently caught by a bare `except`. Growth-rate comparison now uses real values from DB.
+- **Python syntax error in `intelligence_routes.py`** — `_SORT_CLAUSES` dict was accidentally placed between the `@router.get("/insights")` decorator and the `list_insights` function definition, making the module unparseable. Moved dict above the decorator.
+
+### Added
+
+- **Sort control for Insights Feed** — New **Sort** dropdown in the filter bar (Severity / Newest first / Last seen / Type / Entity). Propagated to `GET /api/intelligence/insights` as a validated `sort_by` query parameter (allowlist-validated against `_SORT_CLAUSES`; default: `severity`).
+- **Sortable columns in Risk & Capacity table** — Entity, Highest Severity, and Active Insights column headers are now clickable; client-side toggle sort (asc/desc) with ▲/▼/⇅ indicators.
+- **Sortable columns in Capacity Forecast table** — Project, CPU, RAM, Storage, Instances, Floating IPs headers are clickable; client-side sort with same visual indicators.
+- **Contract Entitlements explainer & CSV template** — Intelligence Settings → Contract Entitlements tab now shows a full feature explanation ("What is this? / Why configure it?"), a column-reference spec table (7 columns, required/optional flags), a "Download template" button that generates a pre-filled CSV, and a styled "Import CSV" upload button.
+- **CSS for IntelligenceSettingsPanel** — All `intel-settings-*` classes now defined in `InsightsTab.css`; previously the panel rendered with no custom styling.
+
+### Security
+
+- Bandit scan on modified Python files: 0 HIGH findings, 7 Medium B608 (false positives — all are parameterized queries with hardcoded ORDER BY clauses drawn from a whitelisted dict).
+
+---
+
 ## [1.90.0] - 2026-04-21
+
 
 ### Added
 

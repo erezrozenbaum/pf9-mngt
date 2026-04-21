@@ -103,13 +103,13 @@ class CrossRegionEngine(BaseEngine):
                 with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute("""
                         SELECT
-                            DATE_TRUNC('day', collected_at) AS day,
-                            COUNT(DISTINCT s.id)            AS vm_count
+                            DATE_TRUNC('day', s.recorded_at) AS day,
+                            COUNT(DISTINCT s.id)             AS vm_count
                         FROM servers_history s
-                        JOIN hypervisors h ON h.id = s.hypervisor_id
+                        JOIN hypervisors h ON h.hostname = s.hypervisor_hostname
                         WHERE h.region_id = %s
                           AND s.status    = 'ACTIVE'
-                          AND s.collected_at >= NOW() - INTERVAL '14 days'
+                          AND s.recorded_at >= NOW() - INTERVAL '14 days'
                         GROUP BY 1
                         ORDER BY 1 ASC
                     """, (region_id,))

@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.85.12  
-**Last Updated**: April 19, 2026  
+**Version**: 1.90.1  
+**Last Updated**: April 21, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,17 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.90.1 — Intelligence 500 / Sort / Entitlements UX Fixes (✅ Complete)
+
+- **`/regions` 500 crash fixed**: `servers` table join used non-existent column `hypervisor_id` — corrected to `hypervisor_hostname`. `servers_history` had the same wrong join plus `collected_at` (column doesn't exist) corrected to `recorded_at`. Root cause of 502/503 pod-restart cascade on Intelligence and Cross-Region tabs.
+- **Cross-region growth rate fixed**: `cross_region.py` had identical column bugs silently swallowed by a bare `except`, always returning `growth_rate: 0.0`. Now returns real DB values.
+- **Python syntax error fixed**: `_SORT_CLAUSES` dict was placed between the `@router.get` decorator and the function definition in `intelligence_routes.py`, making the module unparseable. Moved above the decorator.
+- **Insights Feed sort control**: `sort_by` query parameter added to `GET /api/intelligence/insights` (values: `severity` | `detected_at` | `last_seen` | `type` | `entity`; validated against hardcoded allowlist). Sort dropdown added to the Insights Feed filter bar.
+- **Sortable table headers**: Risk & Capacity (Entity, Highest Severity, Active Insights) and Capacity Forecast (all resource columns) headers are now clickable for client-side toggle sort with ▲/▼/⇅ indicators.
+- **Contract Entitlements UX**: Intelligence Settings → Contract Entitlements tab now includes: feature explanation box, column reference spec table (7 columns, required/optional flags), “Download template” CSV button, styled “Import CSV” upload button.
+- **CSS**: All `intel-settings-*` classes added to `InsightsTab.css`; previously the panel rendered unstyled.
+- 538 unit tests pass, 0 HIGH bandit findings.
 
 ### v1.90.0 — MSP Business Value Layer (✅ Complete)
 
