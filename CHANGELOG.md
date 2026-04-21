@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.92.1] - 2026-04-21
+
+### Fixed
+
+- **CI: retry `docker compose up --build` on transient Docker Hub pull failures** (`.github/workflows/ci.yml`): The integration-tests job now retries the build-and-start step up to 3 times with a 30-second pause between attempts. Resolves intermittent `504 Gateway Time-out` errors from `registry-1.docker.io` that caused the CI run to fail during image pulls without any application change.
+
 ## [1.92.0] - 2026-04-22
 
 ### Added

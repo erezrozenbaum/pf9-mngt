@@ -243,7 +243,20 @@ jobs:
           python3 -c "import secrets; open('secrets/tenant_portal_db_password','w').write(secrets.token_urlsafe(32))"
 
       - name: Build and start stack
-        run: docker compose up --build -d
+        # Retry up to 3 times to handle transient Docker Hub 504/pull failures.
+        run: |
+          for attempt in 1 2 3; do
+            echo "=== Build attempt $attempt/3 ==="
+            docker compose up --build -d && break
+            if [ $attempt -lt 3 ]; then
+              echo "Build failed, retrying in 30s..."
+              docker compose down --volumes --remove-orphans 2>/dev/null || true
+              sleep 30
+            else
+              echo "All build attempts failed."
+              exit 1
+            fi
+          done
 
       - name: Wait for db schema to be ready
         # The db healthcheck checks for the 'servers' table (see docker-compose.yml).
