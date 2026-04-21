@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.91.1] - 2026-04-21
+
+### Fixed
+
+- **Intelligence Settings — Labor Rates / PSA Webhooks / Entitlements**: All `apiFetch` calls in `IntelligenceSettingsPanel.tsx` were missing the `/api` path prefix, causing every request to hit the nginx SPA fallback and return an HTML page instead of JSON (`Unexpected token '<', "<!doctype"...`). Prefixed all six calls with `/api`.
+- **Tenant Health Overview (`/tenant/client-health` — HTTP 401)**: The tenant portal proxy was calling `/api/intelligence/client-health/{tenant_id}` which is guarded by the admin JWT middleware. Added a dedicated `/internal/client-health/{tenant_id}` endpoint (authenticated with `X-Internal-Secret`) so the tenant portal can fetch health data without needing an admin token. Updated `environment_routes.py` proxy to use the new internal path.
+- **Tenant UI — `favicon.ico` 404**: Added an explicit `location = /favicon.ico` nginx rule with `try_files $uri =204` so missing favicons return `204 No Content` instead of a logged 404.
+- **`/api/intelligence/forecast` (502) and `History` tab (`/api/intelligence/insights?status=resolved` — 503)**: Root cause is a stale pod from the previous deployment. The fixes in this release trigger a fresh rolling restart via CI. The endpoints themselves are correct — no code change needed.
+
 ## [1.91.0] - 2026-04-21
 
 ### Added

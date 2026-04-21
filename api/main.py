@@ -117,7 +117,7 @@ from tenant_portal_routes import router as tenant_portal_admin_router
 from sla_routes import router as sla_router
 
 # Operational Intelligence Feed
-from intelligence_routes import router as intelligence_router
+from intelligence_routes import router as intelligence_router, setup_intelligence_internal_routes
 
 # QBR Generator
 from qbr_routes import router as qbr_router
@@ -778,6 +778,7 @@ async def startup_event():
     setup_snapshot_routes(app)
     # Setup restore management routes
     setup_restore_routes(app)
+    setup_intelligence_internal_routes(app)
 
     # -----------------------------------------------------------------------
     # Advisory lock: only the first worker to acquire lock 19740322 runs the

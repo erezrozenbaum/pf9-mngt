@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.91.0  
+**Version**: 1.91.1  
 **Last Updated**: April 21, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.91.1 — Bug Fixes: Settings Panel, Client Health Proxy, Favicon (✅ Complete)
+
+- **Intelligence Settings panel fixed**: `apiFetch` calls in `IntelligenceSettingsPanel.tsx` were missing the `/api` prefix, causing every Settings tab load to receive an HTML page instead of JSON. Fixed for Labor Rates (GET + PUT), PSA Webhooks (GET + POST + PUT + DELETE), and Contract Entitlements (POST).
+- **Tenant Health Overview fixed**: `/tenant/client-health` proxy now calls the new `/internal/client-health/{tenant_id}` endpoint (secured with `X-Internal-Secret`) instead of the admin JWT-protected `/api/intelligence/client-health/`. This eliminates the 401 on the Health Overview screen for logged-in tenant portal users.
+- **`/internal/client-health/{tenant_id}`** registered in `main.py` via `setup_intelligence_internal_routes(app)` — same query logic as the public endpoint, auth via pre-shared secret only.
+- **Tenant UI favicon 404 suppressed**: nginx `try_files $uri =204` added for `favicon.ico` — no more console noise in browser DevTools.
+- 538 unit tests pass, 0 HIGH bandit findings, TypeScript clean.
 
 ### v1.91.0 — Client Health Scoring, Observer Role & Insights Enhancements (✅ Complete)
 
