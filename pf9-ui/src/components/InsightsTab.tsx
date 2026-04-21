@@ -11,6 +11,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/api";
 import "../styles/InsightsTab.css";
+import IntelligenceSettingsPanel from "./IntelligenceSettingsPanel";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -129,6 +130,8 @@ const TYPE_ICONS: Record<string, string> = {
   anomaly_snapshot_spike:    "🚨",
   anomaly_vm_spike:          "🔺",
   anomaly_api_errors:        "🔴",
+  leakage_overconsumption:   "📈",
+  leakage_ghost:             "👻",
 };
 
 function typeIcon(type: string): string {
@@ -156,7 +159,7 @@ interface InsightsTabProps {
   userRole?: string;
 }
 
-type InnerTab = "feed" | "risk" | "forecast" | "regions" | "sla";
+type InnerTab = "feed" | "risk" | "forecast" | "regions" | "sla" | "settings";
 
 export default function InsightsTab({ userRole }: InsightsTabProps) {
   const [innerTab, setInnerTab] = useState<InnerTab>("feed");
@@ -478,6 +481,10 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
               <option value="cross_region_imbalance">Utilization Imbalance</option>
               <option value="cross_region_concentration">Risk Concentration</option>
               <option value="cross_region_growth">Growth Divergence</option>
+            </optgroup>
+            <optgroup label="Revenue Leakage">
+              <option value="leakage_overconsumption">Over-Consumption</option>
+              <option value="leakage_ghost">Ghost Resources</option>
             </optgroup>
           </select>
           {(filterStatus || filterSeverity || filterType) && (
@@ -1166,7 +1173,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
         <span className="insights-workspace-hint">
           {workspace === "support"     && "Showing: drift · snapshot · incident · risk (high+)"}
           {workspace === "engineering" && "Showing: capacity · waste · anomaly · cross-region (medium+)"}
-          {workspace === "operations"  && "Showing: risk · health (medium+)"}
+          {workspace === "operations"  && "Showing: risk · health · leakage (medium+)"}
           {workspace === "global"      && "Showing: all insight types"}
         </span>
       </div>
@@ -1180,6 +1187,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
             { id: "forecast" as const, label: "📈 Capacity Forecast" },
             { id: "regions"  as const, label: "🌍 Cross-Region" },
             { id: "sla"      as const, label: "📋 SLA Summary" },
+            ...(canWrite ? [{ id: "settings" as const, label: "⚙️ Settings" }] : []),
           ] as { id: InnerTab; label: string }[]
         ).map((t) => (
           <button
@@ -1197,6 +1205,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
       {innerTab === "forecast" && renderForecast()}
       {innerTab === "regions"  && renderRegions()}
       {innerTab === "sla"      && renderSla()}
+      {innerTab === "settings" && <IntelligenceSettingsPanel userRole={userRole} />}
 
       {/* Snooze modal */}
       {snoozeTarget !== null && (

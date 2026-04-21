@@ -31,6 +31,7 @@ from engines.waste import WasteEngine
 from engines.risk import RiskEngine
 from engines.cross_region import CrossRegionEngine
 from engines.anomaly import AnomalyEngine
+from engines.leakage import LeakageEngine
 
 # ---------------------------------------------------------------------------
 # Worker observability — Redis metrics
@@ -134,7 +135,7 @@ def get_conn():
 # Main loop
 # ---------------------------------------------------------------------------
 
-ENGINES = [CapacityEngine, WasteEngine, RiskEngine, CrossRegionEngine, AnomalyEngine]
+ENGINES = [CapacityEngine, WasteEngine, RiskEngine, CrossRegionEngine, AnomalyEngine, LeakageEngine]
 
 
 def run_once(conn) -> None:

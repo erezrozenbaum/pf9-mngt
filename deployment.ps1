@@ -827,7 +827,9 @@ $provisioningMigrations = @(
     @{File="db\migrate_v1_85_0_intelligence.sql"; Desc="Operational Intelligence v1.85.0: operational_insights table, indexes, RBAC"},
     @{File="db\migrate_v1_85_0_sla.sql";          Desc="SLA Compliance v1.85.0: sla_tier_templates, sla_commitments, sla_compliance_monthly, RBAC"},
     @{File="db\migrate_v1_86_1_insights_nav.sql"; Desc="Insights navigation v1.86.1: Insights nav item + department visibility"},
-    @{File="db\migrate_intelligence_v2.sql";       Desc="Operational Intelligence Phase 2 v1.88.0: insight_recommendations table + indexes"}
+    @{File="db\migrate_intelligence_v2.sql";       Desc="Operational Intelligence Phase 2 v1.88.0: insight_recommendations table + indexes"},
+    @{File="db\migrate_v1_89_0_intelligence_p3.sql"; Desc="Operational Intelligence Phase 3 v1.89.0: idx_insights_type_prefix (text_pattern_ops) for fast dept-based prefix queries"},
+    @{File="db\migrate_intelligence_v4.sql";        Desc="Operational Intelligence v1.90.0: msp_contract_entitlements, msp_labor_rates, psa_webhook_config tables; default labor rates seeded"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

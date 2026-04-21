@@ -37,6 +37,8 @@ _DEPT_MAP: dict[str, list[str]] = {
     "health":       ["operations"],
     # SLA risk → operations (breach management) + support (client-facing escalation)
     "sla_risk":     ["operations", "support"],
+    # Revenue leakage → operations (billing gap) + general (upsell signal)
+    "leakage":      ["operations", "general"],
 }
 
 VALID_DEPARTMENTS: frozenset[str] = frozenset({"support", "engineering", "operations", "general"})

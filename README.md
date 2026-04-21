@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.89.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.90.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -609,7 +609,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
-### � Extended Forecasting, Cross-Region Intelligence & Anomaly Detection — v1.89.0
+### 🏢 MSP Business Value Layer — v1.90.0
+
+**[v1.90.0](CHANGELOG.md)** — Revenue Leakage engine detects over-consumption upsell opportunities (`leakage_overconsumption`) and ghost-resource billing gaps (`leakage_ghost`). New Quarterly Business Review PDF generator (`POST /api/intelligence/qbr/generate/{tenant_id}`) with configurable sections (cover, executive summary, ROI interventions, health trend, open items, methodology). PSA outbound webhook integration with per-config severity/type/region filtering and Fernet-encrypted auth headers. Labor rate configuration per insight type for defensible ROI reporting. Intelligence Settings panel (admin-only): labor rates editor, PSA webhook CRUD, CSV contract entitlement import. Business Review button in Tenant Health detail pane. SLA PDF report pipeline consolidated into `export_reports.py`. DB migration adds 3 new tables; 538 unit tests pass, 0 HIGH bandit findings.
+
+### 📈 Extended Forecasting, Cross-Region Intelligence & Anomaly Detection — v1.89.0
 
 **[v1.89.0](CHANGELOG.md)** — Capacity engine extended with per-hypervisor compute forecasting and per-project quota-saturation forecasting (vCPUs, RAM, instances, floating IPs) including confidence scoring. New cross-region engine detects utilization imbalance, risk concentration, and growth-rate divergence across regions. New threshold-based anomaly engine fires on snapshot spikes, VM-count spikes, and API error spikes. Two new REST endpoints: `GET /api/intelligence/forecast` (on-demand runway per project/resource) and `GET /api/intelligence/regions` (per-region utilization + runway + growth). Intelligence Dashboard gains two tabs: Capacity Forecast and Cross-Region comparison. Department filter upgraded to prefix matching so insight subtypes are correctly routed. 524 unit tests pass, 0 HIGH bandit findings.
 

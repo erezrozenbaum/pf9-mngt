@@ -11,9 +11,7 @@ RBAC
 """
 from __future__ import annotations
 
-import io
 import logging
-from datetime import datetime, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -378,7 +376,8 @@ def generate_compliance_report(
             history = [dict(r) for r in cur.fetchall()]
 
     try:
-        pdf_bytes = _build_sla_pdf(tenant_id, dict(tenant), history, from_month, to_month)
+        from export_reports import generate_sla_report
+        pdf_bytes = generate_sla_report(tenant_id, dict(tenant), history, from_month, to_month)
     except Exception as exc:
         logger.error("PDF generation failed for %s: %s", tenant_id, exc)
         raise HTTPException(status_code=500, detail="PDF generation failed")
@@ -391,141 +390,4 @@ def generate_compliance_report(
     )
 
 
-# ---------------------------------------------------------------------------
-# PDF builder (ReportLab)
-# ---------------------------------------------------------------------------
 
-def _build_sla_pdf(tenant_id: str, tenant: dict, history: list,
-                    from_month: str, to_month: str) -> bytes:
-    try:
-        from reportlab.lib import colors
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import cm
-        from reportlab.platypus import (
-            SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable,
-        )
-    except ImportError as exc:
-        raise RuntimeError("reportlab is not installed") from exc
-
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                             leftMargin=2*cm, rightMargin=2*cm,
-                             topMargin=2*cm, bottomMargin=2*cm)
-    styles = getSampleStyleSheet()
-    heading1 = styles["Heading1"]
-    heading2 = styles["Heading2"]
-    normal   = styles["Normal"]
-
-    _BLUE     = colors.HexColor("#1D4ED8")
-    _GREEN    = colors.HexColor("#16A34A")
-    _AMBER    = colors.HexColor("#D97706")
-    _RED      = colors.HexColor("#DC2626")
-    _LT_GREY  = colors.HexColor("#F3F4F6")
-    _WHITE    = colors.white
-
-    tenant_name = tenant.get("tenant_name") or tenant_id
-    tier        = (tenant.get("tier") or "custom").title()
-    today_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-    story = []
-
-    # -- Cover --
-    story.append(Paragraph(f"SLA Compliance Report", heading1))
-    story.append(Paragraph(f"<b>Tenant:</b> {tenant_name}", normal))
-    story.append(Paragraph(f"<b>SLA Tier:</b> {tier}", normal))
-    story.append(Paragraph(f"<b>Period:</b> {from_month[:7]} — {to_month[:7]}", normal))
-    story.append(Paragraph(f"<b>Generated:</b> {today_str} (UTC)", normal))
-    story.append(Spacer(1, 0.5*cm))
-    story.append(HRFlowable(width="100%", color=_BLUE))
-    story.append(Spacer(1, 0.3*cm))
-
-    # -- Commitment scorecard --
-    story.append(Paragraph("SLA Commitments", heading2))
-    kpi_headers = ["KPI", "Committed", "Description"]
-    def _fmt(val, unit): return f"{val} {unit}" if val is not None else "Not set"
-    kpi_data = [
-        kpi_headers,
-        ["Uptime",  _fmt(tenant.get("uptime_pct"), "%"), "Minimum monthly uptime"],
-        ["RTO",     _fmt(tenant.get("rto_hours"),  "h"), "Max restore time"],
-        ["RPO",     _fmt(tenant.get("rpo_hours"),  "h"), "Max backup gap"],
-        ["MTTA",    _fmt(tenant.get("mtta_hours"), "h"), "Avg response time"],
-        ["MTTR",    _fmt(tenant.get("mttr_hours"), "h"), "Avg resolution time"],
-    ]
-    kpi_table = Table(kpi_data, colWidths=[4*cm, 3*cm, 9*cm])
-    kpi_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), _BLUE),
-        ("TEXTCOLOR",  (0, 0), (-1, 0), _WHITE),
-        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_LT_GREY, _WHITE]),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]))
-    story.append(kpi_table)
-    story.append(Spacer(1, 0.5*cm))
-
-    # -- Month-over-month history --
-    story.append(Paragraph("Month-over-Month Compliance", heading2))
-    hist_headers = ["Month", "Uptime%", "RTO(h)", "RPO(h)", "MTTA(h)", "MTTR(h)", "Backup%", "Status"]
-
-    def _cell(val):
-        return f"{float(val):.1f}" if val is not None else "—"
-
-    def _status_cell(row):
-        if row.get("breach_fields"):
-            return "BREACH"
-        if row.get("at_risk_fields"):
-            return "AT RISK"
-        return "OK"
-
-    hist_data = [hist_headers]
-    for r in history:
-        hist_data.append([
-            str(r["month"])[:7],
-            _cell(r.get("uptime_actual_pct")),
-            _cell(r.get("rto_worst_hours")),
-            _cell(r.get("rpo_worst_hours")),
-            _cell(r.get("mtta_avg_hours")),
-            _cell(r.get("mttr_avg_hours")),
-            _cell(r.get("backup_success_pct")),
-            _status_cell(r),
-        ])
-
-    if len(hist_data) > 1:
-        hist_table = Table(hist_data, colWidths=[2.2*cm]*8)
-        ts = TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), _BLUE),
-            ("TEXTCOLOR",  (0, 0), (-1, 0), _WHITE),
-            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_LT_GREY, _WHITE]),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("ALIGN", (1, 1), (-1, -1), "CENTER"),
-        ])
-        for i, r in enumerate(history, start=1):
-            row_color = None
-            if r.get("breach_fields"):
-                row_color = colors.HexColor("#FEE2E2")
-            elif r.get("at_risk_fields"):
-                row_color = colors.HexColor("#FEF9C3")
-            if row_color:
-                ts.add("BACKGROUND", (0, i), (-1, i), row_color)
-        hist_table.setStyle(ts)
-        story.append(hist_table)
-    else:
-        story.append(Paragraph("No compliance data available for this period.", normal))
-
-    story.append(Spacer(1, 0.5*cm))
-    # Attestation
-    story.append(HRFlowable(width="100%", color=colors.HexColor("#D1D5DB")))
-    story.append(Spacer(1, 0.2*cm))
-    story.append(Paragraph(
-        f"<i>This report was generated from live operational data on {today_str} (UTC). "
-        f"All metrics are computed from infrastructure telemetry stored in the "
-        f"PF9 management plane.</i>",
-        normal,
-    ))
-
-    doc.build(story)
-    return buf.getvalue()

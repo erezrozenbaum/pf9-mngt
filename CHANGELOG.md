@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.90.0] - 2026-04-21
+
+### Added
+
+- **Revenue Leakage engine** — New intelligence engine detects two billing risk conditions:
+  - *Over-consumption upsell signal* (`leakage_overconsumption`) — fires when a tenant's in-use resources (vCPU, RAM, storage, floating IPs) exceed their contracted entitlement by ≥10%. Medium severity at 10–25% overage; high at >25%.
+  - *Ghost resources billing gap* (`leakage_ghost`) — fires high-severity insight when a tenant has active resources but no matching contract entitlement row, indicating untracked billing risk.
+  - Both auto-resolve when the condition clears. Engine skips gracefully when no entitlements are configured.
+- **Contract entitlement management** (`msp_contract_entitlements` table) — Stores per-tenant, per-resource, per-region contracted limits. Supports CSV import from the Intelligence Settings panel.
+- **Labor rate configuration** (`msp_labor_rates` table) — Configurable per-insight-type hours-saved estimates and billed rate. Default 8 types seeded at $150/hr. Editable from the Intelligence Settings panel.
+- **Quarterly Business Review (QBR) PDF generator** — `POST /api/intelligence/qbr/generate/{tenant_id}` produces a ReportLab PDF with configurable sections: cover page, executive summary (total ROI, incidents prevented), intervention breakdown table, health trend, open items, and methodology. JSON preview available via `GET /api/intelligence/qbr/preview/{tenant_id}`.
+- **PSA outbound webhook integration** — Configurable outbound webhooks (`psa_webhook_config` table) that fire on new high/critical insights:
+  - Full CRUD: `GET/POST /api/psa/configs`, `PUT/DELETE /api/psa/configs/{id}`.
+  - Per-config filters: minimum severity level, allowed insight types, allowed regions.
+  - Auth header encrypted at rest with Fernet (same key as JWT secret).
+  - One-click test-fire: `POST /api/psa/configs/{id}/test-fire`.
+  - Firing integrated directly in the intelligence worker's `upsert_insight()` — no API round-trip required.
+- **Intelligence Settings panel** (`IntelligenceSettingsPanel.tsx`) — Admin-only three-tab panel: Labor Rates editable table, PSA Webhook config CRUD with test-fire, and Contract Entitlements CSV importer.
+- **Settings tab in Insights Feed** — `⚙️ Settings` tab visible to admins and superadmins.
+- **Business Review button in Tenant Health detail pane** — `📊 Business Review` button with date-range picker generates and downloads the QBR PDF directly from the tenant detail panel.
+- **Revenue Leakage filter options** in the Insights Feed type filter dropdown.
+- **SLA PDF report consolidated** — `generate_sla_report()` moved from inline `_build_sla_pdf()` in `sla_routes.py` into `export_reports.py`, sharing the same ReportLab pipeline as all other PDF generators.
+- **DB migration** `migrate_intelligence_v4.sql` — idempotent, adds 3 new tables + seeds 8 default labor rates + 13 new RBAC permission rows.
+- Phase 4 test suite (`tests/test_phase4_intelligence.py`) — unit tests (dept routing, PDF generation) and live-stack integration tests (labor rates CRUD, QBR preview/PDF, PSA CRUD, security validation).
+
+### Changed
+
+- `intelligence_utils.py` department map extended with `leakage` → `["operations", "general"]`.
+- Operations workspace hint updated to include `leakage`.
+- `InsightsTab.tsx` `TYPE_ICONS` extended with `leakage_overconsumption` 📈 and `leakage_ghost` 👻.
+- Worker now fires PSA webhooks on new high/critical insights via DB-resident config (no API dependency).
+
+### Security
+
+- PSA webhook `auth_header` encrypted at rest with Fernet; never returned in plaintext via the list API.
+- Webhook URL validated to require `http://` or `https://` scheme.
+- `min_severity` validated against allowlist (`low`, `medium`, `high`, `critical`).
+- SQL fragment injection risk eliminated: dynamic region filter uses hardcoded conditional fragment with parameterized value (B608 false positive suppressed with `# nosec B608`).
+
+---
+
 ## [1.89.0] - 2026-04-20
 
 ### Added
