@@ -5,8 +5,6 @@
  * Each dial renders a full-circle track + a coloured arc indicating the score (0–100).
  */
 
-import React from "react";
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
