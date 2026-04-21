@@ -465,3 +465,252 @@
   padding: 0.75rem 1.25rem 1rem;
   border-top: 1px solid var(--border, #e5e7eb);
 }
+
+/* ============================================================
+   Intelligence Settings Panel
+   ============================================================ */
+
+.intel-settings-panel {
+  padding: 1.25rem 1.5rem;
+  max-width: 900px;
+}
+
+.intel-settings-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text, #111827);
+  margin: 0 0 1rem;
+}
+
+.intel-settings-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  padding-bottom: 0.5rem;
+}
+
+.intel-settings-tab {
+  padding: 0.35rem 1rem;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary, #6b7280);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.intel-settings-tab:hover { background: var(--bg-secondary, #f3f4f6); }
+.intel-settings-tab.active {
+  background: var(--surface, #fff);
+  color: var(--text, #111827);
+  border-bottom: 2px solid var(--primary, #3b82f6);
+  font-weight: 600;
+}
+
+.intel-settings-section {
+  padding: 0.5rem 0 1.5rem;
+}
+
+.intel-settings-section-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text, #111827);
+  margin: 0 0 0.4rem;
+}
+
+.intel-settings-section-hint {
+  font-size: 0.83rem;
+  color: var(--text-secondary, #6b7280);
+  margin: 0 0 0.75rem;
+  line-height: 1.5;
+}
+
+.intel-settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+.intel-settings-table th,
+.intel-settings-table td {
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--border, #e5e7eb);
+  text-align: left;
+  vertical-align: middle;
+}
+.intel-settings-table th {
+  background: var(--bg-secondary, #f9fafb);
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-secondary, #6b7280);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.intel-settings-table-compact th,
+.intel-settings-table-compact td {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.intel-settings-row-editing td {
+  background: var(--bg-subtle, #f0f9ff);
+}
+
+.intel-settings-input {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  background: var(--surface, #fff);
+  color: var(--text, #111827);
+  width: 80px;
+}
+.intel-settings-input-wide { width: 240px; }
+
+.intel-settings-select {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  background: var(--surface, #fff);
+  color: var(--text, #111827);
+}
+
+.intel-settings-desc {
+  font-size: 0.78rem;
+  color: var(--text-secondary, #6b7280);
+  max-width: 240px;
+}
+
+.intel-settings-url {
+  font-size: 0.78rem;
+  color: var(--text-secondary, #6b7280);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intel-settings-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.intel-settings-test-result {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #6b7280);
+  white-space: nowrap;
+}
+
+.intel-settings-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.intel-settings-modal {
+  background: var(--surface, #fff);
+  border-radius: 10px;
+  width: 440px;
+  max-width: 95vw;
+  padding: 1.5rem;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.intel-settings-modal h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text, #111827);
+}
+
+.intel-settings-modal label {
+  font-size: 0.83rem;
+  font-weight: 500;
+  color: var(--text, #374151);
+  display: block;
+}
+
+.intel-settings-modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding-top: 0.25rem;
+}
+
+.intel-settings-hint-inline {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-secondary, #9ca3af);
+}
+
+.intel-settings-loading  { font-size: 0.82rem; color: var(--text-secondary, #6b7280); padding: 0.5rem 0; }
+.intel-settings-empty    { font-size: 0.82rem; color: var(--text-secondary, #6b7280); padding: 0.5rem 0; }
+.intel-settings-error    { font-size: 0.82rem; color: var(--danger, #dc2626); padding: 0.4rem 0.6rem; background: #fef2f2; border-radius: 4px; border: 1px solid #fecaca; }
+.intel-settings-success  { font-size: 0.82rem; color: var(--success, #059669); padding: 0.4rem 0.6rem; background: #ecfdf5; border-radius: 4px; border: 1px solid #6ee7b7; }
+.intel-settings-unauthorized { font-size: 0.85rem; color: var(--text-secondary, #6b7280); padding: 1.5rem; }
+
+.intel-settings-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.intel-settings-upload-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.intel-settings-file-input {
+  font-size: 0.82rem;
+}
+
+/* Contract Entitlements explainer box */
+.intel-settings-explainer {
+  background: var(--bg-secondary, #f9fafb);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.83rem;
+  color: var(--text, #374151);
+  line-height: 1.55;
+}
+.intel-settings-explainer p { margin: 0 0 0.5rem; }
+.intel-settings-explainer p:last-child { margin-bottom: 0; }
+
+.intel-settings-explainer-list {
+  margin: 0.35rem 0 0.35rem 1.25rem;
+  padding: 0;
+  list-style: none;
+}
+.intel-settings-explainer-list li {
+  margin-bottom: 0.35rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.intel-settings-csv-spec {
+  font-size: 0.83rem;
+  margin-bottom: 0.75rem;
+}
+.intel-settings-csv-spec strong {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--text, #374151);
+}

@@ -404,6 +404,25 @@ function PsaSection() {
 // Sub-component: Contract Entitlements CSV import
 // ---------------------------------------------------------------------------
 
+const CSV_TEMPLATE_HEADER = "tenant_id,sku_name,resource,contracted,region_id,billing_id,effective_from";
+const CSV_TEMPLATE_EXAMPLE = [
+  "proj-acme,Enterprise Bundle,vcpu,40,,CUST-0042,2026-01-01",
+  "proj-acme,Enterprise Bundle,ram_gb,160,,CUST-0042,2026-01-01",
+  "proj-acme,Enterprise Bundle,storage_gb,2000,,CUST-0042,2026-01-01",
+  "proj-initech,Standard,vcpu,20,us-east,CUST-0099,2026-01-01",
+].join("\n");
+
+function downloadCsvTemplate() {
+  const content = `${CSV_TEMPLATE_HEADER}\n${CSV_TEMPLATE_EXAMPLE}\n`;
+  const blob = new Blob([content], { type: "text/csv" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = "contract_entitlements_template.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function EntitlementsSection() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [status,  setStatus]  = useState("");
@@ -460,28 +479,76 @@ function EntitlementsSection() {
   return (
     <div className="intel-settings-section">
       <h3 className="intel-settings-section-title">Contract Entitlements</h3>
-      <p className="intel-settings-section-hint">
-        Import tenant contract entitlements from a CSV file. This enables the Revenue Leakage
-        engine to detect over-consumption and billing gaps.
-      </p>
-      <p className="intel-settings-section-hint">
-        <strong>CSV columns:</strong>{" "}
-        <code>tenant_id, sku_name, resource, contracted, region_id, billing_id, effective_from</code><br />
-        <strong>resource values:</strong> <code>vcpu</code>, <code>ram_gb</code>, <code>storage_gb</code>, <code>floating_ip</code>
-      </p>
-      <div className="intel-settings-upload-row">
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".csv"
-          onChange={handleUpload}
-          disabled={uploading}
-          className="intel-settings-file-input"
-        />
-        {uploading && <span className="intel-settings-loading">Importing…</span>}
+
+      {/* What are contract entitlements? */}
+      <div className="intel-settings-explainer">
+        <p>
+          <strong>What is this?</strong> Contract entitlements record what each tenant is
+          contractually paying for — their purchased vCPUs, RAM, storage, and floating IPs.
+          This is separate from the platform quota (what the system <em>allows</em> them to use).
+        </p>
+        <p>
+          <strong>Why configure it?</strong> The{" "}
+          <strong>Revenue Leakage engine</strong> compares the tenant's actual usage against
+          their contracted limits every 15 minutes. It generates two types of insights:
+        </p>
+        <ul className="intel-settings-explainer-list">
+          <li>
+            <span className="sev-badge sev-medium">medium</span>{" "}
+            <strong>Over-consumption</strong> — tenant is using more than their contracted limit
+            (upsell signal: charge them for the overage or upgrade their tier)
+          </li>
+          <li>
+            <span className="sev-badge sev-high">high</span>{" "}
+            <strong>Ghost resources</strong> — tenant has active resources but no billing contract
+            on record (billing gap: you are providing service with no contract)
+          </li>
+        </ul>
+        <p style={{ marginTop: "0.5rem" }}>
+          <strong>Incremental adoption:</strong> Configure your largest clients first.
+          Tenants without any entitlement rows are skipped by the engine until you add them.
+          A <code>region_id</code> of blank/empty means the entitlement applies globally
+          across all regions; add per-region rows only when a client's contract differs by region.
+        </p>
       </div>
-      {status && <div className="intel-settings-success">{status}</div>}
-      {error  && <div className="intel-settings-error">{error}</div>}
+
+      {/* Column reference */}
+      <div className="intel-settings-csv-spec">
+        <strong>CSV column reference:</strong>
+        <table className="intel-settings-table intel-settings-table-compact">
+          <thead>
+            <tr><th>Column</th><th>Required</th><th>Values / Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>tenant_id</code></td><td>✔</td><td>Project ID (e.g. <code>proj-acme</code>)</td></tr>
+            <tr><td><code>sku_name</code></td><td>✔</td><td>Contract name shown in QBR (e.g. <em>Enterprise Bundle</em>)</td></tr>
+            <tr><td><code>resource</code></td><td>✔</td><td><code>vcpu</code> · <code>ram_gb</code> · <code>storage_gb</code> · <code>floating_ip</code></td></tr>
+            <tr><td><code>contracted</code></td><td>✔</td><td>Integer — units contracted (e.g. <code>40</code> vCPUs)</td></tr>
+            <tr><td><code>region_id</code></td><td>—</td><td>Leave blank for global; set to region ID for per-region override</td></tr>
+            <tr><td><code>billing_id</code></td><td>—</td><td>External billing/CRM reference (shown in leakage insights)</td></tr>
+            <tr><td><code>effective_from</code></td><td>—</td><td>YYYY-MM-DD (defaults to today)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="intel-settings-upload-row">
+        <button className="btn-sm" onClick={downloadCsvTemplate} title="Download a pre-filled CSV template">
+          ⬇ Download template
+        </button>
+        <label className="btn-sm primary intel-settings-upload-label" style={{ cursor: "pointer" }}>
+          {uploading ? "Importing…" : "⬆ Import CSV"}
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv"
+            onChange={handleUpload}
+            disabled={uploading}
+            style={{ display: "none" }}
+          />
+        </label>
+      </div>
+      {status && <div className="intel-settings-success" style={{ marginTop: "0.5rem" }}>{status}</div>}
+      {error  && <div className="intel-settings-error"  style={{ marginTop: "0.5rem" }}>{error}</div>}
     </div>
   );
 }

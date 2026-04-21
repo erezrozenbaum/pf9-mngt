@@ -84,6 +84,15 @@ def _row_to_insight(row: dict) -> dict:
 # GET /api/intelligence/insights — list with filters + pagination
 # ---------------------------------------------------------------------------
 
+_SORT_CLAUSES: dict[str, str] = {
+    "severity":    "CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END, last_seen_at DESC",
+    "detected_at": "detected_at DESC",
+    "last_seen":   "last_seen_at DESC",
+    "type":        "type, CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END",
+    "entity":      "entity_name NULLS LAST, CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END",
+}
+
+
 @router.get("/insights")
 def list_insights(
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -92,6 +101,7 @@ def list_insights(
     entity_type: Optional[str] = Query(None),
     tenant_id: Optional[str] = Query(None),
     department: Optional[str] = Query(None, pattern="^(support|engineering|operations|general)$"),
+    sort_by: str = Query("severity", pattern="^(severity|detected_at|last_seen|type|entity)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     _user: User = Depends(require_permission("intelligence", "read")),
@@ -139,6 +149,7 @@ def list_insights(
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
     offset = (page - 1) * page_size
 
+    order_clause = _SORT_CLAUSES.get(sort_by, _SORT_CLAUSES["severity"])
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
@@ -146,10 +157,7 @@ def list_insights(
                 SELECT *, COUNT(*) OVER() AS total_count
                 FROM operational_insights
                 {where}
-                ORDER BY
-                    CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2
-                                   WHEN 'medium' THEN 3 ELSE 4 END,
-                    last_seen_at DESC
+                ORDER BY {order_clause}
                 LIMIT %s OFFSET %s
                 """, params + [page_size, offset])
             rows = cur.fetchall()
@@ -717,7 +725,7 @@ def get_region_comparison(
                     COALESCE(SUM(f.vcpus),  0) AS allocated_vcpus,
                     COALESCE(SUM(f.ram_mb), 0) AS allocated_ram_mb
                 FROM servers s
-                JOIN hypervisors h ON h.id = s.hypervisor_id
+                JOIN hypervisors h ON h.hostname = s.hypervisor_hostname
                 JOIN flavors     f ON f.id = s.flavor_id
                 WHERE s.status = 'ACTIVE'
                 GROUP BY h.region_id
@@ -787,12 +795,12 @@ def get_region_comparison(
             cur.execute("""
                 SELECT
                     h.region_id,
-                    DATE_TRUNC('day', s.collected_at) AS day,
-                    COUNT(DISTINCT s.id)              AS vms
+                    DATE_TRUNC('day', s.recorded_at) AS day,
+                    COUNT(DISTINCT s.id)             AS vms
                 FROM servers_history s
-                JOIN hypervisors h ON h.id = s.hypervisor_id
+                JOIN hypervisors h ON h.hostname = s.hypervisor_hostname
                 WHERE s.status = 'ACTIVE'
-                  AND s.collected_at >= NOW() - INTERVAL '14 days'
+                  AND s.recorded_at >= NOW() - INTERVAL '14 days'
                 GROUP BY h.region_id, 2
                 ORDER BY h.region_id, 2
             """)

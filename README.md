@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.90.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.90.1-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -609,6 +609,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+### 🩹 Intelligence 500 / Sort / Entitlements UX Fixes — v1.90.1
+
+**[v1.90.1](CHANGELOG.md)** — Hotfix patch for v1.90.0. Fixed `/api/intelligence/regions` 500 crash (wrong SQL column names `hypervisor_id`/`collected_at` on the `servers` and `servers_history` tables; root cause of cascading 502/503 pod-restart loop). Fixed cross-region growth-rate always returning 0.0 (same column bug silently swallowed in `cross_region.py`). Fixed Python syntax error in `intelligence_routes.py` (`_SORT_CLAUSES` dict placed between decorator and function). Added **Sort** dropdown to Insights Feed (server-side, 5 options). Added clickable sort headers to Risk & Capacity and Capacity Forecast tables (client-side, toggle asc/desc). Contract Entitlements tab now includes a full feature explanation, column-reference spec table, downloadable CSV template, and styled import button. All `intel-settings-*` CSS classes added to `InsightsTab.css`. 538 unit tests pass, 0 HIGH bandit findings.
+
 ### 🏢 MSP Business Value Layer — v1.90.0
 
 **[v1.90.0](CHANGELOG.md)** — Revenue Leakage engine detects over-consumption upsell opportunities (`leakage_overconsumption`) and ghost-resource billing gaps (`leakage_ghost`). New Quarterly Business Review PDF generator (`POST /api/intelligence/qbr/generate/{tenant_id}`) with configurable sections (cover, executive summary, ROI interventions, health trend, open items, methodology). PSA outbound webhook integration with per-config severity/type/region filtering and Fernet-encrypted auth headers. Labor rate configuration per insight type for defensible ROI reporting. Intelligence Settings panel (admin-only): labor rates editor, PSA webhook CRUD, CSV contract entitlement import. Business Review button in Tenant Health detail pane. SLA PDF report pipeline consolidated into `export_reports.py`. DB migration adds 3 new tables; 538 unit tests pass, 0 HIGH bandit findings.
@@ -782,4 +786,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Tests**: 524 passed, 22 skipped | **Version**: 1.88.1 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Tests**: 538 passed, 31 skipped | **Version**: 1.90.1 | **Last Updated**: April 2026
