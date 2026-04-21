@@ -11,10 +11,12 @@ RBAC
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
 
@@ -23,6 +25,8 @@ from db_pool import get_connection
 from intelligence_utils import types_for_department
 
 logger = logging.getLogger("pf9.intelligence")
+
+INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
 
 router = APIRouter(prefix="/api/intelligence", tags=["intelligence"])
 
@@ -1050,3 +1054,103 @@ def invite_observer(
     )
 
     return {"invite_id": row["id"], "message": "invite_sent"}
+
+
+# ---------------------------------------------------------------------------
+# Internal service-to-service endpoint (no JWT required — uses X-Internal-Secret)
+# Registered on the app object by setup_intelligence_internal_routes(app).
+# ---------------------------------------------------------------------------
+
+def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
+    """Register /internal/client-health under the main FastAPI app.
+
+    Called from main.py after the app is constructed.  The RBAC middleware
+    skips JWT verification for all /internal/* paths, so the endpoint
+    performs its own pre-shared-secret check.
+    """
+
+    @app.get("/internal/client-health/{tenant_id}", include_in_schema=False)
+    def _internal_client_health(
+        tenant_id: str,
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        """Internal proxy used by the Tenant Portal to fetch client-health without
+        a full admin JWT.  Validates X-Internal-Secret and delegates to the same
+        DB query as the public /api/intelligence/client-health/{tenant_id} endpoint."""
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(
+            x_internal_secret, INTERNAL_SERVICE_SECRET
+        ):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        # Re-use the same query logic as the public endpoint
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Efficiency
+                cur.execute(
+                    """
+                    SELECT
+                        COALESCE(AVG(overall_score), 0)::NUMERIC(5,2) AS avg_score,
+                        CASE
+                            WHEN AVG(overall_score) >= 80 THEN 'excellent'
+                            WHEN AVG(overall_score) >= 60 THEN 'good'
+                            WHEN AVG(overall_score) >= 40 THEN 'fair'
+                            ELSE 'poor'
+                        END AS classification
+                    FROM metering_efficiency
+                    WHERE collected_at >= NOW() - INTERVAL '7 days'
+                      AND (project_name = %s OR project_name ILIKE %s)
+                    """,
+                    (tenant_id, f"%{tenant_id}%"),
+                )
+                eff = cur.fetchone() or {}
+
+                # Stability
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) FILTER (WHERE severity = 'critical') AS open_critical,
+                        COUNT(*) FILTER (WHERE severity = 'high')     AS open_high,
+                        COUNT(*) FILTER (WHERE severity = 'medium')   AS open_medium
+                    FROM operational_insights
+                    WHERE status IN ('open', 'acknowledged')
+                      AND (
+                        metadata->>'tenant_name' ILIKE %s
+                        OR metadata->>'project_name' ILIKE %s
+                        OR metadata->>'tenant_id'   = %s
+                      )
+                    """,
+                    (f"%{tenant_id}%", f"%{tenant_id}%", tenant_id),
+                )
+                stab = cur.fetchone() or {}
+                deductions = (
+                    int(stab.get("open_critical") or 0) * 20
+                    + int(stab.get("open_high") or 0) * 10
+                    + int(stab.get("open_medium") or 0) * 5
+                )
+                stability_score = max(0.0, 100.0 - deductions)
+
+                # Capacity runway
+                cur.execute(
+                    """
+                    SELECT resource, runway_days
+                    FROM metering_quotas
+                    WHERE project_id = %s OR project_name ILIKE %s
+                    ORDER BY runway_days ASC NULLS LAST
+                    LIMIT 1
+                    """,
+                    (tenant_id, f"%{tenant_id}%"),
+                )
+                runway_row = cur.fetchone() or {}
+
+        return {
+            "tenant_id": tenant_id,
+            "efficiency_score": float(eff.get("avg_score") or 0),
+            "efficiency_classification": eff.get("classification") or "unknown",
+            "stability_score": stability_score,
+            "open_critical": int(stab.get("open_critical") or 0),
+            "open_high": int(stab.get("open_high") or 0),
+            "open_medium": int(stab.get("open_medium") or 0),
+            "capacity_runway_days": runway_row.get("runway_days"),
+            "capacity_runway_resource": runway_row.get("resource"),
+            "last_computed": datetime.utcnow().isoformat() + "Z",
+        }

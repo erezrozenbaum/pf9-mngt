@@ -1902,7 +1902,7 @@ async def get_client_health(ctx: TenantContext = Depends(get_tenant_context)):
     try:
         with _hx.Client(timeout=15.0) as hclient:
             resp = hclient.get(
-                f"{INTERNAL_API_URL}/api/intelligence/client-health/{tenant_id}",
+                f"{INTERNAL_API_URL}/internal/client-health/{tenant_id}",
                 headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
             )
     except Exception as exc:

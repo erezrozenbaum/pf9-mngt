@@ -53,7 +53,7 @@ function LaborRatesSection() {
     setLoading(true);
     setError("");
     try {
-      const data = await apiFetch<{ rates: LaborRate[] }>("/intelligence/qbr/labor-rates");
+      const data = await apiFetch<{ rates: LaborRate[] }>("/api/intelligence/qbr/labor-rates");
       setRates(data.rates);
     } catch (e: any) {
       setError(e.message || "Failed to load labor rates");
@@ -79,7 +79,7 @@ function LaborRatesSection() {
     if (!editingType) return;
     setSaving(true);
     try {
-      await apiFetch(`/intelligence/qbr/labor-rates/${encodeURIComponent(editingType)}`, {
+      await apiFetch(`/api/intelligence/qbr/labor-rates/${encodeURIComponent(editingType)}`, {
         method: "PUT",
         body: JSON.stringify({
           hours_saved:   parseFloat(editHours) || 0,
@@ -244,12 +244,12 @@ function PsaSection() {
     setError("");
     try {
       if (editId !== null) {
-        await apiFetch(`/psa/configs/${editId}`, {
+        await apiFetch(`/api/psa/configs/${editId}`, {
           method: "PUT",
           body: JSON.stringify(form),
         });
       } else {
-        await apiFetch("/psa/configs", {
+        await apiFetch("/api/psa/configs", {
           method: "POST",
           body: JSON.stringify(form),
         });
@@ -266,7 +266,7 @@ function PsaSection() {
   async function deleteConfig(id: number) {
     if (!window.confirm("Delete this PSA webhook configuration?")) return;
     try {
-      await apiFetch(`/psa/configs/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/psa/configs/${id}`, { method: "DELETE" });
       await load();
     } catch (e: any) {
       setError(e.message || "Delete failed");
@@ -450,7 +450,7 @@ function EntitlementsSection() {
         if (cols.length < 4) { fail++; continue; }
         const [tenant_id, sku_name, resource, contracted, region_id, billing_id, effective_from] = cols;
         try {
-          await apiFetch("/psa/entitlements", {
+          await apiFetch("/api/psa/entitlements", {
             method: "POST",
             body: JSON.stringify({
               tenant_id,
