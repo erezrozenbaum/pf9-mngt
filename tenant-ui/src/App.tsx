@@ -6,6 +6,7 @@ import { MfaStep } from "./components/MfaStep";
 import { Shell } from "./components/Shell";
 
 export type Screen =
+  | "overview"
   | "dashboard"
   | "infrastructure"
   | "snapshots"
@@ -18,7 +19,7 @@ export type Screen =
 
 export default function App() {
   const auth = useAuth();
-  const [screen, setScreen] = useState<Screen>("dashboard");
+  const [screen, setScreen] = useState<Screen>("overview");
 
   // After login, re-fetch branding scoped to the user's first project so
   // per-tenant colour/logo overrides are applied immediately.

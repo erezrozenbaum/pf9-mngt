@@ -11,10 +11,11 @@ RBAC
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, User
@@ -90,6 +91,8 @@ _SORT_CLAUSES: dict[str, str] = {
     "last_seen":   "last_seen_at DESC",
     "type":        "type, CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END",
     "entity":      "entity_name NULLS LAST, CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END",
+    "tenant":      "metadata->>'tenant_name' NULLS LAST, entity_name NULLS LAST",
+    "status":      "CASE status WHEN 'open' THEN 1 WHEN 'acknowledged' THEN 2 WHEN 'snoozed' THEN 3 ELSE 4 END, CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END",
 }
 
 
@@ -101,7 +104,7 @@ def list_insights(
     entity_type: Optional[str] = Query(None),
     tenant_id: Optional[str] = Query(None),
     department: Optional[str] = Query(None, pattern="^(support|engineering|operations|general)$"),
-    sort_by: str = Query("severity", pattern="^(severity|detected_at|last_seen|type|entity)$"),
+    sort_by: str = Query("severity", pattern="^(severity|detected_at|last_seen|type|entity|tenant|status)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     _user: User = Depends(require_permission("intelligence", "read")),
@@ -666,6 +669,150 @@ def get_capacity_forecast(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/intelligence/client-health/{tenant_id}
+# Client Health – aggregated efficiency, stability, and capacity runway
+# for a single tenant (project name or project ID).
+# ---------------------------------------------------------------------------
+
+@router.get("/client-health/{tenant_id}")
+def get_client_health(
+    tenant_id: str,
+    _user: User = Depends(require_permission("client_health", "read")),
+):
+    """
+    Return a three-axis health summary for a single tenant.
+
+    Response:
+      {
+        "tenant_id":                "acme-corp",
+        "efficiency_score":         72.4,   // avg overall_score last 7 days
+        "efficiency_classification":"good",
+        "stability_score":          85.0,   // 100 - deductions for open insights
+        "open_critical":            0,
+        "open_high":                1,
+        "open_medium":              2,
+        "capacity_runway_days":     45,     // soonest-exhausting resource
+        "capacity_runway_resource": "vcpus",
+        "last_computed":            "2025-01-15T12:00:00Z"
+      }
+    """
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # 1. Efficiency — avg over last 7 days for this tenant
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(AVG(overall_score), 0)::NUMERIC(5,2) AS avg_score,
+                    CASE
+                        WHEN AVG(overall_score) >= 80 THEN 'excellent'
+                        WHEN AVG(overall_score) >= 60 THEN 'good'
+                        WHEN AVG(overall_score) >= 40 THEN 'fair'
+                        ELSE 'poor'
+                    END AS classification
+                FROM metering_efficiency
+                WHERE collected_at >= NOW() - INTERVAL '7 days'
+                  AND (project_name = %s OR project_name ILIKE %s)
+                """,
+                (tenant_id, f"%{tenant_id}%"),
+            )
+            eff_row = cur.fetchone() or {}
+            efficiency_score = float(eff_row.get("avg_score") or 0)
+            efficiency_classification = eff_row.get("classification") or "unknown"
+
+            # 2. Stability — penalise for open insights
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE severity = 'critical') AS open_critical,
+                    COUNT(*) FILTER (WHERE severity = 'high')     AS open_high,
+                    COUNT(*) FILTER (WHERE severity = 'medium')   AS open_medium
+                FROM operational_insights
+                WHERE status IN ('open', 'acknowledged')
+                  AND (
+                        metadata->>'tenant_name' = %s
+                     OR metadata->>'project'      = %s
+                     OR entity_name ILIKE %s
+                  )
+                """,
+                (tenant_id, tenant_id, f"%{tenant_id}%"),
+            )
+            stab_row = cur.fetchone() or {}
+            open_critical = int(stab_row.get("open_critical") or 0)
+            open_high     = int(stab_row.get("open_high")     or 0)
+            open_medium   = int(stab_row.get("open_medium")   or 0)
+            # Deduct: critical=20pts, high=10pts, medium=5pts — floor 0
+            stability_score = max(0.0, 100.0 - open_critical * 20 - open_high * 10 - open_medium * 5)
+
+            # 3. Capacity runway — minimum days_to_90 across resources for this tenant's projects
+            cur.execute(
+                """
+                SELECT project_id, project_name,
+                       storage_used_gb,   storage_quota_gb,
+                       vcpus_used,        vcpus_quota,
+                       ram_used_mb,       ram_quota_mb,
+                       instances_used,    instances_quota
+                FROM metering_quotas
+                WHERE collected_at >= NOW() - INTERVAL '14 days'
+                  AND (project_name = %s OR project_name ILIKE %s)
+                ORDER BY project_id, collected_at ASC
+                """,
+                (tenant_id, f"%{tenant_id}%"),
+            )
+            q_rows = cur.fetchall()
+
+    # Compute runway from quota rows (reuse existing helper)
+    _QUOTA_RESOURCES = [
+        ("vcpus",       "vcpus_used",        "vcpus_quota"),
+        ("ram_mb",      "ram_used_mb",        "ram_quota_mb"),
+        ("storage_gb",  "storage_used_gb",    "storage_quota_gb"),
+        ("instances",   "instances_used",     "instances_quota"),
+    ]
+
+    min_runway: Optional[int] = None
+    min_runway_resource: Optional[str] = None
+
+    if q_rows:
+        # Build xs/ys per resource using all rows (project-level)
+        from collections import defaultdict
+        projects_rows: dict = defaultdict(list)
+        for r in q_rows:
+            projects_rows[r["project_id"]].append(r)
+
+        for _pid, prows in projects_rows.items():
+            if len(prows) < 3:
+                continue
+            import time as _time
+            # Approximate ts using row position (rows ordered by collected_at)
+            xs = list(range(len(prows)))
+            for res_key, used_col, quota_col in _QUOTA_RESOURCES:
+                try:
+                    ys    = [float(r[used_col] or 0) for r in prows]
+                    quota = float(prows[-1][quota_col] or 0)
+                    used  = ys[-1]
+                    slope = _linear_forecast(xs, ys)
+                    runway = _days_runway(used, quota, slope)
+                    if runway is not None:
+                        if min_runway is None or runway < min_runway:
+                            min_runway = runway
+                            min_runway_resource = res_key
+                except Exception:
+                    pass
+
+    return {
+        "tenant_id":                 tenant_id,
+        "efficiency_score":          round(efficiency_score, 1),
+        "efficiency_classification": efficiency_classification,
+        "stability_score":           round(stability_score, 1),
+        "open_critical":             open_critical,
+        "open_high":                 open_high,
+        "open_medium":               open_medium,
+        "capacity_runway_days":      min_runway,
+        "capacity_runway_resource":  min_runway_resource,
+        "last_computed":             datetime.utcnow().isoformat() + "Z",
+    }
+
+
+# ---------------------------------------------------------------------------
 # GET /api/intelligence/regions
 # Cross-Region Comparison — per-region health and utilization summary
 # ---------------------------------------------------------------------------
@@ -846,3 +993,60 @@ def get_region_comparison(
         })
 
     return {"regions": result}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/intelligence/invite-observer
+# Send observer invite email + store portal_invite_tokens row
+# ---------------------------------------------------------------------------
+
+class ObserverInviteRequest(BaseModel):
+    email: str = Field(..., pattern=r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+    project_id: str
+    tenant_name: str
+    portal_url: str = Field(default="")
+
+
+@router.post("/invite-observer", status_code=202, summary="Invite an observer to the Tenant Portal")
+def invite_observer(
+    body: ObserverInviteRequest,
+    current_user: User = Depends(require_permission("client_health", "read")),
+):
+    """
+    Generate a one-time portal_invite_tokens row (portal_role=observer),
+    send an invite email, and return the token ID.
+    The token expires in 72 hours.
+    """
+    import secrets as _sec
+    from smtp_helper import send_observer_invite_email
+
+    raw_token = _sec.token_urlsafe(32)
+    expires_at = datetime.utcnow().replace(tzinfo=None)
+    from datetime import timedelta
+    expires_at = datetime.utcnow() + timedelta(hours=72)
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO portal_invite_tokens
+                    (token, project_id, invited_email, portal_role, created_by, expires_at)
+                VALUES (%s, %s, %s, 'observer', %s, %s)
+                RETURNING id
+                """,
+                (raw_token, body.project_id, body.email, current_user.username, expires_at),
+            )
+            row = cur.fetchone()
+
+    portal_url = body.portal_url or "https://portal"
+
+    send_observer_invite_email(
+        to_email=body.email,
+        invited_by=current_user.username,
+        tenant_name=body.tenant_name,
+        portal_url=portal_url,
+        token=raw_token,
+        expires_hours=72,
+    )
+
+    return {"invite_id": row["id"], "message": "invite_sent"}

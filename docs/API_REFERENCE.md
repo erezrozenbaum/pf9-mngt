@@ -5032,6 +5032,7 @@ All endpoints require a full `role=tenant` JWT (MFA verified). Every call writes
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/tenant/client-health` | *(v1.91.0)* Health overview for the logged-in tenant — proxies to `GET /api/intelligence/client-health/{project_ids[0]}`. Returns `{efficiency_score, efficiency_label, stability_score, capacity_runway_days, capacity_runway_project, last_computed}`. Available to both `manager` and `observer` roles. |
 | `GET` | `/tenant/dashboard` | Summary stats: VM count, running, volumes, snapshots, compliance %, restore jobs. |
 | `GET` | `/tenant/vms` | VM inventory scoped to tenant projects + region. |
 | `GET` | `/tenant/vms/{vm_id}` | Single VM detail with volumes, network, metadata. |
@@ -5071,8 +5072,9 @@ These endpoints are part of the **main API** (`api/tenant_portal_routes.py`) on 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/admin/tenant-portal/users/{cp_id}` | List all tenant portal users for a control plane with access status. |
-| `GET` | `/api/admin/tenant-portal/access/{cp_id}` | Get access configuration (allowed projects, expiry, MFA policy) for a CP. |
-| `PUT` | `/api/admin/tenant-portal/access/{cp_id}` | Update access rules; atomically syncs Redis allow/block keys. |
+| `GET` | `/api/admin/tenant-portal/access/{cp_id}` | Get access configuration (allowed projects, `portal_role`, expiry, MFA policy) for a CP. Returns `portal_role` per row (COALESCE to `"manager"` for legacy rows). |
+| `PUT` | `/api/admin/tenant-portal/access` | Upsert access for one user. Body: `{control_plane_id, keystone_user_id, project_ids, portal_role}`. `portal_role` must be `"manager"` or `"observer"`; defaults to `"manager"`. |
+| `PUT` | `/api/admin/tenant-portal/access/batch` | Batch-upsert access for multiple users. Body: `{control_plane_id, users: [{keystone_user_id, project_ids, portal_role}]}`. |
 | `DELETE` | `/api/admin/tenant-portal/sessions/{cp_id}` | Revoke all active sessions for a control plane. |
 | `GET` | `/api/admin/tenant-portal/sessions/{cp_id}` | List active sessions (user, IP, created_at, last_seen). |
 | `GET` | `/api/admin/tenant-portal/audit/{cp_id}` | Audit log — all tenant API calls for the CP (paginated, filterable by user/action/date). |
@@ -5108,7 +5110,7 @@ All endpoints require a valid Bearer token. Read endpoints: Viewer+. Write endpo
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/intelligence/insights` | List insights. Query: `tenant_id`, `dept`, `type`, `severity`, `status`, `page`, `page_size`. |
+| `GET` | `/api/intelligence/insights` | List insights. Query: `tenant_id`, `dept`, `type`, `severity`, `status`, `sort_by` (`severity`\|`detected_at`\|`last_seen`\|`type`\|`entity`\|`tenant`\|`status`), `sort_dir`, `page`, `page_size`. |
 | `GET` | `/api/intelligence/insights/{id}` | Get single insight with metadata. |
 | `PUT` | `/api/intelligence/insights/{id}/acknowledge` | Acknowledge an insight. Body: `{"note": "..."}`. |
 | `PUT` | `/api/intelligence/insights/{id}/snooze` | Snooze until ISO datetime. Body: `{"until": "2026-05-01T00:00:00Z"}`. |
@@ -5117,6 +5119,8 @@ All endpoints require a valid Bearer token. Read endpoints: Viewer+. Write endpo
 | `GET` | `/api/intelligence/summary` | Aggregated counts by severity and type. Query: `tenant_id`, `dept`. |
 | `GET` | `/api/intelligence/forecast` | Per-project capacity runway (linear regression). Query: `?project_id=`. |
 | `GET` | `/api/intelligence/regions` | Per-region utilization, insight counts, storage runway, VM growth rate. |
+| `GET` | `/api/intelligence/client-health/{tenant_id}` | *(v1.91.0)* Three-axis health summary for one tenant. Returns `{efficiency_score, efficiency_label, stability_score, capacity_runway_days, capacity_runway_project, last_computed}`. RBAC: `client_health:read` (Viewer+). |
+| `POST` | `/api/intelligence/invite-observer` | *(v1.91.0)* Generate a single-use observer invite link and send a branded HTML invite email. Body: `{"control_plane_id", "project_id", "invited_email", "created_by"}`. Returns `{invite_id, message}`. RBAC: `observer_invite:write` (Admin+). |
 
 ### SLA Compliance Endpoints (v1.86.0+)
 

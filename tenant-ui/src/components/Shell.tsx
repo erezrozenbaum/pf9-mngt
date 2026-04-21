@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import type { Branding, MeResponse, InventoryStatus } from "../lib/api";
 import { apiInventoryStatus } from "../lib/api";
 import type { Screen } from "../App";
+import { Overview } from "../screens/Overview";
 import { Dashboard } from "../screens/Dashboard";
 import { Infrastructure } from "../screens/Infrastructure";
 import { SnapshotCoverage } from "../screens/SnapshotCoverage";
@@ -21,6 +22,7 @@ interface Props {
 }
 
 const NAV_ITEMS: Array<{ id: Screen; label: string; icon: string }> = [
+  { id: "overview",     label: "Health Overview",       icon: "❤" },
   { id: "dashboard",      label: "Dashboard",           icon: "▦" },
   { id: "infrastructure", label: "My Infrastructure",   icon: "🖥" },
   { id: "snapshots",      label: "Snapshot Coverage",   icon: "🗂" },
@@ -33,6 +35,7 @@ const NAV_ITEMS: Array<{ id: Screen; label: string; icon: string }> = [
 ];
 
 const SCREEN_TITLES: Record<Screen, string> = {
+  overview:       "Health Overview",
   dashboard:      "Dashboard",
   infrastructure: "My Infrastructure",
   snapshots:      "Snapshot Coverage",
@@ -62,6 +65,7 @@ export function Shell({ branding, me, screen, onNavigate, onLogout }: Props) {
 
   const renderScreen = () => {
     switch (screen) {
+      case "overview":      return <Overview />;
       case "dashboard":      return <Dashboard      key={refreshTick} regionFilter={regionFilter} />;
       case "infrastructure": return <Infrastructure key={refreshTick} regionFilter={regionFilter} />;
       case "snapshots":      return <SnapshotCoverage key={refreshTick} regionFilter={regionFilter} />;

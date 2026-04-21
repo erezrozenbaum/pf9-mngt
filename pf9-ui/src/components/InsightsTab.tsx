@@ -159,7 +159,7 @@ interface InsightsTabProps {
   userRole?: string;
 }
 
-type InnerTab = "feed" | "risk" | "forecast" | "regions" | "sla" | "settings";
+type InnerTab = "feed" | "risk" | "forecast" | "regions" | "sla" | "history" | "settings";
 
 export default function InsightsTab({ userRole }: InsightsTabProps) {
   const [innerTab, setInnerTab] = useState<InnerTab>("feed");
@@ -215,6 +215,12 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   // Region Comparison
   const [regions, setRegions] = useState<RegionRow[]>([]);
   const [regionsLoading, setRegionsLoading] = useState(false);
+
+  // Resolved History
+  const [historyInsights, setHistoryInsights] = useState<Insight[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const HISTORY_PAGE_SIZE = 50;
 
   // Snooze modal
   const [snoozeTarget, setSnoozeTarget] = useState<number | null>(null);
@@ -297,11 +303,26 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
     }
   }, []);
 
+  const loadHistory = useCallback(async (pg: number = 1) => {
+    setHistoryLoading(true);
+    try {
+      const params = new URLSearchParams({ status: "resolved", page: String(pg), page_size: String(HISTORY_PAGE_SIZE) });
+      const data = await apiFetch<{ insights: Insight[]; total: number }>(`/api/intelligence/insights?${params}`);
+      setHistoryInsights(data.insights ?? []);
+      setHistoryPage(pg);
+    } catch (_e) {
+      setHistoryInsights([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
   useEffect(() => { loadInsights(1); }, [filterStatus, filterSeverity, filterType, workspace, sortBy]);
   useEffect(() => { loadSummary(); }, [workspace]);
   useEffect(() => { if (innerTab === "sla") loadSlaSummary(); }, [innerTab]);
   useEffect(() => { if (innerTab === "forecast") loadForecast(); }, [innerTab]);
   useEffect(() => { if (innerTab === "regions") loadRegions(); }, [innerTab]);
+  useEffect(() => { if (innerTab === "history") loadHistory(1); }, [innerTab]);
 
   async function openSlaModal() {
     setSlaError("");
@@ -441,9 +462,34 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
     );
   }
 
+  function renderOperationsBar() {
+    if (!summary || workspace !== "operations") return null;
+    const { by_type, total_open } = summary;
+    const riskCount = by_type.filter(t => t.type.startsWith("risk_")).reduce((a, b) => a + b.count, 0);
+    const leakageCount = by_type.filter(t => t.type.startsWith("leakage_")).reduce((a, b) => a + b.count, 0);
+    const wasteCount = by_type.filter(t => t.type.startsWith("waste_")).reduce((a, b) => a + b.count, 0);
+    return (
+      <div className="ops-summary-bar">
+        <span className="ops-summary-item ops-total">
+          <strong>{total_open}</strong> total open
+        </span>
+        <span className="ops-summary-item ops-risk">
+          ⚠️ <strong>{riskCount}</strong> risk
+        </span>
+        <span className="ops-summary-item ops-waste">
+          🗑️ <strong>{wasteCount}</strong> waste
+        </span>
+        <span className="ops-summary-item ops-leakage">
+          📈 <strong>{leakageCount}</strong> leakage
+        </span>
+      </div>
+    );
+  }
+
   function renderFeed() {
     return (
       <>
+        {renderOperationsBar()}
         {renderSummaryBar()}
         <div className="insights-filters">
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
@@ -508,10 +554,12 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
             style={{ marginLeft: "auto" }}
           >
             <option value="severity">Sort: Severity</option>
-            <option value="detected_at">Sort: Newest first</option>
+            <option value="detected_at">Sort: Detected (newest)</option>
             <option value="last_seen">Sort: Last seen</option>
+            <option value="status">Sort: Status</option>
             <option value="type">Sort: Type</option>
             <option value="entity">Sort: Entity</option>
+            <option value="tenant">Sort: Tenant</option>
           </select>
           {canWrite && (
             <div className="insights-bulk-actions">
@@ -714,6 +762,56 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
     );
   }
 
+  function renderHistory() {
+    return (
+      <div className="insights-history">
+        <div className="insights-history-header">
+          <h3>Resolved Insights History</h3>
+          <span style={{ fontSize: "0.82rem", color: "var(--text-secondary,#6b7280)" }}>
+            Showing most-recent {HISTORY_PAGE_SIZE} per page
+          </span>
+        </div>
+        {historyLoading && <div className="insights-loading">Loading history…</div>}
+        {!historyLoading && historyInsights.length === 0 && (
+          <p className="insights-empty-text">No resolved insights yet.</p>
+        )}
+        {!historyLoading && historyInsights.length > 0 && (
+          <table className="insights-table">
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Type</th>
+                <th>Entity</th>
+                <th>Title</th>
+                <th>Detected</th>
+                <th>Resolved</th>
+              </tr>
+            </thead>
+            <tbody>
+              {historyInsights.map((ins) => (
+                <tr key={ins.id}>
+                  <td><span className={sevClass(ins.severity)}>{ins.severity}</span></td>
+                  <td>{typeIcon(ins.type)} {ins.type.replace(/_/g, " ")}</td>
+                  <td>{ins.entity_name || ins.entity_id}</td>
+                  <td>{ins.title}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{fmtTs(ins.detected_at)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{fmtTs(ins.resolved_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {historyInsights.length >= HISTORY_PAGE_SIZE && (
+          <div className="insights-pagination">
+            <button disabled={historyPage <= 1} onClick={() => loadHistory(historyPage - 1)}>← Prev</button>
+            <span>Page {historyPage}</span>
+            <button onClick={() => loadHistory(historyPage + 1)}>Next →</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function renderRisk() {    // Filter to risk + capacity insights from current feed (or re-use summary by_type)
     const riskInsights = insights.filter(
       (i) => i.type.startsWith("risk_") || i.type.startsWith("capacity_") || i.type.startsWith("waste_")
@@ -740,6 +838,11 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
           const ka = (a[0]?.entity_name || a[0]?.entity_id || "").toLowerCase();
           const kb = (b[0]?.entity_name || b[0]?.entity_id || "").toLowerCase();
           return ka < kb ? -dir : ka > kb ? dir : 0;
+        }
+        if (col === "tenant") {
+          const ta = ((a[0]?.metadata?.project as string) || (a[0]?.metadata?.tenant_name as string) || "").toLowerCase();
+          const tb = ((b[0]?.metadata?.project as string) || (b[0]?.metadata?.tenant_name as string) || "").toLowerCase();
+          return ta < tb ? -dir : ta > tb ? dir : 0;
         }
         if (col === "count") return (a.length - b.length) * dir;
         return 0;
@@ -771,7 +874,9 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                 <th style={{ cursor: "pointer" }} onClick={() => toggleRiskSort("entity")}>
                   Entity {riskSortIcon("entity")}
                 </th>
-                <th>Tenant / Project</th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleRiskSort("tenant")}>
+                  Tenant / Project {riskSortIcon("tenant")}
+                </th>
                 <th style={{ cursor: "pointer" }} onClick={() => toggleRiskSort("severity")}>
                   Highest Severity {riskSortIcon("severity")}
                 </th>
@@ -1260,6 +1365,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
             { id: "forecast" as const, label: "📈 Capacity Forecast" },
             { id: "regions"  as const, label: "🌍 Cross-Region" },
             { id: "sla"      as const, label: "📋 SLA Summary" },
+            { id: "history"  as const, label: "🕐 History" },
             ...(canWrite ? [{ id: "settings" as const, label: "⚙️ Settings" }] : []),
           ] as { id: InnerTab; label: string }[]
         ).map((t) => (
@@ -1278,6 +1384,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
       {innerTab === "forecast" && renderForecast()}
       {innerTab === "regions"  && renderRegions()}
       {innerTab === "sla"      && renderSla()}
+      {innerTab === "history"  && renderHistory()}
       {innerTab === "settings" && <IntelligenceSettingsPanel userRole={userRole} />}
 
       {/* Snooze modal */}

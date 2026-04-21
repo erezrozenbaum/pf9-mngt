@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 
 from audit_helper import log_action
 from db_pool import get_tenant_connection
-from middleware import get_tenant_context, inject_rls_vars
+from middleware import get_tenant_context, inject_rls_vars, require_manager_role
 from tenant_context import TenantContext
 
 logger = logging.getLogger("tenant_portal.restore")
@@ -427,7 +427,7 @@ async def list_restore_points(
 @router.post("/tenant/restore/plan", summary="Create a restore plan (mode=NEW only)")
 async def create_restore_plan(
     req: TenantRestorePlanRequest,
-    ctx: TenantContext = Depends(get_tenant_context),
+    ctx: TenantContext = Depends(require_manager_role),
 ):
     """
     Validate VM + snapshot ownership, build a restore plan via the backend,
@@ -535,7 +535,7 @@ async def create_restore_plan(
 )
 async def execute_restore(
     req: TenantRestoreExecuteRequest,
-    ctx: TenantContext = Depends(get_tenant_context),
+    ctx: TenantContext = Depends(require_manager_role),
 ):
     """
     Transition a PLANNED job to PENDING and start execution.
@@ -697,7 +697,7 @@ async def get_restore_job(
 async def cancel_restore_job(
     job_id: str,
     req: TenantCancelRequest = None,
-    ctx: TenantContext = Depends(get_tenant_context),
+    ctx: TenantContext = Depends(require_manager_role),
 ):
     """
     Cancel a restore job owned by this tenant.  Only PLANNED and PENDING

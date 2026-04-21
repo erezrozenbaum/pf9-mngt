@@ -133,6 +133,7 @@ async def verify_tenant_token(
     project_ids = payload.get("project_ids") or []
     region_ids = payload.get("region_ids") or []
     username = payload.get("sub", "")
+    portal_role = payload.get("portal_role", "manager")
 
     if not keystone_user_id or not control_plane_id:
         raise HTTPException(
@@ -185,11 +186,25 @@ async def verify_tenant_token(
         project_ids=project_ids,
         region_ids=region_ids,
         ip_address=client_ip,
+        portal_role=portal_role,
     )
 
 
 # Alias for use in route handlers
 get_tenant_context = verify_tenant_token
+
+
+def require_manager_role(ctx: TenantContext = Depends(verify_tenant_token)) -> TenantContext:
+    """
+    FastAPI dependency: reject requests from observer-role users.
+    Apply to all write/execute routes in the tenant portal.
+    """
+    if ctx.portal_role != "manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="observer_role_cannot_write",
+        )
+    return ctx
 
 
 # ---------------------------------------------------------------------------

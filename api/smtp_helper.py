@@ -221,3 +221,48 @@ def send_raw(msg, to_addrs: Union[str, List[str]]) -> None:
     if isinstance(to_addrs, str):
         to_addrs = [to_addrs]
     _do_send(msg, to_addrs)
+
+
+def send_observer_invite_email(
+    *,
+    to_email: str,
+    invited_by: str,
+    tenant_name: str,
+    portal_url: str,
+    token: str,
+    expires_hours: int = 72,
+) -> bool:
+    """
+    Send an observer invite email with a magic link to the Tenant Portal.
+
+    The invite link embeds the token so the recipient can activate
+    their observer access without needing admin involvement.
+    """
+    invite_url = f"{portal_url.rstrip('/')}/accept-invite?token={token}"
+    subject = f"You've been invited to access the {tenant_name} cloud portal"
+    html_body = f"""
+    <html><body style="font-family:sans-serif;color:#1f2937;max-width:520px;margin:2rem auto;">
+      <h2 style="color:#1e40af;margin-bottom:.5rem;">Cloud Portal Invitation</h2>
+      <p>Hi,</p>
+      <p><strong>{invited_by}</strong> has invited you to access the
+         <strong>{tenant_name}</strong> cloud portal as a <em>read-only observer</em>.</p>
+      <p>As an observer you can view infrastructure, health dashboards, and reports
+         without the ability to make changes.</p>
+      <p style="margin:1.5rem 0;">
+        <a href="{invite_url}"
+           style="background:#1e40af;color:#fff;padding:.65rem 1.25rem;border-radius:6px;
+                  text-decoration:none;font-weight:600;display:inline-block;">
+          Accept Invitation
+        </a>
+      </p>
+      <p style="font-size:.82rem;color:#6b7280;">
+        This link expires in {expires_hours} hours. If you were not expecting this invitation,
+        you can safely ignore this email.
+      </p>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:1.5rem 0;">
+      <p style="font-size:.75rem;color:#9ca3af;">
+        Direct link: <a href="{invite_url}">{invite_url}</a>
+      </p>
+    </body></html>
+    """
+    return send_email(to_email, subject, html_body)

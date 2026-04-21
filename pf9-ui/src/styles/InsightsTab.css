@@ -714,3 +714,47 @@
   margin-bottom: 0.4rem;
   color: var(--text, #374151);
 }
+
+/* Operations Summary Bar */
+.ops-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: linear-gradient(135deg, #1e3a5f 0%, #0f2340 100%);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+  font-size: 0.82rem;
+  color: #e2e8f0;
+}
+.ops-summary-item { display: flex; align-items: center; gap: 0.35rem; }
+.ops-total  strong { color: #93c5fd; }
+.ops-risk   strong { color: #fca5a5; }
+.ops-waste  strong { color: #fcd34d; }
+.ops-leakage strong { color: #6ee7b7; }
+
+/* Insight History */
+.insights-history { padding: 0.5rem 0; }
+.insights-history-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.insights-history-header h3 { margin: 0; font-size: 1rem; }
+.insights-pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  font-size: 0.85rem;
+}
+.insights-pagination button {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--bg-card, #fff);
+  cursor: pointer;
+}
+.insights-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+
