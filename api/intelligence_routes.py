@@ -1129,18 +1129,55 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
                 )
                 stability_score = max(0.0, 100.0 - deductions)
 
-                # Capacity runway
+                # Capacity runway — query last 14 days of quota rows, compute slope
                 cur.execute(
                     """
-                    SELECT resource, runway_days
+                    SELECT project_id,
+                           storage_used_gb,  storage_quota_gb,
+                           vcpus_used,       vcpus_quota,
+                           ram_used_mb,      ram_quota_mb,
+                           instances_used,   instances_quota
                     FROM metering_quotas
-                    WHERE project_id = %s OR project_name ILIKE %s
-                    ORDER BY runway_days ASC NULLS LAST
-                    LIMIT 1
+                    WHERE collected_at >= NOW() - INTERVAL '14 days'
+                      AND (project_id = %s OR project_name ILIKE %s)
+                    ORDER BY project_id, collected_at ASC
                     """,
                     (tenant_id, f"%{tenant_id}%"),
                 )
-                runway_row = cur.fetchone() or {}
+                q_rows = cur.fetchall() or []
+
+        # Compute runway using the same helper as the public endpoint
+        _QUOTA_RESOURCES = [
+            ("vcpus",      "vcpus_used",      "vcpus_quota"),
+            ("ram_mb",     "ram_used_mb",      "ram_quota_mb"),
+            ("storage_gb", "storage_used_gb",  "storage_quota_gb"),
+            ("instances",  "instances_used",   "instances_quota"),
+        ]
+        min_runway: Optional[int] = None
+        min_runway_resource: Optional[str] = None
+
+        if q_rows:
+            from collections import defaultdict
+            projects_rows: dict = defaultdict(list)
+            for r in q_rows:
+                projects_rows[r["project_id"]].append(r)
+            for _pid, prows in projects_rows.items():
+                if len(prows) < 3:
+                    continue
+                xs = list(range(len(prows)))
+                for res_key, used_col, quota_col in _QUOTA_RESOURCES:
+                    try:
+                        ys    = [float(r[used_col] or 0) for r in prows]
+                        quota = float(prows[-1][quota_col] or 0)
+                        used  = ys[-1]
+                        slope = _linear_forecast(xs, ys)
+                        runway = _days_runway(used, quota, slope)
+                        if runway is not None:
+                            if min_runway is None or runway < min_runway:
+                                min_runway = runway
+                                min_runway_resource = res_key
+                    except Exception:
+                        pass
 
         return {
             "tenant_id": tenant_id,
@@ -1150,7 +1187,7 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
             "open_critical": int(stab.get("open_critical") or 0),
             "open_high": int(stab.get("open_high") or 0),
             "open_medium": int(stab.get("open_medium") or 0),
-            "capacity_runway_days": runway_row.get("runway_days"),
-            "capacity_runway_resource": runway_row.get("resource"),
+            "capacity_runway_days": min_runway,
+            "capacity_runway_resource": min_runway_resource,
             "last_computed": datetime.utcnow().isoformat() + "Z",
         }
