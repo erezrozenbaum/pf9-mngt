@@ -40,7 +40,7 @@ from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
 
 from db_pool import get_tenant_connection
-from middleware import get_tenant_context, inject_rls_vars
+from middleware import get_tenant_context, inject_rls_vars, require_manager_role
 from tenant_context import TenantContext
 from audit_helper import log_action
 
@@ -773,7 +773,7 @@ class _TenantRunbookExecuteRequest(BaseModel):
 async def execute_runbook(
     name: str,
     body: _TenantRunbookExecuteRequest,
-    ctx: TenantContext = Depends(get_tenant_context),
+    ctx: TenantContext = Depends(require_manager_role),
 ):
     """Execute a tenant-visible runbook via the admin API internal endpoint."""
     import os
@@ -884,7 +884,7 @@ async def list_security_groups(ctx: TenantContext = Depends(get_tenant_context))
 # ---------------------------------------------------------------------------
 
 @router.post("/tenant/sync-and-snapshot", summary="Trigger inventory sync and immediate snapshots")
-async def sync_and_snapshot(ctx: TenantContext = Depends(get_tenant_context)):
+async def sync_and_snapshot(ctx: TenantContext = Depends(require_manager_role)):
     """
     Trigger an on-demand inventory sync followed by immediate snapshots for all
     tenant VMs that do not already have a snapshot today.  The request is
@@ -1497,7 +1497,7 @@ from pydantic import BaseModel as _BM, validator as _validator  # noqa: E402 –
 
 
 @router.post("/tenant/security-groups/{sg_id}/rules", summary="Add a security group rule", status_code=201)
-async def add_sg_rule(sg_id: str, body: AddSgRuleRequest, ctx: TenantContext = Depends(get_tenant_context)):
+async def add_sg_rule(sg_id: str, body: AddSgRuleRequest, ctx: TenantContext = Depends(require_manager_role)):
     """Add an ingress/egress rule to a tenant-owned security group via the admin API."""
     import httpx as _hx
     from restore_routes import INTERNAL_API_URL, INTERNAL_SERVICE_SECRET
@@ -1552,7 +1552,7 @@ async def add_sg_rule(sg_id: str, body: AddSgRuleRequest, ctx: TenantContext = D
 
 
 @router.delete("/tenant/security-groups/{sg_id}/rules/{rule_id}", summary="Delete a security group rule", status_code=204)
-async def delete_sg_rule(sg_id: str, rule_id: str, ctx: TenantContext = Depends(get_tenant_context)):
+async def delete_sg_rule(sg_id: str, rule_id: str, ctx: TenantContext = Depends(require_manager_role)):
     """Remove a rule from a tenant-owned security group via the admin API."""
     import httpx as _hx
     from restore_routes import INTERNAL_API_URL, INTERNAL_SERVICE_SECRET
@@ -1821,7 +1821,7 @@ class ProvisionVmRequest(BaseModel):
 
 
 @router.post("/tenant/vms", summary="Provision one or more VMs (tenant admin)", status_code=202)
-async def provision_vm(body: ProvisionVmRequest, ctx: TenantContext = Depends(get_tenant_context)):
+async def provision_vm(body: ProvisionVmRequest, ctx: TenantContext = Depends(require_manager_role)):
     """
     Create VM(s) in the tenant's primary project via the admin API.
     Delegates to POST /internal/tenant-provision-vm — the admin API validates
@@ -1874,3 +1874,41 @@ async def provision_vm(body: ProvisionVmRequest, ctx: TenantContext = Depends(ge
 
     return resp.json()
 
+
+
+# ---------------------------------------------------------------------------
+# GET /tenant/client-health — proxy to admin API intelligence endpoint
+# Returns health scores for the tenant's primary project
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/client-health", summary="Get client health scores for this tenant")
+async def get_client_health(ctx: TenantContext = Depends(get_tenant_context)):
+    """
+    Proxy to GET /api/intelligence/client-health/{tenant_id}.
+    Uses the first project name as the tenant identifier.
+    """
+    import os
+    import httpx as _hx
+
+    INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://pf9_api:8000")
+    INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+
+    if not INTERNAL_SERVICE_SECRET:
+        raise HTTPException(status_code=503, detail="health_service_not_configured")
+
+    # Use the first project id as tenant_id
+    tenant_id = ctx.project_ids[0] if ctx.project_ids else ctx.control_plane_id
+
+    try:
+        with _hx.Client(timeout=15.0) as hclient:
+            resp = hclient.get(
+                f"{INTERNAL_API_URL}/api/intelligence/client-health/{tenant_id}",
+                headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="upstream_unavailable") from exc
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="health_fetch_failed")
+
+    return resp.json()

@@ -114,12 +114,14 @@ def _issue_jwt(
     control_plane_id: str,
     project_ids: List[str],
     region_ids: List[str],
+    portal_role: str = "manager",
 ) -> str:
     now = datetime.now(timezone.utc)
     exp = now + timedelta(minutes=TENANT_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": username,
         "role": "tenant",
+        "portal_role": portal_role,
         "control_plane_id": control_plane_id,
         "keystone_user_id": keystone_user_id,
         "project_ids": project_ids,
@@ -303,7 +305,7 @@ async def login(body: LoginRequest, request: Request):
             # 3. Check allowlist (default-deny)
             cur.execute(
                 """
-                SELECT enabled, mfa_required
+                SELECT enabled, mfa_required, COALESCE(portal_role, 'manager') AS portal_role
                 FROM tenant_portal_access
                 WHERE keystone_user_id = %s
                   AND control_plane_id = %s
@@ -363,6 +365,7 @@ async def login(body: LoginRequest, request: Request):
             # deciding factor.  TENANT_MFA_MODE="none" acts as a global kill-switch
             # that disables MFA even when the per-user flag is true.
             mfa_required = bool(access_row["mfa_required"]) and TENANT_MFA_MODE != "none"
+            portal_role_val: str = str(access_row.get("portal_role") or "manager")
 
             if mfa_required:
                 # Issue short-lived pre-auth token (no data access)
@@ -377,6 +380,7 @@ async def login(body: LoginRequest, request: Request):
                             "control_plane_id": TENANT_PORTAL_CP_ID,
                             "project_ids": project_ids,
                             "region_ids": region_ids,
+                            "portal_role": portal_role_val,
                             "ip_address": ip,
                         }
                     ),
@@ -403,6 +407,7 @@ async def login(body: LoginRequest, request: Request):
                 control_plane_id=TENANT_PORTAL_CP_ID,
                 project_ids=project_ids,
                 region_ids=region_ids,
+                portal_role=portal_role_val,
             )
             _store_session(
                 redis_client,
@@ -541,6 +546,7 @@ def _issue_full_jwt_from_preauth(preauth: dict, redis_client) -> LoginResponse:
         control_plane_id=preauth["control_plane_id"],
         project_ids=preauth["project_ids"],
         region_ids=preauth["region_ids"],
+        portal_role=preauth.get("portal_role", "manager"),
     )
     _store_session(
         redis_client,

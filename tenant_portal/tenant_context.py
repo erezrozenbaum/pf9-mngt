@@ -20,6 +20,7 @@ class TenantContext:
     project_ids: List[str]  # noqa: RUF012
     region_ids: List[str]   # noqa: RUF012
     ip_address: str
+    portal_role: str = "manager"  # 'manager' | 'observer'
 
     @property
     def project_ids_csv(self) -> str:

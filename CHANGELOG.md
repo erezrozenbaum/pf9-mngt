@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.91.0] - 2026-04-21
+
+### Added
+
+#### Tenant Portal — Observer Role
+- **`portal_role` column** (`TEXT NOT NULL DEFAULT 'manager' CHECK (portal_role IN ('manager','observer'))`) added to `tenant_portal_access` via `db/migrate_v1_91_0_phase5.sql`. Existing rows default to `manager` — fully backward compatible.
+- **`portal_role` JWT claim** embedded in access tokens issued by `auth_routes.py`. Default `"manager"` for legacy tokens.
+- **MFA pre-auth flow** updated: `portal_role` persisted in the Redis pre-auth payload so the claim survives the two-step TOTP/email-OTP handshake.
+- **`TenantContext` dataclass** extended with `portal_role: str = "manager"`.
+- **`require_manager_role()` FastAPI dependency** added to `tenant_portal/middleware.py`; raises HTTP 403 `observer_role_cannot_write` when an observer-role token calls any state-mutating route.
+- **Write routes guarded**: `POST /tenant/runbooks/{name}/execute`, `POST /tenant/sync-and-snapshot`, `POST /tenant/security-groups/{sg_id}/rules`, `DELETE /tenant/security-groups/{sg_id}/rules/{rule_id}`, `POST /tenant/vms`, `POST /tenant/restore/plan`, `POST /tenant/restore/execute`, `POST /tenant/restore/jobs/{id}/cancel`.
+
+#### Admin API — Portal Role Management
+- `AccessUpsertRequest`, `AccessRow`, `BatchAccessRequest` Pydantic models updated with validated `portal_role` field (pattern `^(manager|observer)$`).
+- `PUT /api/admin/tenant-portal/access` and `PUT /api/admin/tenant-portal/access/batch` now persist `portal_role` to DB.
+- `GET /api/admin/tenant-portal/access/{cp_id}` returns `portal_role` per row (COALESCE to `'manager'` for legacy rows).
+
+#### Admin UI — Role Management
+- `TenantPortalTab.tsx`: new **Role** column in Access Management table with colour-coded `manager` (green) / `observer` (amber) badges.
+- **→ Observer / → Manager** toggle button per row — calls `PUT /api/admin/tenant-portal/access` with the updated `portal_role`.
+
+#### Intelligence — Client Health Endpoint
+- **`GET /api/intelligence/client-health/{tenant_id}`** — three-axis health summary for a single tenant:
+  - **Efficiency** — average `overall_score` from `metering_efficiency` over the last 7 days with verbal classification.
+  - **Stability** — 100 minus severity-weighted count of open insights (critical −20, high −10, medium −5).
+  - **Capacity Runway** — soonest-exhausting resource (vCPUs, RAM, storage, instances) computed from `metering_quotas` linear regression.
+- RBAC: `client_health:read` (viewer, operator, admin, superadmin — seeded in `db/migrate_v1_91_0_phase5.sql`).
+
+#### Tenant UI (`tenant-ui`) — Health Overview
+- **`HealthDials.tsx`** — three SVG circular progress dials (Efficiency, Stability, Capacity Runway) with colour-coded arcs and animated transitions.
+- **`Overview.tsx`** — new default landing screen: renders HealthDials + open-insights detail bar + capacity runway card. Calls `GET /tenant/client-health` via the internal service secret proxy.
+- **`App.tsx`** — `Screen` type extended with `"overview"`; default screen changed from `"dashboard"` to `"overview"`.
+- **`Shell.tsx`** — Health Overview added as the first nav item (❤); `renderScreen()` switch wired.
+
+#### Observer Invite Flow
+- **`portal_invite_tokens` table** (`db/migrate_v1_91_0_phase5.sql`): id, token, control_plane_id, project_id, invited_email, portal_role, created_by, expires_at, used_at — for single-use invite links.
+- **`POST /api/intelligence/invite-observer`** — generates a one-time `portal_invite_tokens` row (`portal_role=observer`), sends an HTML invite email via `smtp_helper.send_observer_invite_email()`, returns `{invite_id, message}`. RBAC: `observer_invite:write`.
+- **`smtp_helper.send_observer_invite_email()`** — branded HTML email with magic-link button, expiry notice, and plain-text fallback URL.
+- **`GET /tenant/client-health`** tenant-portal proxy route — reads `project_ids[0]` from JWT and forwards to admin API with the internal service secret.
+
+#### Insights Feed — Additional Sort Options
+- **Sort by Tenant** and **Sort by Status** added to the Insights Feed sort dropdown (7 total options).
+- **`_SORT_CLAUSES`** in `intelligence_routes.py` extended: `tenant` (`metadata->>'tenant_name' NULLS LAST, entity_name NULLS LAST`), `status` (CASE: open → acknowledged → snoozed → resolved).
+- **`sort_by` validation pattern** updated to `^(severity|detected_at|last_seen|type|entity|tenant|status)$`.
+- **Tenant / Project** column header in the Risk & Capacity table is now clickable for client-side sort toggle.
+
+#### Insights Feed — History Tab
+- New **🕐 History** sub-tab in the Insights Dashboard showing resolved insights with detected/resolved timestamps, paginated at 50 per page. Reuses `GET /api/intelligence/insights?status=resolved`.
+
+#### Operations Workspace — Summary Bar
+- When the workspace selector is set to **Operations**, a summary bar appears above the Insights Feed showing total open, risk, waste, and leakage insight counts in colour-coded badges.
+
+#### Database
+- `db/migrate_v1_91_0_phase5.sql`: `portal_role` column on `tenant_portal_access`, `portal_invite_tokens` table, `v_insight_history` view (resolved insights), RBAC entries for `observer_invite:write` and `client_health:read`.
+
+### Security
+- `portal_role` pattern-validated on all intake (`Pydantic pattern="^(manager|observer)$"`) and enforced by a DB-level `CHECK` constraint.
+- Observer tokens carry zero write access to OpenStack, runbooks, restore operations, and security groups — enforced as a FastAPI dependency, not application-level conditionals.
+- Invite tokens generated with `secrets.token_urlsafe(32)`; one-time use enforced by `used_at` timestamp.
+- Bandit scan on all modified Python files: **0 HIGH findings**.
+
+
+- pytest: **538 passed, 31 skipped, 0 failures**.
+- TypeScript: **0 errors** in both pf9-ui and tenant-ui.
+
+---
+
 ## [1.90.1] - 2026-04-21
 
 ### Fixed

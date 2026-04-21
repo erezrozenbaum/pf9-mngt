@@ -310,17 +310,78 @@ The audit log is available in the Admin UI → Tenant Portal → **Audit Log** s
 
 ---
 
-## What Tenants See — The 7 Screens
+## What Tenants See — The 10 Screens *(v1.91.0)*
 
 | Screen | Description |
 |--------|-------------|
+| **Health Overview** *(default)* | Three circular dials: Efficiency score (resource utilisation quality), Stability score (open insight severity), Capacity Runway (days until first quota exhaustion). Sourced from `GET /tenant/client-health` → admin API. |
 | **Dashboard** | Overview cards: VM count, running VMs, storage usage, snapshot compliance %, active restore jobs |
 | **Infrastructure** | VM list with status, spec, volumes; volume list with attachment status |
 | **Snapshot Coverage** | 30-day calendar showing which VMs had snapshots each day; compliance % per VM |
 | **Monitoring** | Per-VM metrics (CPU, RAM), 7-day and 30-day availability % |
-| **Restore Center** | 3-step wizard: select snapshot → review plan → confirm restore. Job list with live progress. All restores are side-by-side (non-destructive: creates a new VM alongside the original). |
-| **Runbooks** | Read-only catalogue of runbooks you have published to the tenant (filtered by `runbook_project_tags`) |
-| **Activity Log** | Filterable table of the tenant's own actions in the portal — with timestamps, resource references, and response status |
+| **Restore Center** | 3-step wizard: select snapshot → review plan → confirm restore. Job list with live progress. All restores are side-by-side (non-destructive). **Observer accounts can view but cannot execute restores.** |
+| **Runbooks** | Read-only catalogue of runbooks you have published to the tenant. **Observer accounts can view but cannot execute runbooks.** |
+| **Reports** | Exportable resource and compliance reports |
+| **New VM 🚀** | Self-service VM provisioning form (name, image, flavour, network, cloud-init). **Observer accounts cannot access this screen.** |
+| **Activity Log** | Filterable table of the tenant's own portal actions with timestamps, resource references, and response status |
+
+---
+
+## Observer Role (Read-Only Access) *(v1.91.0)*
+
+The `portal_role` field on each access grant controls whether a user is a **manager** (full access, the default) or an **observer** (read-only).
+
+### What observers can do
+- View all read-only screens: Health Overview, Dashboard, Infrastructure, Snapshot Coverage, Monitoring, Activity Log, Reports.
+- Browse runbook catalogue and restore history.
+- Call any `GET` endpoint in the tenant portal.
+
+### What observers cannot do
+- Execute runbooks (`POST /tenant/runbooks/{name}/execute`).
+- Create, cancel, or execute restore jobs.
+- Provision VMs (`POST /tenant/vms`).
+- Add or delete security group rules.
+- Trigger sync-and-snapshot.
+
+Attempting any write action returns HTTP 403 `observer_role_cannot_write`.
+
+### Granting observer access — Admin UI
+
+1. Open **Admin → 🏢 Tenant Portal → Access Management**.
+2. Find the user row and click **→ Observer** in the Role column.
+3. The role badge turns amber immediately. The user's next login (or token refresh) will carry the new role.
+
+### Granting observer access — API
+
+```bash
+PUT /api/admin/tenant-portal/access
+{
+  "control_plane_id": "<cp_id>",
+  "keystone_user_id": "<user_id>",
+  "project_ids": ["<proj_id>"],
+  "portal_role": "observer"
+}
+```
+
+### Inviting a new observer by email
+
+```bash
+POST /api/intelligence/invite-observer
+Authorization: Bearer <admin_token>
+
+{
+  "control_plane_id": "<cp_id>",
+  "project_id": "<proj_id>",
+  "invited_email": "guest@example.com",
+  "created_by": "admin"
+}
+```
+
+The API generates a single-use token, inserts a `portal_invite_tokens` row (expires in 72 hours), and sends a branded HTML email with a magic login link. The invited user does not need a pre-existing account — they complete registration when they follow the link.
+
+### Reverting to manager
+
+In the Admin UI click **→ Manager** on the user row, or call the same `PUT /api/admin/tenant-portal/access` endpoint with `"portal_role": "manager"`.
 
 ---
 

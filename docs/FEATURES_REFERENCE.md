@@ -212,7 +212,7 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
 - **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
 
-### 📊 Operational Intelligence *(v1.86.0 → v1.90.0)*
+### 📊 Operational Intelligence *(v1.86.0 → v1.91.0)*
 
 **Continuous, background-running insight engine for MSP and enterprise infrastructure operators.**
 
@@ -231,13 +231,23 @@ The `intelligence_worker` runs 6 detection engines every 5 minutes and writes st
 
 **Intelligence Settings Panel** (admin-only, `⚙️ Settings` tab in InsightsTab): Labor rates editor (8 types, cost-per-hour), PSA Webhook CRUD with test-fire, Contract Entitlements CSV importer.
 
-**Insights Feed UI** *(v1.86.0 → v1.90.0)*: Department workspace selector (operations, risk, capacity, general), severity badges, per-insight acknowledge/snooze/resolve, bulk actions, recommendation panel, per-insight recommendations with dismiss. Type filter optgroup: Waste, Risk, SLA, Capacity, Anomaly, Cross-Region, Revenue Leakage. Copilot intents: critical_insights, capacity_warnings, waste_insights, unacknowledged_insights_count, risk_summary.
+**Insights Feed UI** *(v1.86.0 → v1.91.0)*: Department workspace selector (operations, risk, capacity, general), severity badges, per-insight acknowledge/snooze/resolve, bulk actions, recommendation panel, per-insight recommendations with dismiss. Type filter optgroup: Waste, Risk, SLA, Capacity, Anomaly, Cross-Region, Revenue Leakage. Sort by: severity, detected, last seen, type, entity, tenant, status (7 options). Copilot intents: critical_insights, capacity_warnings, waste_insights, unacknowledged_insights_count, risk_summary.
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.12)*
+**Insights History tab** *(v1.91.0)*: “🕐 History” sub-tab in the Insights Dashboard showing resolved insights with detected/resolved timestamps, paginated at 50 per page.
 
-**For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning and security group management — without exposing the admin panel.**
+**Operations workspace summary bar** *(v1.91.0)*: When the Operations workspace is selected, a summary bar above the feed shows total open, risk, waste, and leakage insight counts in colour-coded badges.
 
-A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolated, MFA-protected API and accompanying React SPA (`tenant-ui/`) per customer. Tenants can monitor their VMs, browse snapshots, initiate restores, manage security groups, view a dependency graph, and provision new VMs — all scoped to their own projects only.
+**Client Health endpoint** *(v1.91.0)*: `GET /api/intelligence/client-health/{tenant_id}` — Efficiency score (avg `metering_efficiency.overall_score` last 7 days + verbal classification), Stability score (100 minus severity-weighted open insights: critical −20, high −10, medium −5), Capacity Runway (days until soonest resource hits 90% quota, from `metering_quotas` linear regression). RBAC: `client_health:read` (viewer, operator, admin, superadmin).
+
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.91.0)*
+
+**For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning, security group management, and read-only observer access — without exposing the admin panel.**
+
+A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolated, MFA-protected API and accompanying React SPA (`tenant-ui/`) per customer. Tenants can monitor their VMs, browse snapshots, initiate restores, manage security groups, view a dependency graph, provision new VMs, and inspect their health scores — all scoped to their own projects only.
+
+- **Observer role** *(v1.91.0)*: `portal_role` column on `tenant_portal_access` (`manager` | `observer`). Observer JWT tokens are blocked at the FastAPI dependency layer (`require_manager_role()`) from all 8 write routes. Role persists through TOTP/email-OTP MFA flows, is embedded as a JWT claim, and is toggleable per-user from the admin UI without disrupting the session.
+- **Observer invite flow** *(v1.91.0)*: `POST /api/intelligence/invite-observer` generates a one-time `portal_invite_tokens` row and sends a branded HTML email with a magic-link. Tokens expire and are one-time-use enforced by `used_at`.
+- **Health Overview screen** *(v1.91.0)*: New default landing screen in `tenant-ui` with three SVG circular progress dials (Efficiency, Stability, Capacity Runway) sourced from `GET /tenant/client-health` — a proxy to the admin API `client-health` endpoint.
 
 - **Security isolation**: `tenant_portal_role` PostgreSQL role with Row-Level Security on 5 inventory tables. `role=tenant` JWT namespace (admin tokens explicitly rejected). IP binding + Redis session binding. TOTP + email OTP MFA with 8 bcrypt-hashed backup codes.
 - **Data endpoints (read-only)**: VM inventory, volume list, snapshot list/detail/history, per-VM compliance %, dashboard summary, event feed, Prometheus metrics proxy (scoped to tenant VMs), runbooks catalogue — 14 routes, all with double `project_id + region_id` scoping and RLS.
@@ -255,7 +265,7 @@ A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolat
 - **Dashboard** *(v1.85.3)*: Skipped snapshot events display amber "Skipped" badge instead of red "Failed".
 - **Audit logging**: every tenant API call writes an immutable `tenant_action_log` entry atomically with the data query.
 - **Branding** *(v1.84.9)*: `GET /tenant/branding` unauthenticated endpoint returns per-CP logo URL, accent colour, portal title, and favicon. 60 s Redis cache; fail-safe defaults when unconfigured.
-- **Web SPA** (`tenant-ui/`): React + TypeScript + nginx — 9 screens: Dashboard, Infrastructure (VMs · Volumes · Networks · Security Groups · Dependency Graph), Snapshot Coverage, Monitoring, Restore Center, Runbooks, Reports, New VM (🚀 Provision), Activity Log. Per-customer branding applied from server. Session token silently re-validates on page reload.
+- **Web SPA** (`tenant-ui/`): React + TypeScript + nginx — 10 screens: Health Overview (default, v1.91.0), Dashboard, Infrastructure (VMs · Volumes · Networks · Security Groups · Dependency Graph), Snapshot Coverage, Monitoring, Restore Center, Runbooks, Reports, New VM (🚀 Provision), Activity Log. Per-customer branding applied from server. Session token silently re-validates on page reload.
 - **Admin API** (`api/tenant_portal_routes.py`): 9 admin endpoints — user listing, access management (grant/revoke projects), session management (list/revoke), audit log review, branding upsert *(v1.84.9)*, MFA reset *(v1.84.9)*. Requires `admin` or `superadmin`.
 - **Admin UI** *(v1.84.9)*: `TenantPortalTab.tsx` — 4 sub-tabs: Access Management, Branding (logo + accent colour editor), Active Sessions, Audit Log.
 - **Kubernetes**: dedicated `nginx-ingress-tenant` Helm release on separate MetalLB IP *(v1.84.8)*; `NetworkPolicy` blocks tenant portal from reaching admin API, LDAP, and SMTP.

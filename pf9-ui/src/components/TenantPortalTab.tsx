@@ -45,6 +45,7 @@ interface AccessRow {
   tenant_name: string | null;
   enabled: boolean;
   mfa_required: boolean;
+  portal_role: string;
   notes: string | null;
   granted_by: string | null;
   granted_at: string | null;
@@ -404,6 +405,28 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
     }
   };
 
+  const handleTogglePortalRole = async (row: AccessRow) => {
+    clearMessages();
+    const newRole = row.portal_role === "observer" ? "manager" : "observer";
+    try {
+      await apiFetch(`/api/admin/tenant-portal/access`, {
+        method: "PUT",
+        body: JSON.stringify({
+          keystone_user_id: row.keystone_user_id,
+          control_plane_id: row.control_plane_id,
+          enabled: row.enabled,
+          mfa_required: row.mfa_required,
+          portal_role: newRole,
+          notes: row.notes,
+        }),
+      });
+      setSuccess(`Portal role changed to ${newRole} for ${row.user_name || row.keystone_user_id}`);
+      await fetchAccess();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
   const handleUpsertBranding = async () => {
     if (!cpId.trim()) { setError("Enter a Control Plane ID first"); return; }
     clearMessages();
@@ -708,6 +731,7 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
                     <th>User</th>
                     <th>Tenant / Org</th>
                     <th>Status</th>
+                    <th>Role</th>
                     <th>MFA Required</th>
                     <th>Granted By</th>
                     <th>Updated</th>
@@ -727,6 +751,16 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
                       </td>
                       <td>{row.tenant_name ?? <span style={{ color: "var(--pf9-text-muted)" }}>{row.control_plane_id}</span>}</td>
                       <td><StatusBadge ok={row.enabled} /></td>
+                      <td>
+                        <span style={{
+                          padding: "0.15rem 0.5rem", borderRadius: 10, fontSize: "0.75rem", fontWeight: 600,
+                          background: row.portal_role === "observer" ? "#fef9c3" : "#dcfce7",
+                          color: row.portal_role === "observer" ? "#854d0e" : "#166534",
+                          border: `1px solid ${row.portal_role === "observer" ? "#fde68a" : "#86efac"}`
+                        }}>
+                          {row.portal_role || "manager"}
+                        </span>
+                      </td>
                       <td>{row.mfa_required ? "✅ Yes" : "—"}</td>
                       <td>{row.granted_by ?? "—"}</td>
                       <td style={{ fontSize: "0.8rem" }}>{fmt(row.updated_at)}</td>
@@ -738,6 +772,13 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
                             title={row.enabled ? "Revoke access" : "Grant access"}
                           >
                             {row.enabled ? "Revoke" : "Enable"}
+                          </button>
+                          <button
+                            className="pf9-btn pf9-btn-sm"
+                            onClick={() => handleTogglePortalRole(row)}
+                            title={row.portal_role === "observer" ? "Promote to Manager" : "Demote to Observer"}
+                          >
+                            {row.portal_role === "observer" ? "→ Manager" : "→ Observer"}
                           </button>
                           <button
                             className="pf9-btn pf9-btn-sm"

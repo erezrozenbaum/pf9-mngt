@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.90.1  
+**Version**: 1.91.0  
 **Last Updated**: April 21, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,20 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.91.0 — Client Health Scoring, Observer Role & Insights Enhancements (✅ Complete)
+
+- **Observer portal role**: `portal_role` column added to `tenant_portal_access` (`manager` | `observer`, default `manager`). Observer JWT tokens are blocked at the API layer from all state-mutating routes (runbooks, restore, VM provisioning, security group changes). Role persists through MFA flows and is embedded in the JWT claim.
+- **`require_manager_role()` dependency**: FastAPI dependency in `tenant_portal/middleware.py`; raises HTTP 403 `observer_role_cannot_write` for observers. Applied to 8 write routes.
+- **Role management in Admin UI**: `TenantPortalTab.tsx` Access Management table gains a colour-coded Role column and a **→ Observer / → Manager** toggle button per row.
+- **`GET /api/intelligence/client-health/{tenant_id}`**: Three-axis health summary — Efficiency (avg `metering_efficiency.overall_score` last 7 days), Stability (100 minus severity-weighted open insights), Capacity Runway (soonest resource exhaustion from `metering_quotas` linear regression). RBAC: `client_health:read`.
+- **Health Overview screen** (`tenant-ui`): New default landing screen with three SVG circular progress dials (Efficiency, Stability, Capacity Runway), an open-insights detail bar, and a capacity runway card.
+- **Observer invite flow**: `portal_invite_tokens` table, `POST /api/intelligence/invite-observer` endpoint, and `smtp_helper.send_observer_invite_email()` HTML branded invite email with magic-link.
+- **Insights sort additions**: Sort by Tenant and Sort by Status added to the Insights Feed dropdown (7 options). Tenant/Project column in Risk & Capacity table is now clickable.
+- **Insights History tab**: New “🕐 History” sub-tab in the Insights Dashboard showing resolved insights with pagination.
+- **Operations summary bar**: When the Operations workspace is active, a summary bar shows total/risk/waste/leakage insight counts.
+- DB migration: `db/migrate_v1_91_0_phase5.sql` — `portal_role` column, `portal_invite_tokens` table, `v_insight_history` view, RBAC entries.
+- 538 unit tests pass, 0 HIGH bandit findings, TypeScript clean.
 
 ### v1.90.1 — Intelligence 500 / Sort / Entitlements UX Fixes (✅ Complete)
 

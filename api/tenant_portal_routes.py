@@ -80,6 +80,7 @@ class AccessUpsertRequest(BaseModel):
     tenant_name: Optional[str] = Field(None, max_length=255)  # friendly display name for the tenant / org
     enabled: bool
     mfa_required: Optional[bool] = False
+    portal_role: Optional[str] = Field("manager", pattern="^(manager|observer)$")
     notes: Optional[str] = Field(None, max_length=500)
 
     @field_validator("keystone_user_id", "control_plane_id")
@@ -98,6 +99,7 @@ class AccessRow(BaseModel):
     tenant_name: Optional[str]
     enabled: bool
     mfa_required: bool
+    portal_role: str
     notes: Optional[str]
     granted_by: Optional[str]
     granted_at: Optional[datetime]
@@ -261,7 +263,8 @@ async def list_access(
             cur.execute(
                 """
                 SELECT id, keystone_user_id, user_name, control_plane_id, tenant_name,
-                       enabled, mfa_required, notes, granted_by, granted_at,
+                       enabled, mfa_required, COALESCE(portal_role, 'manager') AS portal_role,
+                       notes, granted_by, granted_at,
                        revoked_by, revoked_at, created_at, updated_at
                 FROM tenant_portal_access
                 WHERE control_plane_id = %s
@@ -301,12 +304,13 @@ async def upsert_access(
                 """
                 INSERT INTO tenant_portal_access
                     (keystone_user_id, user_name, control_plane_id, tenant_name,
-                     enabled, mfa_required, notes,
+                     enabled, mfa_required, portal_role, notes,
                      granted_by, granted_at, revoked_by, revoked_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (keystone_user_id, control_plane_id) DO UPDATE SET
                     enabled      = EXCLUDED.enabled,
                     mfa_required = EXCLUDED.mfa_required,
+                    portal_role  = EXCLUDED.portal_role,
                     user_name    = COALESCE(EXCLUDED.user_name, tenant_portal_access.user_name),
                     tenant_name  = COALESCE(EXCLUDED.tenant_name, tenant_portal_access.tenant_name),
                     notes        = COALESCE(EXCLUDED.notes, tenant_portal_access.notes),
@@ -328,6 +332,7 @@ async def upsert_access(
                     body.tenant_name,
                     body.enabled,
                     body.mfa_required,
+                    body.portal_role or "manager",
                     body.notes,
                     granted_by, granted_at,
                     revoked_by, revoked_at,
@@ -377,6 +382,7 @@ class BatchAccessRequest(BaseModel):
     users: List[BatchAccessItem]
     enabled: bool
     mfa_required: Optional[bool] = False
+    portal_role: Optional[str] = Field("manager", pattern="^(manager|observer)$")
     notes: Optional[str] = Field(None, max_length=500)
 
     @field_validator("control_plane_id")
@@ -420,12 +426,13 @@ async def batch_upsert_access(
                         """
                         INSERT INTO tenant_portal_access
                             (keystone_user_id, user_name, control_plane_id, tenant_name,
-                             enabled, mfa_required, notes,
+                             enabled, mfa_required, portal_role, notes,
                              granted_by, granted_at, revoked_by, revoked_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (keystone_user_id, control_plane_id) DO UPDATE SET
                             enabled      = EXCLUDED.enabled,
                             mfa_required = EXCLUDED.mfa_required,
+                            portal_role  = EXCLUDED.portal_role,
                             user_name    = COALESCE(EXCLUDED.user_name, tenant_portal_access.user_name),
                             tenant_name  = COALESCE(EXCLUDED.tenant_name, tenant_portal_access.tenant_name),
                             notes        = COALESCE(EXCLUDED.notes, tenant_portal_access.notes),
@@ -446,6 +453,7 @@ async def batch_upsert_access(
                             body.tenant_name,
                             body.enabled,
                             body.mfa_required,
+                            body.portal_role or "manager",
                             body.notes,
                             granted_by, granted_at,
                             revoked_by, revoked_at,

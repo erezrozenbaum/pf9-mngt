@@ -1,87 +1,40 @@
 {
   "errors": [],
-  "generated_at": "2026-04-17T08:37:42Z",
+  "generated_at": "2026-04-21T06:59:40Z",
   "metrics": {
-    ".\\api/restore_management.py": {
+    ".\\api/intelligence_routes.py": {
       "CONFIDENCE.HIGH": 1,
       "CONFIDENCE.LOW": 0,
-      "CONFIDENCE.MEDIUM": 2,
+      "CONFIDENCE.MEDIUM": 7,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
       "SEVERITY.LOW": 1,
-      "SEVERITY.MEDIUM": 2,
+      "SEVERITY.MEDIUM": 7,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 2605,
-      "nosec": 0,
-      "skipped_tests": 0
-    },
-    ".\\tenant_portal/environment_routes.py": {
-      "CONFIDENCE.HIGH": 0,
-      "CONFIDENCE.LOW": 0,
-      "CONFIDENCE.MEDIUM": 0,
-      "CONFIDENCE.UNDEFINED": 0,
-      "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 0,
-      "SEVERITY.MEDIUM": 0,
-      "SEVERITY.UNDEFINED": 0,
-      "loc": 1335,
-      "nosec": 0,
-      "skipped_tests": 0
-    },
-    ".\\tenant_portal/main.py": {
-      "CONFIDENCE.HIGH": 0,
-      "CONFIDENCE.LOW": 0,
-      "CONFIDENCE.MEDIUM": 0,
-      "CONFIDENCE.UNDEFINED": 0,
-      "SEVERITY.HIGH": 0,
-      "SEVERITY.LOW": 0,
-      "SEVERITY.MEDIUM": 0,
-      "SEVERITY.UNDEFINED": 0,
-      "loc": 107,
+      "loc": 683,
       "nosec": 0,
       "skipped_tests": 0
     },
     "_totals": {
       "CONFIDENCE.HIGH": 1,
       "CONFIDENCE.LOW": 0,
-      "CONFIDENCE.MEDIUM": 2,
+      "CONFIDENCE.MEDIUM": 7,
       "CONFIDENCE.UNDEFINED": 0,
       "SEVERITY.HIGH": 0,
       "SEVERITY.LOW": 1,
-      "SEVERITY.MEDIUM": 2,
+      "SEVERITY.MEDIUM": 7,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 4047,
+      "loc": 683,
       "nosec": 0,
       "skipped_tests": 0
     }
   },
   "results": [
     {
-      "code": "1988                                 available.append(ip_str)\n1989                     except Exception:\n1990                         pass\n1991 \n",
+      "code": "155             cur.execute(\n156                 f\"\"\"\n157                 SELECT *, COUNT(*) OVER() AS total_count\n158                 FROM operational_insights\n159                 {where}\n160                 ORDER BY {order_clause}\n161                 LIMIT %s OFFSET %s\n162                 \"\"\", params + [page_size, offset])\n163             rows = cur.fetchall()\n",
       "col_offset": 20,
-      "end_col_offset": 28,
-      "filename": ".\\api/restore_management.py",
-      "issue_confidence": "HIGH",
-      "issue_cwe": {
-        "id": 703,
-        "link": "https://cwe.mitre.org/data/definitions/703.html"
-      },
-      "issue_severity": "LOW",
-      "issue_text": "Try, Except, Pass detected.",
-      "line_number": 1989,
-      "line_range": [
-        1989,
-        1990
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html",
-      "test_id": "B110",
-      "test_name": "try_except_pass"
-    },
-    {
-      "code": "2308             with conn.cursor(cursor_factory=RealDictCursor) as cur:\n2309                 cur.execute(f\"SELECT COUNT(*) as total FROM restore_jobs {where}\", params)\n2310                 total = cur.fetchone()[\"total\"]\n",
-      "col_offset": 30,
-      "end_col_offset": 73,
-      "filename": ".\\api/restore_management.py",
+      "end_col_offset": 16,
+      "filename": ".\\api/intelligence_routes.py",
       "issue_confidence": "MEDIUM",
       "issue_cwe": {
         "id": 89,
@@ -89,19 +42,25 @@
       },
       "issue_severity": "MEDIUM",
       "issue_text": "Possible SQL injection vector through string-based query construction.",
-      "line_number": 2309,
+      "line_number": 156,
       "line_range": [
-        2309
+        156,
+        157,
+        158,
+        159,
+        160,
+        161,
+        162
       ],
       "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
       "test_id": "B608",
       "test_name": "hardcoded_sql_expressions"
     },
     {
-      "code": "2312                 cur.execute(\n2313                     f\"\"\"SELECT id, created_by, executed_by, project_id, project_name,\n2314                                vm_id, vm_name, restore_point_id, restore_point_name,\n2315                                mode, ip_strategy, requested_name, boot_mode, status,\n2316                                failure_reason, result_json,\n2317                                created_at, started_at, finished_at\n2318                         FROM restore_jobs {where}\n2319                         ORDER BY created_at DESC\n2320                         LIMIT %s OFFSET %s\"\"\",\n2321                     params + [limit, offset],\n",
-      "col_offset": 24,
-      "end_col_offset": 42,
-      "filename": ".\\api/restore_management.py",
+      "code": "197             cur.execute(\n198                 f\"\"\"\n199                 SELECT\n200                     severity,\n201                     COUNT(*) AS count\n202                 FROM operational_insights\n203                 WHERE status IN ('open','acknowledged','snoozed')\n204                 {type_clause}\n205                 GROUP BY severity\n206                 \"\"\", base_params)\n207             by_severity = {r[\"severity\"]: r[\"count\"] for r in cur.fetchall()}\n",
+      "col_offset": 20,
+      "end_col_offset": 16,
+      "filename": ".\\api/intelligence_routes.py",
       "issue_confidence": "MEDIUM",
       "issue_cwe": {
         "id": 89,
@@ -109,16 +68,149 @@
       },
       "issue_severity": "MEDIUM",
       "issue_text": "Possible SQL injection vector through string-based query construction.",
-      "line_number": 2313,
+      "line_number": 198,
       "line_range": [
-        2313,
-        2314,
-        2315,
-        2316,
-        2317,
-        2318,
-        2319,
-        2320
+        198,
+        199,
+        200,
+        201,
+        202,
+        203,
+        204,
+        205,
+        206
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "209             cur.execute(\n210                 f\"\"\"\n211                 SELECT type, COUNT(*) AS count\n212                 FROM operational_insights\n213                 WHERE status IN ('open','acknowledged','snoozed')\n214                 {type_clause}\n215                 GROUP BY type\n216                 ORDER BY count DESC\n217                 \"\"\", base_params)\n218             by_type = [{\"type\": r[\"type\"], \"count\": r[\"count\"]} for r in cur.fetchall()]\n",
+      "col_offset": 20,
+      "end_col_offset": 16,
+      "filename": ".\\api/intelligence_routes.py",
+      "issue_confidence": "MEDIUM",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 210,
+      "line_range": [
+        210,
+        211,
+        212,
+        213,
+        214,
+        215,
+        216,
+        217
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "363             cur.execute(\n364                 f\"\"\"\n365                 SELECT * FROM operational_insights\n366                 WHERE entity_type = %s AND entity_id = %s\n367                 {status_clause}\n368                 ORDER BY\n369                     CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2\n370                                    WHEN 'medium' THEN 3 ELSE 4 END,\n371                     detected_at DESC\n372                 \"\"\", (entity_type, entity_id))\n373             rows = cur.fetchall()\n",
+      "col_offset": 20,
+      "end_col_offset": 16,
+      "filename": ".\\api/intelligence_routes.py",
+      "issue_confidence": "MEDIUM",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 364,
+      "line_range": [
+        364,
+        365,
+        366,
+        367,
+        368,
+        369,
+        370,
+        371,
+        372
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "407             cur.execute(\n408                 f\"\"\"\n409                 UPDATE operational_insights\n410                 SET status = 'acknowledged',\n411                     acknowledged_by = %s,\n412                     acknowledged_at = NOW()\n413                 {where}\n414                 \"\"\", params[-1:] + params[:-1])\n415             count = cur.rowcount\n",
+      "col_offset": 20,
+      "end_col_offset": 16,
+      "filename": ".\\api/intelligence_routes.py",
+      "issue_confidence": "MEDIUM",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 408,
+      "line_range": [
+        408,
+        409,
+        410,
+        411,
+        412,
+        413,
+        414
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "439             cur.execute(\n440                 f\"\"\"\n441                 UPDATE operational_insights\n442                 SET status = 'resolved', resolved_at = NOW()\n443                 {where}\n444                 \"\"\", params)\n445             count = cur.rowcount\n",
+      "col_offset": 20,
+      "end_col_offset": 16,
+      "filename": ".\\api/intelligence_routes.py",
+      "issue_confidence": "MEDIUM",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 440,
+      "line_range": [
+        440,
+        441,
+        442,
+        443,
+        444
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "587             cur.execute(\n588                 f\"\"\"\n589                 SELECT {all_cols}\n590                 FROM metering_quotas\n591                 WHERE collected_at >= NOW() - INTERVAL '14 days'\n592                   AND project_id IS NOT NULL\n593                   {pid_clause}\n594                 ORDER BY project_id, collected_at ASC\n595                 \"\"\", pid_params)\n596             rows = cur.fetchall()\n",
+      "col_offset": 20,
+      "end_col_offset": 23,
+      "filename": ".\\api/intelligence_routes.py",
+      "issue_confidence": "MEDIUM",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 588,
+      "line_range": [
+        588,
+        589,
+        590,
+        591,
+        592,
+        593,
+        594,
+        595
       ],
       "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
       "test_id": "B608",

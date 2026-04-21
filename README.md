@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.90.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.91.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -124,7 +124,7 @@ Most platforms solve provisioning.
 
 pf9-mngt solves **what happens after deployment** — the snapshot SLAs that must hold, the 3am restore that must succeed, the compliance report due tomorrow, the capacity forecast before the cluster fills up, the VMware migration that has to go right.
 
-Built from real-world operations. 410+ commits, 122 releases, 18 containerized services.
+Built from real-world operations. 410+ commits, 123 releases, 18 containerized services.
 
 Not theory — from what actually breaks in production.
 
@@ -222,6 +222,8 @@ After running Demo Mode you'll find:
 | Tenant Network & Security Group Management | ✅ Production |
 | SLA Compliance Tracking | ✅ Production |
 | Operational Intelligence Feed | ✅ Production |
+| Client Health Scoring (Efficiency · Stability · Capacity Runway) | ✅ Production |
+| Tenant Observer Role (read-only portal access, invite flow) | ✅ Production |
 
 ---
 
@@ -300,13 +302,14 @@ Per-VM resource tracking, snapshot / restore metering, API usage metrics, effici
 ### 🤖 AI Ops Copilot — Query Layer for the Entire Platform
 Not just an LLM integration — a purpose-built operator assistant that queries your live infrastructure in plain language. Ask *"which tenants are over quota?"*, *"show drift events from last week"*, or *"how many VMs are powered off on host X?"* and get live SQL-backed answers instantly. 40+ built-in intents with tenant / project / host scoping. Ollama backend keeps all data on your network; OpenAI / Anthropic available with automatic sensitive-data redaction.
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.91.0)*
 A completely isolated, MFA-protected web portal that gives your customers read and restore access to their own infrastructure — without exposing your admin panel.
 
 - **Security by design**: data isolated at the PostgreSQL Row-Level Security layer (not just application code); separate JWT namespace; IP-bound Redis sessions; per-user rate limiting.
-- **7 self-service screens**: Dashboard, Infrastructure (VMs + disk + IPs + dependency graph), Snapshot Coverage (30-day calendar), Monitoring, Restore Center (side-by-side restore wizard — non-destructive), Runbooks (execute tenant-visible runbooks, dry-run, execution history), Activity Log (with username).
-- **Controlled access**: opt-in per Keystone user; you define which OpenStack projects are visible; set expiry, MFA policy, and runbook visibility per customer.
-- **Admin controls**: grant/revoke access, view active sessions, force-revoke, reset MFA, configure per-customer branding (logo, accent colour, portal title), review full audit log — all from the Admin → 🏢 Tenant Portal UI or REST API.
+- **Observer role** *(v1.91.0)*: grant read-only access (`portal_role=observer`) to stakeholders (account managers, auditors). Observers see all dashboards but are blocked at the API layer from any state-mutating action — runbooks, restore, VM provisioning, security group changes.
+- **10 self-service screens**: Health Overview (default), Dashboard, Infrastructure (VMs + disk + IPs + dependency graph), Snapshot Coverage (30-day calendar), Monitoring, Restore Center (side-by-side restore wizard — non-destructive), Runbooks (execute tenant-visible runbooks, dry-run, execution history), Reports, New VM (🚀 Provision), Activity Log.
+- **Controlled access**: opt-in per Keystone user; you define which OpenStack projects are visible; set MFA policy, role (`manager` or `observer`), and runbook visibility per customer.
+- **Admin controls**: grant/revoke access, toggle observer/manager role, view active sessions, force-revoke, reset MFA, configure per-customer branding (logo, accent colour, portal title), review full audit log — all from the Admin → 🏢 Tenant Portal UI or REST API.
 - **Kubernetes-native**: dedicated `nginx-ingress-tenant` Helm controller on its own MetalLB IP — TLS, WAF rules, and rate limits are isolated from the admin ingress.
 
 > 📖 See the dedicated **[Tenant Portal Operator Guide](docs/TENANT_PORTAL_GUIDE.md)** for step-by-step setup, branding, MFA, and Kubernetes configuration.
