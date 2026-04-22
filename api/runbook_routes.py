@@ -67,6 +67,15 @@ def _ensure_tables():
                     'Finds orphaned ports, volumes, floating IPs, and empty networks. Cleans up to free quota and reduce clutter.',
                 ))
 
+                # Fix quota_threshold_check description (was "all-projects" wording)
+                cur.execute("""
+                    UPDATE runbooks
+                    SET description = 'Checks quota utilisation and flags resources exceeding configurable thresholds (default 80%%). Reports on vCPUs, RAM, and instances.',
+                        updated_at = now()
+                    WHERE name = 'quota_threshold_check'
+                      AND description LIKE '%%per-project%%'
+                """)
+
                 # Seed password_reset_console runbook (added v1.83.12)
                 cur.execute("""
                     INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, parameters_schema)

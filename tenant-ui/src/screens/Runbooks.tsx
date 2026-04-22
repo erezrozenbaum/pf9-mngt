@@ -36,9 +36,9 @@ function categoryIcon(cat: string): string {
 
 function ExecutionResultPanel({ exec, onClose }: { exec: RunbookExecution; onClose: () => void }) {
   const result = exec.result ?? {};
-  const items_found = (result.items_found ?? result.total_vms ?? 0) as number;
-  const items_actioned = (result.items_actioned ?? 0) as number;
-  const inner = result.result as Record<string, unknown> | undefined;
+  const items_found    = exec.items_found;
+  const items_actioned = exec.items_actioned;
+  const inner = result as Record<string, unknown> | undefined;
 
   return (
     <>

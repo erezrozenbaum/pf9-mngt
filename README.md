@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.92.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -303,7 +303,7 @@ Per-VM resource tracking, snapshot / restore metering, API usage metrics, effici
 ### 🤖 AI Ops Copilot — Query Layer for the Entire Platform
 Not just an LLM integration — a purpose-built operator assistant that queries your live infrastructure in plain language. Ask *"which tenants are over quota?"*, *"show drift events from last week"*, or *"how many VMs are powered off on host X?"* and get live SQL-backed answers instantly. 40+ built-in intents with tenant / project / host scoping. Ollama backend keeps all data on your network; OpenAI / Anthropic available with automatic sensitive-data redaction.
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.92.0)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.93.0)*
 A completely isolated, MFA-protected web portal that gives your customers read and restore access to their own infrastructure — without exposing your admin panel.
 
 - **Security by design**: data isolated at the PostgreSQL Row-Level Security layer (not just application code); separate JWT namespace; IP-bound Redis sessions; per-user rate limiting.
@@ -614,7 +614,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### � Role-Based Dashboard Layer — v1.92.0
+### 🩹 Tenant Portal Runbooks Bug Fixes — v1.93.0
+
+**[v1.93.0](CHANGELOG.md)** — Bug-fix release for tenant portal runbooks. Execute dialog was permanently stuck on "Run Dry Run" because `supports_dry_run` and `parameters_schema` were missing from the list endpoint response — VM-targeted runbooks (`VM Health Quick Fix`, `Snapshot Before Escalation`) never rendered the VM selector and always executed without a `server_id`, returning 0 items. All runbook results showed "0 items found / 0 actioned" because `items_found`/`items_actioned` are stored as separate DB columns (not inside the `result` JSONB) and were never wired through the TypeScript interface or normalisers. Result panel also read from the wrong nesting level (`result.result` instead of `result`). Fixed across `tenant_portal/environment_routes.py`, `api/restore_management.py`, `tenant-ui/src/lib/api.ts`, and `Runbooks.tsx`. Quota Threshold Check description updated to not imply cross-project scope. 538 unit tests pass, 0 HIGH Bandit findings.
+
+### 📊 Role-Based Dashboard Layer — v1.92.0
 
 **[v1.92.0](CHANGELOG.md)** — **Phase 6: Persona-Aware Dashboards.** Two new role-specific views surface existing intelligence data in job-relevant formats. **Account Manager Dashboard** (`My Portfolio` tab) — per-tenant portfolio grid with SLA status badge, vCPU usage bar, critical/leakage insight counts, and KPI strip (healthy/at-risk/breached/not-configured/critical/leakage totals). Powered by `GET /api/sla/portfolio/summary`. **Executive Dashboard** (`Portfolio Health` tab) — fleet-level stacked SLA bar, 6 KPI cards (fleet health %, breached clients, at-risk clients, open critical insights, revenue leakage/month, avg MTTR), and narrative sections for leakage and MTTR compliance. Powered by `GET /api/sla/portfolio/executive-summary`. New `account_manager` and `executive` RBAC roles, two new departments (`Account Management`, `Executive Leadership`) with `default_nav_item_key` so each persona lands on their dashboard at login. `unit_price DECIMAL(10,4)` column added to `msp_contract_entitlements` (nullable — enables revenue leakage dollar estimates). DB migration `migrate_v1_92_0_phase6.sql` applied to Docker and Kubernetes. 538 unit tests pass, 0 HIGH bandit findings, TypeScript clean.
 
@@ -807,4 +811,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Tests**: 538 passed, 31 skipped | **Version**: 1.92.1 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Tests**: 538 passed, 31 skipped | **Version**: 1.93.0 | **Last Updated**: April 2026
