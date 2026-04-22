@@ -2495,7 +2495,7 @@ INSERT INTO runbooks (name, display_name, description, category, risk_level, sup
 (
     'quota_threshold_check',
     'Quota Threshold Check',
-    'Checks per-project quota utilisation and flags projects exceeding configurable thresholds.',
+    'Checks quota utilisation and flags resources exceeding configurable thresholds (default 80%). Reports on vCPUs, RAM, and instances.',
     'quota', 'low', true,
     '{"type":"object","properties":{"warning_pct":{"type":"integer","default":80,"description":"Warning threshold percentage"},"critical_pct":{"type":"integer","default":95,"description":"Critical threshold percentage"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"}}}'
 ),

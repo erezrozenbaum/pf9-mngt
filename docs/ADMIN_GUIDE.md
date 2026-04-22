@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.92.0  
-**Last Updated**: April 21, 2026  
+**Version**: 1.93.0  
+**Last Updated**: April 22, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.0 — Tenant Portal Runbooks Bug Fixes (✅ Complete)
+
+- **Execute dialog stuck on "Run Dry Run"**: `GET /tenant/runbooks` list endpoint was not returning `supports_dry_run` or `parameters_schema`. `supports_dry_run` is required to render the dry-run toggle; `parameters_schema` is required to render the VM selector for `vm_health_quickfix` and `snapshot_before_escalation`. Without `parameters_schema`, those runbooks executed with no `server_id` and the engine immediately returned `{"error": "server_id is required"}` (0 items). Fix: added both columns to the `SELECT` in `tenant_portal/environment_routes.py`.
+- **All runbooks showed "0 items found / 0 actioned"**: `items_found` and `items_actioned` are separate columns in `runbook_executions`, not inside the `result` JSONB. The TypeScript `RunbookExecution` interface and both normaliser functions (`apiExecuteRunbook`, `apiRunbookExecutions`) did not map them. `ExecutionResultPanel` read `result.items_found` (always undefined) instead of `exec.items_found`. Fixed in `tenant-ui/src/lib/api.ts` and `Runbooks.tsx`.
+- **Result panel missing display name / risk badge**: `POST /internal/tenant-runbook-execute` returned only the raw `runbook_executions` row (no JOIN). Changed to `SELECT e.*, r.display_name, r.risk_level FROM runbook_executions e JOIN runbooks r ON r.name = e.runbook_name` in `api/restore_management.py`.
+- **Quota Threshold Check misleading description**: removed "per-project" / "flags projects" wording (misleading in tenant context where the tenant's own project is always injected). Updated in `db/init.sql` and via idempotent `UPDATE` in `_ensure_tables()` for live DBs.
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.92.0 — Role-Based Dashboard Layer: Account Manager & Executive Views (✅ Complete)
 

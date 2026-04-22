@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.0] - 2026-04-22
+
+### Fixed
+
+- **Tenant portal runbooks: execute dialog always stuck on "Run Dry Run"** — `GET /tenant/runbooks` list endpoint was not returning `supports_dry_run` or `parameters_schema`. Without `supports_dry_run` the dry-run checkbox never rendered (the dialog forced `dryRun = risk_level !== "low"` at mount and had no way to change it). Without `parameters_schema` the VM selector for `vm_health_quickfix` and `snapshot_before_escalation` never appeared, so those runbooks executed without `server_id` and the engine returned `{"error": "server_id is required"}`. Added both columns to the `SELECT` in `tenant_portal/environment_routes.py`.
+
+- **Tenant portal runbooks: always showed "0 items found, 0 items actioned"** — `items_found` and `items_actioned` are stored as **separate top-level columns** in `runbook_executions` (not inside the `result` JSONB). The `RunbookExecution` TypeScript interface was missing both fields, both normaliser functions (`apiExecuteRunbook` and `apiRunbookExecutions`) did not map them, and `ExecutionResultPanel` tried to read them from `result.items_found` / `result.result` (wrong nesting). Fixed in `tenant-ui/src/lib/api.ts` (interface + both normalisers) and `Runbooks.tsx` (panel reads `exec.items_found`/`exec.items_actioned` directly; detail section uses `inner = result` not `result.result`).
+
+- **Tenant portal runbooks: result panel showed no display name or risk badge** — the `POST /internal/tenant-runbook-execute` endpoint returned only the raw `runbook_executions` row, which does not contain `display_name` or `risk_level`. The SELECT was changed to `SELECT e.*, r.display_name, r.risk_level FROM runbook_executions e JOIN runbooks r ON r.name = e.runbook_name` in `api/restore_management.py`.
+
+- **Quota Threshold Check description implied "all projects"** — the runbook card said "Checks *per-project* quota utilisation and flags *projects* exceeding…", which is misleading in the tenant portal (the tenant's own project is injected as `target_project` at execution time). Description updated to be scope-neutral in `db/init.sql` and corrected in live DBs via a one-time idempotent `UPDATE` in `_ensure_tables()` (`api/runbook_routes.py`).
+
+### Tests
+
+- **538 passed, 31 skipped** — full suite green; 0 HIGH Bandit findings (61 370 lines scanned).
+
 ## [1.92.1] - 2026-04-21
 
 ### Fixed

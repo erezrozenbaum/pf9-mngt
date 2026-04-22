@@ -697,7 +697,8 @@ async def list_runbooks(ctx: TenantContext = Depends(get_tenant_context)):
                 """
                 SELECT
                     r.runbook_id, r.name, r.display_name, r.description,
-                    r.category, r.risk_level, r.created_at, r.updated_at
+                    r.category, r.risk_level, r.supports_dry_run,
+                    r.parameters_schema, r.created_at, r.updated_at
                 FROM runbooks r
                 WHERE r.is_tenant_visible = true
                   AND r.enabled = true

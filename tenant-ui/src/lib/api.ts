@@ -754,6 +754,8 @@ export interface RunbookExecution {
   completed_at: string | null;
   error_message: string | null;
   risk_level: string;
+  items_found: number;
+  items_actioned: number;
 }
 
 export async function apiExecuteRunbook(
@@ -780,6 +782,8 @@ export async function apiExecuteRunbook(
     completed_at:  (raw.completed_at ?? null) as string | null,
     error_message: (raw.error_message ?? null) as string | null,
     risk_level:    String(raw.risk_level ?? "low"),
+    items_found:   Number(raw.items_found ?? 0),
+    items_actioned: Number(raw.items_actioned ?? 0),
   };
 }
 
@@ -799,6 +803,8 @@ export async function apiRunbookExecutions(): Promise<RunbookExecution[]> {
     completed_at:  (e.completed_at ?? null) as string | null,
     error_message: (e.error_message ?? null) as string | null,
     risk_level:    String(e.risk_level ?? "low"),
+    items_found:   Number(e.items_found ?? 0),
+    items_actioned: Number(e.items_actioned ?? 0),
   }));
 }
 

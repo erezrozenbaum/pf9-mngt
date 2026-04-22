@@ -3292,7 +3292,15 @@ def setup_restore_routes(app):
 
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT * FROM runbook_executions WHERE execution_id = %s", (execution_id,))
+                cur.execute(
+                    """
+                    SELECT e.*, r.display_name, r.risk_level
+                    FROM runbook_executions e
+                    JOIN runbooks r ON r.name = e.runbook_name
+                    WHERE e.execution_id = %s
+                    """,
+                    (execution_id,),
+                )
                 execution = cur.fetchone()
 
         return dict(execution)
