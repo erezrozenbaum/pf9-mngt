@@ -112,9 +112,9 @@ function VmDetailPanel({ vm, onClose }: { vm: Vm; onClose: () => void }) {
           <MetricBar label="CPU"     value={metrics?.cpu_pct     ?? null} alloc={vm.vcpus  > 0 ? `${vm.vcpus} vCPU` : undefined} />
           <MetricBar label="RAM"     value={metrics?.ram_pct     ?? null} alloc={vm.ram_mb > 0 ? `${(vm.ram_mb / 1024).toFixed(0)} GB` : undefined} />
           <MetricBar label="Storage" value={metrics?.storage_pct ?? null} alloc={vm.disk_gb > 0 ? `${vm.disk_gb} GB` : undefined} />
-          {metrics?.storage_used_gb !== null && metrics?.storage_total_gb !== null && (
+          {metrics && metrics.storage_used_gb != null && metrics.storage_total_gb != null && (
             <div style={{ fontSize: ".75rem", color: "var(--color-text-secondary)" }}>
-              {metrics.storage_used_gb!.toFixed(1)} GB / {metrics.storage_total_gb!.toFixed(1)} GB
+              {metrics.storage_used_gb.toFixed(1)} GB / {metrics.storage_total_gb.toFixed(1)} GB
             </div>
           )}
           {metrics?.last_updated && (
