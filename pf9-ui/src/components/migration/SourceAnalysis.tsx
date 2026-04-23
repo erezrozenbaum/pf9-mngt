@@ -1427,7 +1427,7 @@ function DashboardView({ stats, hosts, clusters, tenants }: {
 /* ================================================================== */
 
 function TenantsView({ tenants, clusters, projectId, onRefresh, onViewTenantGraph }: {
-  tenants: Tenant[]; clusters: any[]; projectId: number; onRefresh: () => void;
+  tenants: Tenant[]; clusters: any[]; projectId: string; onRefresh: () => void;
   onViewTenantGraph?: (label: string, graphUrl: string) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
@@ -2331,7 +2331,7 @@ function TenantsView({ tenants, clusters, projectId, onRefresh, onViewTenantGrap
 /* ================================================================== */
 
 function NetworksView({ networks, projectId, onRefresh }: {
-  networks: NetworkSummary[]; projectId: number; onRefresh: () => void
+  networks: NetworkSummary[]; projectId: string; onRefresh: () => void
 }) {
   const [netSearch, setNetSearch] = useState("");
   const [reclassifying, setReclassifying] = useState(false);
@@ -2424,7 +2424,7 @@ function NetworksView({ networks, projectId, onRefresh }: {
 /*  Network Mapping View  (Phase 2.10F)                              */
 /* ================================================================== */
 
-function NetworkMappingView({ projectId }: { projectId: number }) {
+function NetworkMappingView({ projectId }: { projectId: string }) {
   const [mappings, setMappings] = useState<any[]>([]);
   const [unconfirmedCount, setUnconfirmedCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -3132,7 +3132,7 @@ interface Cohort {
 }
 
 function CohortsView({ projectId, project, tenants, onRefreshTenants, onViewTenantGraph }: {
-  projectId: number; project: MigrationProject; tenants: Tenant[]; onRefreshTenants: () => void;
+  projectId: string; project: MigrationProject; tenants: Tenant[]; onRefreshTenants: () => void;
   onViewTenantGraph?: (label: string, graphUrl: string) => void;
 }) {
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
@@ -4265,7 +4265,7 @@ const PREFLIGHT_STATUS_ICONS: Record<string, string> = {
 };
 
 function WavePlannerView({ projectId, project, tenants: _tenants }: {
-  projectId: number;
+  projectId: string;
   project: MigrationProject;
   tenants: Tenant[];
 }) {
@@ -5316,7 +5316,7 @@ function WavePlannerView({ projectId, project, tenants: _tenants }: {
 /*  Migration Plan View                                               */
 /* ================================================================== */
 
-function MigrationPlanView({ projectId, projectName }: { projectId: number; projectName: string }) {
+function MigrationPlanView({ projectId, projectName }: { projectId: string; projectName: string }) {
   const [plan, setPlan] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -5858,7 +5858,7 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
 /* ================================================================== */
 
 function RiskConfigView({ riskConfig, projectId, onRefresh }: {
-  riskConfig: any, projectId: number, onRefresh: () => void
+  riskConfig: any, projectId: string, onRefresh: () => void
 }) {
   const [weights, setWeights] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
@@ -5997,7 +5997,7 @@ interface SizingResult {
   ha_policy: string;
 }
 
-function CapacityPlanningView({ projectId }: { projectId: number }) {
+function CapacityPlanningView({ projectId }: { projectId: string }) {
   const [profiles, setProfiles] = useState<OvercommitProfile[]>([]);
   const [activeProfile, setActiveProfile] = useState<string>("balanced");
   const [quotaResult, setQuotaResult] = useState<QuotaResult | null>(null);
@@ -6701,7 +6701,7 @@ interface PcdGap {
   details: Record<string, any>;
 }
 
-function PcdReadinessView({ projectId }: { projectId: number }) {
+function PcdReadinessView({ projectId }: { projectId: string }) {
   const [pcdUrl, setPcdUrl] = useState("");
   const [_pcdRegion, setPcdRegion] = useState("region-one");
   const [readinessScore, setReadinessScore] = useState<number | null>(null);
@@ -7166,7 +7166,7 @@ function statusBadge(status: string): React.ReactNode {
   return <span style={styles[status] || styles.pending}>{icons[status] || "•"} {status}</span>;
 }
 
-function PreparePcdView({ projectId }: { projectId: number }) {
+function PreparePcdView({ projectId }: { projectId: string }) {
   const [readiness, setReadiness] = useState<any>(null);
   const [tasks, setTasks]         = useState<any[]>([]);
   const [counts, setCounts]       = useState<Record<string, number>>({});
@@ -7811,7 +7811,7 @@ function PreparePcdView({ projectId }: { projectId: number }) {
 /*  Phase 4A — FlavorStagingView  (4A.2)                             */
 /* ================================================================== */
 
-function FlavorStagingView({ projectId }: { projectId: number }) {
+function FlavorStagingView({ projectId }: { projectId: string }) {
   const [flavors, setFlavors] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -8110,7 +8110,7 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
 /*  Phase 4A — ImageRequirementsView  (4A.3)                         */
 /* ================================================================== */
 
-function ImageRequirementsView({ projectId }: { projectId: number }) {
+function ImageRequirementsView({ projectId }: { projectId: string }) {
   const [images, setImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -8418,7 +8418,7 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
 /*  Phase 4D — TenantUsersView  (overhauled)                         */
 /* ================================================================== */
 
-function TenantUsersView({ projectId }: { projectId: number }) {
+function TenantUsersView({ projectId }: { projectId: string }) {
   const [users, setUsers] = useState<any[]>([]);
   const [tenants, setTenants] = useState<{ id: number; tenant_name: string; target_domain_name: string | null }[]>([]);
   const [loading, setLoading] = useState(false);
@@ -9014,7 +9014,7 @@ function TenantUsersView({ projectId }: { projectId: number }) {
 /*  Phase 4D — VJailbreakPushView                                     */
 /* ================================================================== */
 
-function VJailbreakPushView({ projectId }: { projectId: number }) {
+function VJailbreakPushView({ projectId }: { projectId: string }) {
   const [settings, setSettings] = useState<{
     vjb_api_url: string; vjb_namespace: string; has_token: boolean; masked_token: string
   } | null>(null);
@@ -9553,7 +9553,7 @@ interface MigrationSummaryData {
   settings_used: FixSettings;
 }
 
-function MigrationSummaryView({ projectId }: { projectId: number }) {
+function MigrationSummaryView({ projectId }: { projectId: string }) {
   const [summary, setSummary] = React.useState<MigrationSummaryData | null>(null);
   const [settings, setSettings] = React.useState<FixSettings | null>(null);
   const [loading, setLoading] = React.useState(false);
