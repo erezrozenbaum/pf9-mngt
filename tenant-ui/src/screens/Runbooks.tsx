@@ -227,7 +227,7 @@ function ExecuteDialog({
             <div style={{ fontSize: ".85rem", fontWeight: 600, marginBottom: ".3rem" }}>
               {String(vmsMultiDef?.title ?? vmsMultiKey.replace(/_/g, " ")).replace(/\b\w/g, (c) => c.toUpperCase())}
             </div>
-            {vmsMultiDef?.description && (
+            {!!vmsMultiDef?.description && (
               <div style={{ fontSize: ".75rem", color: "var(--color-text-secondary)", marginBottom: ".4rem" }}>
                 {String(vmsMultiDef.description)}
               </div>
