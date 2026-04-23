@@ -31,6 +31,16 @@ export default function App() {
 
   const branding = useBranding(projectId);
 
+  // Session is being restored from storage — show a centred spinner so users
+  // never see the Shell flash with empty data before apiMe() resolves.
+  if (auth.state.phase === "restoring") {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--color-bg)" }}>
+        <span className="loading-spinner" style={{ width: "2rem", height: "2rem" }} />
+      </div>
+    );
+  }
+
   if (auth.state.phase === "unauthenticated") {
     return (
       <Login

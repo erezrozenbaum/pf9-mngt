@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.5  
+**Version**: 1.93.6  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.6 — Flicker Fix + Dependency Graph Labels + VM Detail Usage Panel (✅ Complete)
+
+- **Admin UI page-load flicker on refresh**: `isAuthenticated` was initialised `false` and restored in a `useEffect`, so the login screen flashed before the main app mounted. Fixed with lazy `useState` initialisers that read localStorage synchronously on the first render (`pf9-ui/src/App.tsx`). Tenant portal also fixed: `useAuth` now starts in a `restoring` phase when a token is present, showing a spinner until `apiMe()` resolves (`tenant-ui/src/hooks/useAuth.ts`, `tenant-ui/src/App.tsx`).
+- **Dependency Graph labels truncated**: Column spacing was 160px, cutoff was 12 chars. Widened to 210px, threshold to 18 chars; SVG `<title>` tooltip added for full name on hover (`Infrastructure.tsx`).
+- **VM detail panel "Current Usage" hidden when no metrics**: Section only rendered if `metrics !== null`. Now always visible with flavor allocation fallback (`MetricBar` `alloc` prop) (`Infrastructure.tsx`).
+- 524 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.5 — VM Provisioning QEMU Channel Fix + Monitoring Allocation View (✅ Complete)
 

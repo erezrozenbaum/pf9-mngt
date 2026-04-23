@@ -14,14 +14,16 @@ import {
 
 export type AuthState =
   | { phase: "unauthenticated" }
+  | { phase: "restoring" }          // token found in storage, apiMe() in-flight
   | { phase: "mfa"; preauthToken: string; mfaMode: string }
   | { phase: "authenticated"; me: MeResponse };
 
 export function useAuth() {
   const [state, setState] = useState<AuthState>(() => {
-    // Restored sessions will refresh me data via useEffect below
+    // Stay in "restoring" until apiMe() confirms the token is still valid.
+    // This prevents Shell from rendering with empty me data on refresh.
     return getToken()
-      ? { phase: "authenticated" as const, me: { username: "", keystone_user_id: "", projects: [], regions: [] } }
+      ? { phase: "restoring" as const }
       : { phase: "unauthenticated" as const };
   });
   const [loading, setLoading] = useState(false);

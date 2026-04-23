@@ -1005,11 +1005,28 @@ const App: React.FC = () => {
         : `${API_BASE}${appBranding.company_logo_url}`)
     : '/logo.svg';
 
-  // Authentication state
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  // Authentication state — initialised synchronously from localStorage so the
+  // first render never shows the login screen for a returning user (no flicker).
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const user = localStorage.getItem('auth_user');
+      const expiresAt = localStorage.getItem('token_expires_at');
+      if (!user || user === 'undefined' || user === 'null') return false;
+      if (expiresAt && new Date().getTime() >= new Date(expiresAt).getTime()) return false;
+      return true; // valid, non-expired metadata found
+    } catch { return false; }
+  });
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
+    try {
+      const user = localStorage.getItem('auth_user');
+      const expiresAt = localStorage.getItem('token_expires_at');
+      if (!user || user === 'undefined' || user === 'null') return null;
+      if (expiresAt && new Date().getTime() >= new Date(expiresAt).getTime()) return null;
+      return JSON.parse(user) as AuthUser;
+    } catch { return null; }
+  });
   const [authToken, setAuthToken] = useState<string | null>(null);
-  const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null);
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(() => localStorage.getItem('token_expires_at'));
   const [loginError, setLoginError] = useState<string>("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   // MFA challenge state
@@ -1057,38 +1074,18 @@ const App: React.FC = () => {
       .catch(() => setIsDemo(false));
   }, []);
 
-  // Check for existing session metadata on mount — restore if not expired
-  // Auth token lives in the httpOnly cookie; only non-sensitive metadata is in localStorage.
+  // On mount: show an explicit "expired" message if the persisted session is
+  // already past its expiry time (the useState initialisers above already set
+  // isAuthenticated=false in that case, so the login screen is shown; this
+  // effect just adds the explanatory error text).
   useEffect(() => {
     const user = localStorage.getItem('auth_user');
     const expiresAt = localStorage.getItem('token_expires_at');
-    
-    if (user && user !== 'undefined' && user !== 'null') {
-      try {
-        // Check if session is expired
-        if (expiresAt) {
-          const expirationTime = new Date(expiresAt).getTime();
-          const now = new Date().getTime();
-          
-          if (now >= expirationTime) {
-            // Session expired, clear and force re-login
-            console.log('Session expired, please login again');
-            localStorage.removeItem('auth_user');
-            localStorage.removeItem('token_expires_at');
-            setLoginError('Your session has expired. Please login again.');
-            return;
-          }
-        }
-        // Valid session found — restore without requiring re-login
-        // (auth token is in the httpOnly cookie; no localStorage read needed)
-        const parsedUser = JSON.parse(user);
-        setAuthUser(parsedUser);
-        if (expiresAt) setTokenExpiresAt(expiresAt);
-        setIsAuthenticated(true);
-      } catch (e) {
-        // Clear invalid data
+    if (user && user !== 'undefined' && user !== 'null' && expiresAt) {
+      if (new Date().getTime() >= new Date(expiresAt).getTime()) {
         localStorage.removeItem('auth_user');
         localStorage.removeItem('token_expires_at');
+        setLoginError('Your session has expired. Please login again.');
       }
     }
   }, []);

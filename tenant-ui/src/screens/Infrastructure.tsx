@@ -23,11 +23,11 @@ function ComplianceBadge({ pct }: { pct: number | null }) {
   return <span className="badge badge-red">{pct.toFixed(0)}%</span>;
 }
 
-function MetricBar({ label, value }: { label: string; value: number | null }) {
+function MetricBar({ label, value, alloc }: { label: string; value: number | null; alloc?: string }) {
   if (value === null) {
     return (
       <div style={{ fontSize: ".75rem", color: "var(--color-text-secondary)", marginBottom: ".4rem" }}>
-        {label}: —
+        {label}: {alloc ? <span style={{ fontWeight: 500, opacity: 0.75 }}>{alloc}</span> : "—"}
       </div>
     );
   }
@@ -106,24 +106,23 @@ function VmDetailPanel({ vm, onClose }: { vm: Vm; onClose: () => void }) {
           </div>
         )}
 
-        {metrics && (
-          <div>
-            <div className="section-title">Current Usage</div>
-            <MetricBar label="CPU"     value={metrics.cpu_pct} />
-            <MetricBar label="RAM"     value={metrics.ram_pct} />
-            <MetricBar label="Storage" value={metrics.storage_pct} />
-            {metrics.storage_used_gb !== null && metrics.storage_total_gb !== null && (
-              <div style={{ fontSize: ".75rem", color: "var(--color-text-secondary)" }}>
-                {metrics.storage_used_gb.toFixed(1)} GB / {metrics.storage_total_gb.toFixed(1)} GB
-              </div>
-            )}
-            {metrics.last_updated && (
-              <div style={{ fontSize: ".7rem", color: "var(--color-text-secondary)", marginTop: ".5rem" }}>
-                Updated: {new Date(metrics.last_updated).toLocaleTimeString()}
-              </div>
-            )}
-          </div>
-        )}
+        {/* Current Usage — always visible; shows allocation from flavor when no live metrics */}
+        <div>
+          <div className="section-title">Current Usage</div>
+          <MetricBar label="CPU"     value={metrics?.cpu_pct     ?? null} alloc={vm.vcpus  > 0 ? `${vm.vcpus} vCPU` : undefined} />
+          <MetricBar label="RAM"     value={metrics?.ram_pct     ?? null} alloc={vm.ram_mb > 0 ? `${(vm.ram_mb / 1024).toFixed(0)} GB` : undefined} />
+          <MetricBar label="Storage" value={metrics?.storage_pct ?? null} alloc={vm.disk_gb > 0 ? `${vm.disk_gb} GB` : undefined} />
+          {metrics?.storage_used_gb !== null && metrics?.storage_total_gb !== null && (
+            <div style={{ fontSize: ".75rem", color: "var(--color-text-secondary)" }}>
+              {metrics.storage_used_gb!.toFixed(1)} GB / {metrics.storage_total_gb!.toFixed(1)} GB
+            </div>
+          )}
+          {metrics?.last_updated && (
+            <div style={{ fontSize: ".7rem", color: "var(--color-text-secondary)", marginTop: ".5rem" }}>
+              Updated: {new Date(metrics.last_updated).toLocaleTimeString()}
+            </div>
+          )}
+        </div>
       </aside>
     </>
   );
@@ -571,18 +570,18 @@ function DependencyGraphView({ graph }: { graph: ResourceGraph }) {
   }
 
   const R = 18;         // node circle radius
-  const xStep = 160;    // column spacing
+  const xStep = 210;    // column spacing — wider for readable labels
   const yStep = 76;
   const yStart = 60;
 
   // Layout columns (left→right): Subnets | Networks | VMs | SGs | Volumes
-  const xSub = 90;
+  const xSub = 100;
   const xNet = xSub + xStep;
   const xVm  = xNet + xStep + 20;
   const xSg  = xVm  + xStep + 20;
   const xVol = xSg  + xStep;
 
-  const W = xVol + 90;
+  const W = xVol + 110;
 
   // Position each node
   const posMap: Record<string, PosEntry> = {};
@@ -659,12 +658,13 @@ function DependencyGraphView({ graph }: { graph: ResourceGraph }) {
           {/* Nodes */}
           {Object.values(posMap).map((n, idx) => (
             <g key={`${n.type}-${idx}`} transform={`translate(${n.x},${n.y})`}>
+              <title>{n.label}{n.sub ? ` (${n.sub})` : ""}</title>
               <circle r={R} fill={GRAPH_COLORS[n.type]} opacity={0.88} />
               <text y={4} textAnchor="middle" fontSize={8} fill="white" fontWeight={700}>
                 {GRAPH_ABBR[n.type]}
               </text>
               <text y={R + 14} textAnchor="middle" fontSize={9.5} fill="var(--color-text-primary)">
-                {n.label.length > 13 ? n.label.slice(0, 12) + "…" : n.label}
+                {n.label.length > 18 ? n.label.slice(0, 17) + "\u2026" : n.label}
               </text>
               {n.sub && (
                 <text y={R + 25} textAnchor="middle" fontSize={8} fill="var(--color-text-secondary)">

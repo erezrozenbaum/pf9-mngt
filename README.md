@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.5-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.6-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -636,6 +636,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+
+### 🩹 Flicker Fix + Graph Labels + VM Detail Usage — v1.93.6
+
+**[v1.93.6](CHANGELOG.md)** — Bug-fix release. **Flicker (Admin UI):** On browser refresh `isAuthenticated` started as `false` so the login screen flashed before the main app mounted; fixed with lazy `useState` initialisers that read `localStorage` synchronously on the first render. Tenant portal auth also hardened: `useAuth` now initialises to a `restoring` phase when a token is present, showing a full-screen spinner until `apiMe()` resolves. **Dependency Graph:** Node labels were hard-truncated at 12 characters (column spacing 160px); widened to 210px and raised threshold to 18 characters, plus SVG `<title>` tooltip for hover. **VM Detail Panel:** "Current Usage" section was hidden when no live metrics were available; now always visible with flavor allocation values as fallback. 524 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
+
 ### 🩹 VM Provisioning QEMU Channel Fix + Monitoring Allocation View — v1.93.5
 
 **[v1.93.5](CHANGELOG.md)** — Bug-fix release. **VM Provisioning:** Linux images were never patched with `hw_qemu_guest_agent=yes` before VM creation; Nova/libvirt therefore never added the virtio-serial channel device to the domain XML, making `changePassword` always return 409 even for VMs where cloud-init successfully installed the agent. Fixed: provisioning loop now patches Linux images with `hw_qemu_guest_agent=yes` (same pattern as Windows `hw_disk_bus`/`hw_firmware_type` patching). **Monitoring:** Current Usage cards showed `—` when using the DB allocation fallback; cards now show allocated vCPU/RAM/disk with an info banner. **Runbooks:** Reset VM Password 409 now shows distro-specific install instructions instead of the generic note; pre-emptive Guest Agent Warning removed from all-Linux flow. 524 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
@@ -848,4 +853,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.5 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.6 | **Last Updated**: April 2026

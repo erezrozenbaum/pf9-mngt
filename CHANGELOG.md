@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.6] - 2026-04-23
+
+### Fixed
+
+- **Admin UI — page-load flicker (login screen flash on refresh)** — On browser refresh, `isAuthenticated` was initialised to `false` and the session was restored in a `useEffect`, causing the login screen to flash briefly before the main application mounted. Fixed by moving the localStorage read into lazy `useState` initialisers so `isAuthenticated` and `authUser` are set correctly on the very first render with no effect needed. The expiry-check `useEffect` is retained only to set the "session expired" error message (`pf9-ui/src/App.tsx`). The tenant portal's auth hook received the same treatment: `useAuth` now initialises to a `restoring` phase when a token exists, showing a centred spinner instead of a blank Shell until `apiMe()` resolves (`tenant-ui/src/hooks/useAuth.ts`, `tenant-ui/src/App.tsx`).
+
+- **My Infrastructure — Dependency Graph node labels truncated to 12 characters** — Column spacing was `160px` and labels were hard-truncated at 12 characters, cutting names like `org1_vm_lin5` to `org1_vm_lin…`. Widened column spacing to `210px` and raised the truncation threshold to 18 characters so typical VM names are shown in full. Added SVG `<title>` tooltip on each node showing the full name and sub-label (e.g. CIDR) on hover (`tenant-ui/src/screens/Infrastructure.tsx`).
+
+- **My Infrastructure — VM detail panel "Current Usage" shows `—` for CPU/RAM/Storage** — The side panel only rendered the "Current Usage" section when the `apiMetricsVm()` call had resolved and returned non-null. Before the call resolves (or when live metrics are unavailable) the section was hidden entirely. Changed to always render the section, showing flavor-based allocation values as a fallback (`1 vCPU`, `2 GB`, `20 GB`) the same way the Monitoring screen already does. `MetricBar` now accepts an optional `alloc` string shown when `value` is null (`tenant-ui/src/screens/Infrastructure.tsx`).
+
 ## [1.93.5] - 2026-04-23
 
 ### Added
