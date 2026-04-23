@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.6  
+**Version**: 1.93.7  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.7 — Monitoring Availability Status + Usage Bars Fix (✅ Complete)
+
+- **Monitoring Availability: all VMs "Down"**: Status derived from `last_seen_at < 2h`; inventory sync lag caused all VMs to appear down. Now reads `servers.status` column directly — `ACTIVE` → Up (`tenant_portal/metrics_routes.py`).
+- **Monitoring Current Usage: text instead of bars in Kubernetes**: DB fallback missing hypervisor join — percentages were null, no bars rendered. Now computed as VM vCPU/RAM share of hypervisor capacity. Disk resolved from flavor or attached volumes (`tenant_portal/metrics_routes.py`, `Monitoring.tsx`).
+- 524 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.6 — Flicker Fix + Dependency Graph Labels + VM Detail Usage Panel (✅ Complete)
 

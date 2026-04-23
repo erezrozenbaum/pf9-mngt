@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.7] - 2026-04-23
+
+### Fixed
+
+- **Monitoring — Availability tab shows all VMs as "Down" despite being ACTIVE** — The status badge was derived from `last_seen_at` with a 2-hour staleness cutoff. Because inventory syncs run every ~2 hours, the `last_seen_at` timestamp regularly lags more than 2 hours, classifying every running VM as "Down". Fixed: VM status is now read directly from the `servers.status` column (`ACTIVE` → Up; `SHUTOFF`/`SUSPENDED`/`ERROR`/`SHELVED` → Down) — the same authoritative field OpenStack writes and the RVtools sync populates. The `last_seen_at` heuristic is retained only as a fallback for legacy rows where `status` is absent (`tenant_portal/metrics_routes.py`).
+
+- **Monitoring — Current Usage tab shows allocation text (`1 vCPU`, `2 GB`) instead of usage bars** — In Kubernetes (no shared volume, monitoring service cache empty), the DB allocation fallback returned `cpu_usage_percent: null` and `memory_usage_percent: null`, so the UI rendered static text instead of progress bars. Fixed: the fallback now joins `hypervisors` and computes `cpu_usage_percent = vcpus / h.vcpus * 100` and `memory_usage_percent = ram_mb / h.memory_mb * 100` — the same formula used by the admin API's `/monitoring/vm-metrics`. Storage disk is resolved from `flavors.disk_gb` with a fallback to attached `volumes.size_gb`. Banner text updated from "allocated resources" to "allocation-based usage" to reflect that percentages are now shown (`tenant_portal/metrics_routes.py`, `tenant-ui/src/screens/Monitoring.tsx`).
+
 ## [1.93.6] - 2026-04-23
 
 ### Fixed

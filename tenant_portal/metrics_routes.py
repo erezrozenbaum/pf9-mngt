@@ -205,8 +205,9 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
             result.append(_normalize_vm_entry(vm))
 
     # If live monitoring cache is empty (K8s without Prometheus exporters configured),
-    # fall back to allocation-based data directly from the DB (servers + flavors).
-    # This is scoped to the tenant's own VMs via owned_ids and RLS.
+    # fall back to allocation-based data directly from the DB (servers + flavors + hypervisors).
+    # We compute cpu_usage_percent / memory_usage_percent as the VM's share of its
+    # hypervisor's capacity — same formula used by the admin API's /monitoring/vm-metrics.
     if not result and owned_ids:
         try:
             with get_tenant_connection() as _conn:
@@ -215,11 +216,22 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
                     _cur.execute(
                         """
                         SELECT s.id AS vm_id, s.name AS vm_name,
-                               COALESCE(fl.vcpus, 0)  AS vcpus,
-                               COALESCE(fl.ram_mb, 0) AS ram_mb,
-                               COALESCE(NULLIF(fl.disk_gb, 0), 0) AS disk_gb
+                               COALESCE(fl.vcpus, 0)   AS vcpus,
+                               COALESCE(fl.ram_mb, 0)  AS ram_mb,
+                               COALESCE(NULLIF(fl.disk_gb, 0),
+                                 (SELECT COALESCE(SUM(vol.size_gb), 0)
+                                  FROM volumes vol
+                                  WHERE EXISTS (
+                                    SELECT 1 FROM jsonb_array_elements(vol.raw_json->'attachments') att
+                                    WHERE att->>'server_id' = s.id
+                                  ))
+                               ) AS disk_gb,
+                               h.vcpus   AS h_vcpus,
+                               h.memory_mb AS h_mem_mb
                         FROM servers s
                         LEFT JOIN flavors fl ON fl.id = s.flavor_id
+                        LEFT JOIN hypervisors h
+                            ON h.hostname = s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname'
                         WHERE s.id = ANY(%s) AND s.status = 'ACTIVE'
                         ORDER BY s.name
                         """,
@@ -227,19 +239,28 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
                     )
                     db_rows = [dict(r) for r in _cur.fetchall()]
                     _conn.commit()
-            result = [
-                _normalize_vm_entry({
-                    "vm_id":  v["vm_id"],
-                    "vm_name": v["vm_name"],
-                    "cpu_usage_percent": None,
-                    "memory_usage_percent": None,
-                    "memory_total_mb": v["ram_mb"] or None,
-                    "storage_total_gb": v["disk_gb"] or None,
-                    "vcpus": v["vcpus"] or None,
-                    "last_updated": None,
-                })
-                for v in db_rows
-            ]
+            result = []
+            for v in db_rows:
+                cpu_pct = None
+                if v["h_vcpus"] and v["h_vcpus"] > 0 and v["vcpus"]:
+                    cpu_pct = round(v["vcpus"] / v["h_vcpus"] * 100, 1)
+                mem_pct = None
+                if v["h_mem_mb"] and v["h_mem_mb"] > 0 and v["ram_mb"]:
+                    mem_pct = round(v["ram_mb"] / v["h_mem_mb"] * 100, 1)
+                disk = v["disk_gb"] or None
+                result.append(
+                    _normalize_vm_entry({
+                        "vm_id":  v["vm_id"],
+                        "vm_name": v["vm_name"],
+                        "cpu_usage_percent": cpu_pct,
+                        "memory_usage_percent": mem_pct,
+                        "memory_total_mb": v["ram_mb"] or None,
+                        "storage_total_gb": disk,
+                        "storage_used_gb": disk,   # provisioned = best-effort actual (no live data)
+                        "vcpus": v["vcpus"] or None,
+                        "last_updated": None,
+                    })
+                )
             logger.info("metrics_all_vms: returning %d VMs from DB allocation fallback", len(result))
         except Exception as exc:
             logger.warning("metrics_all_vms DB allocation fallback failed: %s", exc)
@@ -305,10 +326,12 @@ async def metrics_availability(ctx: TenantContext = Depends(get_tenant_context))
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             inject_rls_vars(cur, ctx)
 
-            # Get all VMs in scope
+            # Get all VMs in scope — include status so we can report Up/Down/Unknown
+            # without depending on last_seen_at staleness.
             cur.execute(
                 """
-                SELECT s.id AS vm_id, s.name AS vm_name, s.region_id, s.last_seen_at
+                SELECT s.id AS vm_id, s.name AS vm_name, s.region_id,
+                       s.last_seen_at, s.status
                 FROM servers s
                 WHERE s.project_id = ANY(%s) AND s.region_id = ANY(%s)
                 """,
@@ -360,18 +383,32 @@ async def metrics_availability(ctx: TenantContext = Depends(get_tenant_context))
         up_30 = len(days_with_success & window_30d)
         # Derive VM status from last_seen_at: up if seen within 2 h, down if seen
         # more than 2 h ago, unknown if never recorded.
-        last_seen = vm.get("last_seen_at")
-        if last_seen is not None:
-            try:
-                last_seen_dt = last_seen if hasattr(last_seen, "tzinfo") else datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
-                if last_seen_dt.tzinfo is None:
-                    last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
-                hours_ago = (now - last_seen_dt).total_seconds() / 3600
-                vm_status = "up" if hours_ago < 2 else "down"
-            except Exception:
-                vm_status = "unknown"
-        else:
+        # Derive VM status:
+        # 1. Use the authoritative OpenStack status stored in the servers table:
+        #    ACTIVE → "up", SHUTOFF/SUSPENDED/ERROR/SHELVED → "down", else "unknown"
+        # 2. Fall back to last_seen_at only when status is absent/unknown (legacy rows).
+        raw_status = (vm.get("status") or "").upper()
+        if raw_status == "ACTIVE":
+            vm_status = "up"
+        elif raw_status in ("SHUTOFF", "SUSPENDED", "ERROR", "SHELVED",
+                            "SHELVED_OFFLOADED", "DELETED", "SOFT_DELETED"):
+            vm_status = "down"
+        elif raw_status:
             vm_status = "unknown"
+        else:
+            # Legacy: no status column — use last_seen_at heuristic
+            last_seen = vm.get("last_seen_at")
+            if last_seen is not None:
+                try:
+                    last_seen_dt = last_seen if hasattr(last_seen, "tzinfo") else datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+                    if last_seen_dt.tzinfo is None:
+                        last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
+                    hours_ago = (now - last_seen_dt).total_seconds() / 3600
+                    vm_status = "up" if hours_ago < 2 else "down"
+                except Exception:
+                    vm_status = "unknown"
+            else:
+                vm_status = "unknown"
         result.append({
             "vm_id": v_id,
             "vm_name": vm["vm_name"],

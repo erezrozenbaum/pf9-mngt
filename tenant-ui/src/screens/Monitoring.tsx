@@ -178,7 +178,7 @@ export function Monitoring({ regionFilter }: Props) {
           <>
             {monitoringSource === "allocation" && (
               <div style={{ margin: ".75rem 0", padding: ".6rem 1rem", background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "6px", fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
-                ℹ️ Showing <strong>allocated resources</strong> (vCPU / RAM / disk from flavor). Live CPU &amp; RAM usage requires Prometheus node-exporter on the hypervisor nodes.
+                ℹ️ Showing <strong>allocation-based usage</strong> (vCPU / RAM share of hypervisor capacity; disk from flavor). Live CPU &amp; RAM usage requires Prometheus node-exporter on the hypervisor nodes.
               </div>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "1rem" }}>
