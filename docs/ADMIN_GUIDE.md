@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.3  
+**Version**: 1.93.4  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,17 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.4 — New VM Portal Sync, SLA Compliance Click, + 4 More Fixes (✅ Complete)
+
+- **My Infrastructure status filter shows "No VMs found" for Running/Stopped/Error**: Dropdown option values (`"running"`, `"stopped"`) didn’t match the raw OpenStack DB values (`"ACTIVE"`, `"SHUTOFF"`). Client-side filter `v.status.toLowerCase().includes(statusFilter)` never matched. Fixed option values to `"active"`/`"shutoff"` (`tenant-ui/src/screens/Infrastructure.tsx`).
+- **New VM invisible in tenant portal after RVtools sync**: `upsert_servers()` in `db_writer.py` never set `region_id`, leaving `NULL` for every synced server. Tenant portal queries filter `WHERE s.region_id = ANY(%s)`, which excludes `NULL` rows. Fixed: `upsert_servers()` looks up the first enabled region from `pf9_regions` and assigns it to every server record. A startup migration in `api/main.py` backfills `region_id` on existing `NULL` rows.
+- **Snapshot SLA Compliance — clicking tenant row shows nothing**: Expanded-details condition `tenant.warnings.length > 0` prevented the row from rendering for compliant tenants. Removed condition; the details row always renders for the selected tenant — shows issues list or “✅ All N volumes compliant” (`pf9-ui/src/components/SnapshotSLAWidget.tsx`). Also fixed `raw_json` parsing in `get_snapshot_sla_compliance()` to handle both JSONB dicts and plain JSON strings (`api/dashboards.py`).
+- **Monitoring Current Usage always empty**: DB allocation fallback now triggers when monitoring cache returns empty results.
+- **Chargeback endpoint 500**: Query used `project_id` column which doesn’t exist on `metering_resources`; fixed via sub-select through `servers`.
+- **Result panel too narrow**: `.side-panel` widened from 420px to 680px.
+- **Snapshot calendar all red**: `r.status === "success"` check now also accepts `"ok"` (the value the DB stores).
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.3 — Tenant Portal: 4 Fixes + Chargeback Screen (✅ Complete)
 

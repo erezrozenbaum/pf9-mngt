@@ -1105,6 +1105,59 @@ async def startup_event():
       except Exception as _exc:
         logger.warning("B10/B11 schema migration skipped: %s", _exc)
 
+    # Idempotent: backfill region_id on servers that have NULL region_id.
+    # Prior to v1.93.4, upsert_servers() did not set region_id, so VMs synced
+    # before that version have region_id = NULL and the tenant portal query
+    # (WHERE region_id = ANY(%s)) silently excluded them.
+    try:
+        with get_connection() as _rfconn:
+            with _rfconn.cursor() as _rfcur:
+                _rfcur.execute(
+                    """
+                    UPDATE servers
+                    SET region_id = (
+                        SELECT id FROM pf9_regions
+                        WHERE enabled = TRUE ORDER BY id LIMIT 1
+                    )
+                    WHERE region_id IS NULL
+                      AND EXISTS (SELECT 1 FROM pf9_regions WHERE enabled = TRUE LIMIT 1)
+                    """
+                )
+                _fixed = _rfcur.rowcount
+        if _fixed:
+            logger.info("Backfilled region_id on %d server(s) that had NULL", _fixed)
+    except Exception as _rfe:
+        logger.warning("Could not backfill server region_id: %s", _rfe)
+
+    # Idempotent: grant tenant_portal_role SELECT on metering tables.
+    # metering tables are created by the metering worker migration, so this guard
+    # handles both fresh DBs (tables may not exist yet) and existing DBs (grant
+    # not applied by the old init.sql).  Runs on every startup; safe to repeat.
+    try:
+        with get_connection() as _mg_conn:
+            with _mg_conn.cursor() as _mg_cur:
+                _mg_cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tenant_portal_role') THEN
+                            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'metering_resources') THEN
+                                GRANT SELECT ON metering_resources TO tenant_portal_role;
+                            END IF;
+                            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'metering_config') THEN
+                                GRANT SELECT ON metering_config TO tenant_portal_role;
+                            END IF;
+                            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'metering_pricing') THEN
+                                GRANT SELECT ON metering_pricing TO tenant_portal_role;
+                            END IF;
+                        END IF;
+                    END $$
+                    """
+                )
+        logger.info("Metering table grants applied (idempotent)")
+    except Exception as _mg_exc:
+        logger.warning("Could not apply metering table grants: %s", _mg_exc)
+
     # Phase 3: warm the ClusterRegistry now that the DB is seeded.
     # reload() discards any premature lazy-init that may have run before seeding
     # and rebuilds fresh from the now-populated pf9_regions / pf9_control_planes.

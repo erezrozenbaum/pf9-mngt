@@ -202,6 +202,45 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
         if vm_id in owned_ids:
             result.append(_normalize_vm_entry(vm))
 
+    # If live monitoring cache is empty (K8s without Prometheus exporters configured),
+    # fall back to allocation-based data directly from the DB (servers + flavors).
+    # This is scoped to the tenant's own VMs via owned_ids and RLS.
+    if not result and owned_ids:
+        try:
+            with get_tenant_connection() as _conn:
+                with _conn.cursor(cursor_factory=RealDictCursor) as _cur:
+                    inject_rls_vars(_cur, ctx)
+                    _cur.execute(
+                        """
+                        SELECT s.id AS vm_id, s.name AS vm_name,
+                               COALESCE(fl.vcpus, 0)  AS vcpus,
+                               COALESCE(fl.ram_mb, 0) AS ram_mb,
+                               COALESCE(NULLIF(fl.disk_gb, 0), 0) AS disk_gb
+                        FROM servers s
+                        LEFT JOIN flavors fl ON fl.id = s.flavor_id
+                        WHERE s.id = ANY(%s) AND s.status = 'ACTIVE'
+                        ORDER BY s.name
+                        """,
+                        (list(owned_ids),),
+                    )
+                    db_rows = [dict(r) for r in _cur.fetchall()]
+                    _conn.commit()
+            result = [
+                _normalize_vm_entry({
+                    "vm_id":  v["vm_id"],
+                    "vm_name": v["vm_name"],
+                    "cpu_usage_percent": None,
+                    "memory_usage_percent": None,
+                    "memory_total_mb": v["ram_mb"] or None,
+                    "storage_total_gb": v["disk_gb"] or None,
+                    "last_updated": None,
+                })
+                for v in db_rows
+            ]
+            logger.info("metrics_all_vms: returning %d VMs from DB allocation fallback", len(result))
+        except Exception as exc:
+            logger.warning("metrics_all_vms DB allocation fallback failed: %s", exc)
+
     log_action_bare(ctx, "tenant_view_metrics")
     return {
         "vms": result,
@@ -371,19 +410,23 @@ async def tenant_chargeback(
 
             since = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
 
-            # Latest metering snapshot per VM, scoped to this tenant's projects
+            # Latest metering snapshot per VM, scoped to this tenant's projects.
+            # metering_resources has no project_id column; use a subquery via servers
+            # (which is project_id-indexed and also filtered by RLS on the connection).
             cur.execute(
                 """
-                SELECT DISTINCT ON (vm_id)
-                    vm_id, vm_name, project_name,
-                    vcpus_allocated AS vcpus,
-                    ram_allocated_mb AS ram_mb,
-                    flavor AS flavor_name,
-                    collected_at
-                FROM metering_resources
-                WHERE project_id = ANY(%s)
-                  AND collected_at > %s
-                ORDER BY vm_id, collected_at DESC
+                SELECT DISTINCT ON (mr.vm_id)
+                    mr.vm_id, mr.vm_name, mr.project_name,
+                    mr.vcpus_allocated AS vcpus,
+                    mr.ram_allocated_mb AS ram_mb,
+                    mr.flavor AS flavor_name,
+                    mr.collected_at
+                FROM metering_resources mr
+                WHERE mr.vm_id IN (
+                    SELECT id FROM servers WHERE project_id = ANY(%s)
+                )
+                  AND mr.collected_at > %s
+                ORDER BY mr.vm_id, mr.collected_at DESC
                 """,
                 (ctx.project_ids, since),
             )

@@ -261,8 +261,8 @@ export function Infrastructure({ regionFilter }: Props) {
           <div className="filter-bar">
             <select className="select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">All statuses</option>
-              <option value="running">Running</option>
-              <option value="stopped">Stopped</option>
+              <option value="active">Running</option>
+              <option value="shutoff">Stopped</option>
               <option value="error">Error</option>
             </select>
             <span style={{ fontSize: ".8rem", color: "var(--color-text-secondary)" }}>

@@ -715,9 +715,18 @@ async def get_snapshot_sla_compliance():
                     "warning": None
                 }
             
-                # Extract metadata if exists
-                if row["raw_json"] and "metadata" in row["raw_json"]:
-                    metadata = row["raw_json"]["metadata"]
+                # Extract metadata if exists — raw_json may be a JSONB dict
+                # (psycopg2 auto-parses) or a plain JSON string depending on
+                # column type; handle both to avoid TypeError.
+                _rj = row["raw_json"]
+                if _rj and isinstance(_rj, str):
+                    try:
+                        import json as _json
+                        _rj = _json.loads(_rj)
+                    except Exception:
+                        _rj = {}
+                if _rj and isinstance(_rj, dict) and "metadata" in _rj:
+                    metadata = _rj["metadata"]
                 
                     # Check if volume has auto_snapshot enabled
                     auto_snapshot = metadata.get("auto_snapshot", "").lower() in ("true", "yes", "1")

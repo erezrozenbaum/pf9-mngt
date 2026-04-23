@@ -493,6 +493,24 @@ def upsert_servers(conn, servers: List[Dict[str, Any]], run_id: Optional[int] = 
                 'os_version': row.get('os_version'),
                 'name': row.get('name'),
             }
+
+    # Look up the default region_id so new servers are assigned to it.
+    # Without this, servers get region_id = NULL and the tenant portal
+    # WHERE region_id = ANY(%s) query silently excludes them.
+    default_region_id = None
+    try:
+        with conn.cursor() as _rc:
+            _rc.execute(
+                "SELECT id FROM pf9_regions WHERE enabled = TRUE ORDER BY id LIMIT 1"
+            )
+            _rr = _rc.fetchone()
+            if not _rr:
+                _rc.execute("SELECT id FROM pf9_regions ORDER BY id LIMIT 1")
+                _rr = _rc.fetchone()
+            if _rr:
+                default_region_id = _rr[0]
+    except Exception:
+        pass  # pf9_regions may not exist in very old deployments — safe to ignore
     
     records = []
     for s in servers:
@@ -547,6 +565,7 @@ def upsert_servers(conn, servers: List[Dict[str, Any]], run_id: Optional[int] = 
             'os_version': os_version,
             'created_at': created_at,
             'raw_json': json.dumps(s) if isinstance(s, dict) else s,
+            'region_id': s.get('region_id') or default_region_id,
         })
     
     return _upsert_with_history(conn, 'servers', records, 'id', run_id)

@@ -224,7 +224,7 @@ label {
   position: fixed;
   top: 0;
   right: 0;
-  width: 420px;
+  width: 680px;
   max-width: 100vw;
   height: 100dvh;
   background: var(--color-surface);

@@ -21,7 +21,7 @@ function buildCalendarData(records: SnapshotRecord[]): {
     if (!errorMap.has(r.vm_id)) errorMap.set(r.vm_id, new Map());
     const dateKey = r.run_date.slice(0, 10);
     const existing = calMap.get(r.vm_id)!.get(dateKey);
-    const isOk = r.status.toLowerCase() === "success";
+    const isOk = r.status.toLowerCase() === "ok" || r.status.toLowerCase() === "success";
     // A day is "ok" if at least one snapshot succeeded; "fail" only if all failed
     if (!existing || (existing === "fail" && isOk)) {
       calMap.get(r.vm_id)!.set(dateKey, isOk ? "ok" : "fail");

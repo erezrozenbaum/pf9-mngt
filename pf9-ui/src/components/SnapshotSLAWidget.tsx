@@ -134,19 +134,25 @@ export const SnapshotSLAWidget: React.FC<Props> = ({ data, onNavigate }) => {
                   </td>
                 </tr>
 
-                {/* Expanded Details */}
-                {expandedTenant === tenant.tenant_id && tenant.warnings.length > 0 && (
+                {/* Expanded Details — always render for clicked tenants */}
+                {expandedTenant === tenant.tenant_id && (
                   <tr className="sla-details">
                     <td colSpan={4}>
-                      <div className="warning-list">
-                        <h4>⚠️ Compliance Issues:</h4>
-                        {tenant.warnings.map((warning, idx) => (
-                          <div key={idx} className="warning-item">
-                            <span className="volume-name">{warning.volume_name}</span>
-                            <span className="warning-text">{warning.warning}</span>
-                          </div>
-                        ))}
-                      </div>
+                      {tenant.warnings.length > 0 ? (
+                        <div className="warning-list">
+                          <h4>⚠️ Compliance Issues:</h4>
+                          {tenant.warnings.map((warning, idx) => (
+                            <div key={idx} className="warning-item">
+                              <span className="volume-name">{warning.volume_name}</span>
+                              <span className="warning-text">{warning.warning}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="warning-list" style={{ background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+                          <h4 style={{ color: '#166534' }}>✅ All {tenant.total_volumes} volume{tenant.total_volumes !== 1 ? 's' : ''} compliant</h4>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 )}
