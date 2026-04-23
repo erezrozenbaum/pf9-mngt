@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.8] - 2026-04-23
+
+### Fixed
+
+- **Admin UI — layout flicker on login / browser refresh** — After the previous flicker fix (v1.93.6) moved `isAuthenticated` into a lazy `useState` initialiser, the main application rendered immediately on page load. However, `navLoading` in `useNavigation` still started as `false`, so the sidebar briefly showed the legacy flat tab bar before `fetchNavigation()` completed and `GroupedNavBar` replaced it. Fixed: `navLoading` is now initialised to `true` when the user is already authenticated (page refresh / session restore), so the sidebar renders an invisible placeholder instead of the flat tab list until the grouped nav data arrives. No visible flicker on refresh (`pf9-ui/src/hooks/useNavigation.ts`, `pf9-ui/src/App.tsx`).
+
+- **Monitoring — `/tenant/metrics/availability` returns 500 in Kubernetes** — `last_seen` was only assigned inside the `else` (legacy/no-status) branch but referenced unconditionally in `result.append()`. In Kubernetes the `servers` table has real OpenStack statuses (`ACTIVE`, `SHUTOFF`, …) so the `else` branch is never reached and `last_seen` was always unbound, causing a `NameError` → HTTP 500. Fixed by moving `last_seen = vm.get("last_seen_at")` to before the `if/elif/else` chain so it is always set regardless of which branch is taken (`tenant_portal/metrics_routes.py`).
+
+- **CI — Integration test `test_T01_branding_via_proxy` fails on dev branch** — The test caught `httpx.ConnectError` to skip when the Vite dev server is not running, but in CI the reverse proxy accepts the TCP connection and immediately drops it, raising `httpx.RemoteProtocolError` instead. Added `RemoteProtocolError` to the caught exceptions so the test skips cleanly in CI (`tests/test_tenant_portal_login_integration.py`).
+
 ## [1.93.7] - 2026-04-23
 
 ### Fixed

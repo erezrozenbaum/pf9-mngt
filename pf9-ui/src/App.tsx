@@ -1057,6 +1057,7 @@ const App: React.FC = () => {
     navData,
     activeGroupKey,
     setActiveGroupKey,
+    navLoading: navLoading,
     activeGroup: _activeGroup,
     isTabVisible: _isTabVisible,
     hasPermission: navHasPermission,
@@ -3223,6 +3224,10 @@ const App: React.FC = () => {
               onItemReorder={reorderItems}
               onResetOrder={resetOrder}
             />
+          ) : navLoading ? (
+            /* Nav data is in-flight — render nothing to avoid the legacy flat
+               tab bar flashing before the grouped nav arrives. */
+            <div className="pf9-tabs" style={{ visibility: 'hidden' }} aria-hidden />
           ) : (
             <div className="pf9-tabs">
               {visibleTabs.map(tab => (

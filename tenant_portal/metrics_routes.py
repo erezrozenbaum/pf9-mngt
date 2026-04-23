@@ -381,8 +381,9 @@ async def metrics_availability(ctx: TenantContext = Depends(get_tenant_context))
         days_with_success = vm_days.get(v_id, set())
         up_7 = len(days_with_success & window_7d)
         up_30 = len(days_with_success & window_30d)
-        # Derive VM status from last_seen_at: up if seen within 2 h, down if seen
-        # more than 2 h ago, unknown if never recorded.
+        # Always resolve last_seen_at upfront so it's available for the response
+        # regardless of which status branch is taken below.
+        last_seen = vm.get("last_seen_at")
         # Derive VM status:
         # 1. Use the authoritative OpenStack status stored in the servers table:
         #    ACTIVE → "up", SHUTOFF/SUSPENDED/ERROR/SHELVED → "down", else "unknown"
@@ -397,7 +398,6 @@ async def metrics_availability(ctx: TenantContext = Depends(get_tenant_context))
             vm_status = "unknown"
         else:
             # Legacy: no status column — use last_seen_at heuristic
-            last_seen = vm.get("last_seen_at")
             if last_seen is not None:
                 try:
                     last_seen_dt = last_seen if hasattr(last_seen, "tzinfo") else datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))

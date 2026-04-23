@@ -114,7 +114,10 @@ function findGroupForItem(nav: NavGroupDef[], itemKey: string): string | null {
 
 export function useNavigation(isAuthenticated: boolean) {
   const [rawNavData, setRawNavData] = useState<NavigationData | null>(null);
-  const [navLoading, setNavLoading] = useState(false);
+  // Start as true when the user is already authenticated (page refresh / session
+  // restore) so the sidebar never renders the legacy flat-tab fallback before
+  // the grouped nav data arrives.  Set back to false by fetchNavigation().
+  const [navLoading, setNavLoading] = useState(isAuthenticated);
   const [navError, setNavError] = useState<string | null>(null);
   const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null);
 

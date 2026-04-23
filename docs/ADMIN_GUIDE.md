@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.7  
+**Version**: 1.93.8  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.8 — Layout Flicker + Monitoring 500 + CI Fix (✅ Complete)
+
+- **Admin UI layout flicker on refresh**: `navLoading` started `false` so the legacy flat tab bar flashed before `GroupedNavBar` arrived. Now initialised to `true` on authenticated load (`useNavigation.ts`, `App.tsx`).
+- **Monitoring availability 500 in Kubernetes**: `last_seen` unbound when servers have real status values — `NameError` → HTTP 500. Moved assignment before the status branch (`tenant_portal/metrics_routes.py`).
+- **CI test `test_T01_branding_via_proxy` failing on dev**: Added `httpx.RemoteProtocolError` to the skip-on-no-proxy exception tuple (`tests/test_tenant_portal_login_integration.py`).
+- 524 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.7 — Monitoring Availability Status + Usage Bars Fix (✅ Complete)
 

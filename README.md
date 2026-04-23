@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.7-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.8-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🩹 Layout Flicker + Monitoring 500 + CI Fix — v1.93.8
+
+**[v1.93.8](CHANGELOG.md)** — Bug-fix release. **Admin UI flicker:** After the v1.93.6 lazy-init fix, `navLoading` still started `false`, causing the legacy flat tab bar to flash before `GroupedNavBar` loaded; `navLoading` now initialises to `true` on authenticated page loads so the sidebar stays invisible until nav data arrives. **Monitoring availability 500:** `last_seen` was only assigned inside the legacy `else` branch but used unconditionally — in Kubernetes (real OpenStack statuses) the else was never reached, producing `NameError` → HTTP 500. **CI:** `test_T01_branding_via_proxy` failed on the dev branch because `httpx.RemoteProtocolError` (server drops connection) was not caught alongside `ConnectError`. 524 unit tests pass, TypeScript clean.
+
 ### 🩹 Monitoring Status + Usage Bars Fix — v1.93.7
 
 **[v1.93.7](CHANGELOG.md)** — Bug-fix release. **Monitoring Availability:** All VMs showed "Down" despite being ACTIVE because status was derived from `last_seen_at` staleness (inventory sync ~2.5h lag); now reads `servers.status` directly so ACTIVE VMs show "Up" immediately. **Monitoring Current Usage:** Kubernetes deployments showed static text (`1 vCPU`, `2 GB`) instead of usage bars because the DB fallback returned null percentages; now computes CPU/RAM as VM's share of hypervisor capacity with real progress bars. 524 unit tests pass, TypeScript clean.
@@ -857,4 +861,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.7 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.8 | **Last Updated**: April 2026
