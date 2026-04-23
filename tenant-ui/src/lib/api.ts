@@ -517,6 +517,40 @@ export async function apiAvailability(): Promise<AvailabilityRow[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Chargeback
+// ---------------------------------------------------------------------------
+
+export interface ChargebackVm {
+  vm_id: string;
+  vm_name: string;
+  project_name: string;
+  vcpus: number;
+  ram_gb: number;
+  flavor: string;
+  cost_per_hour: number;
+  estimated_cost: number;
+  pricing_basis: string;
+  last_metering: string | null;
+}
+
+export interface ChargebackSummary {
+  currency: string;
+  period_hours: number;
+  period_label: string;
+  vms: ChargebackVm[];
+  total_estimated_cost: number;
+  total_vms: number;
+  disclaimer: string;
+  pricing_basis_note: string;
+  timestamp: string;
+}
+
+export async function apiChargeback(hours = 720, currency?: string): Promise<ChargebackSummary> {
+  const qs = `?hours=${hours}${currency ? `&currency=${encodeURIComponent(currency)}` : ""}`;
+  return tenantFetch<ChargebackSummary>(`/tenant/metering/chargeback${qs}`);
+}
+
+// ---------------------------------------------------------------------------
 // Restore center
 // ---------------------------------------------------------------------------
 

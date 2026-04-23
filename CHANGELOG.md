@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.3] - 2026-04-23
+
+### Added
+
+- **Tenant portal — Chargeback (cost estimation)** — New "Chargeback" screen in the tenant portal shows per-VM estimated cost for the authenticated tenant's own projects (other tenants never visible). Period selector (24 h / 7d / 30d / 90d), display-currency override (USD, EUR, GBP, ILS, …), and expandable per-VM rows showing pricing basis detail. Uses flavor-specific prices from `metering_pricing` when available, falling back to the per-vCPU + per-GB-RAM rates in `metering_config`. A prominent disclaimer states this is an estimation. Requires `SELECT` access for `tenant_portal_role` on `metering_resources`, `metering_config`, `metering_pricing` — grant applied automatically on admin API startup and added to `db/init.sql`.
+
+### Fixed
+
+- **Runbook VM Health Quick Fix — check results show `[object Object]`** — `ExecutionResultPanel` rendered nested objects (e.g. `checks.ports`, `checks.network`, `checks.hypervisor`) with `String(v)` which produces `[object Object]`. Replaced the flat object branch with a recursive `renderResultValue()` helper that handles primitives, arrays, plain objects, and deeply nested objects (depth-limited to 2 levels). URLs in result objects are rendered as clickable links (`tenant-ui/src/screens/Runbooks.tsx`).
+
+- **Runbook Reset VM Password — `'str' object has no attribute 'get'`** — For VMs booted from a volume OpenStack returns `server["image"] = ""` (empty string). The engine called `server.get("image", {}).get("id", "")`, which becomes `"".get(…)` and raises `AttributeError`. Fixed by guarding with `isinstance(img_ref, dict)` before calling `.get` (`api/runbook_routes.py`).
+
+- **Runbook Reset VM Password — OS type always "unknown"** — The Glance image metadata lookup only checked `os_type` and `os`; many images set `os_distro` instead. Added fallback to `os_distro`, then to image-name heuristics (matches `ubuntu`, `centos`, `rhel`, `debian`, `fedora`, `alpine`, `rocky`, `alma`, `oracle`, `sles`, `linux`, `windows`). Cloud-init note now shows the detected OS when found, or explicitly states "assumed supported" instead of "uncertain" (`api/runbook_routes.py`).
+
+- **Monitoring Current Usage — always empty in Kubernetes** — `_load_metrics_cache()` returned immediately on the first successful HTTP 200 from the monitoring service even when the service returned an empty `vms` list (cache not yet bootstrapped). This blocked the DB fallback at step 3 that reads allocation-based estimates from `servers + flavors + hypervisors`. Fixed: only return the monitoring-service response if it contains VMs; if empty, fall through to the DB API fallback, keeping the monitoring response as a last resort to preserve `cache_available: True`. Also fixed: the file-path fallback now skips empty cache files rather than returning immediately with `vms: []` (`tenant_portal/metrics_routes.py`).
+
 ## [1.93.2] - 2026-04-24
 
 ### Fixed

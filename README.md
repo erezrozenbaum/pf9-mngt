@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.3-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🩹 4 Fixes + Chargeback: Tenant Portal — v1.93.3
+
+**[v1.93.3](CHANGELOG.md)** — Bug-fix + feature patch. **Tenant portal:** VM Health Quick Fix result panel rendered nested check objects as `[object Object]` — replaced with a recursive renderer. Reset VM Password crashed on volume-booted VMs (`'str' object has no attribute 'get'`) and always reported OS type as unknown — fixed with `isinstance` guard and `os_distro`/image-name heuristics. Monitoring Current Usage was always empty in Kubernetes because `_load_metrics_cache()` returned early on an empty monitoring response before the DB allocation fallback could run. New **Chargeback** screen shows per-VM cost estimates scoped to the tenant's own projects, with currency selector, period picker, pricing-basis detail, and a clear estimation disclaimer. 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
+
 ### 🩹 7 Bug Fixes: Tenant Portal + Migration Planner Analysis — v1.93.2
 
 **[v1.93.2](CHANGELOG.md)** — Bug-fix release. **Tenant portal (6 fixes):** VM Health Quick Fix runbook sent `vm_name` instead of UUID (`server_id` param key) → Nova 404, now always sends UUID. Reset VM Password result panel rendered nested objects as `[object Object]` — added striped key-value renderer with URL linkification. VM Rightsizing `x-lookup: vms_multi` was unhandled — added multi-checkbox selector sending a UUID array. Dashboard quota showed 0 used for all resources — DB fallback counts from `servers+flavors`/`volumes+snapshots` when Nova/Cinder returns flat integers. Snapshot Coverage calendar tooltips and history tab now include `error_message` (failure reason). Monitoring "service unreachable" banner shown when pod was running and returning empty data — fixed by returning the HTTP 200 response immediately regardless of empty `vms` list. **Migration Planner Analysis (1 fix):** All Analysis sub-view tabs (VMs, Tenants, Networks, Hosts, Clusters, Stats) returned 404 — `SourceAnalysis.tsx` used `project.id` (integer PK `1`) instead of `project.project_id` (UUID) to construct API URLs. 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
@@ -838,4 +842,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.2 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.3 | **Last Updated**: April 2026

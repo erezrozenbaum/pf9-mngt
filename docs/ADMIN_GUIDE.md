@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.2  
+**Version**: 1.93.3  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.3 — Tenant Portal: 4 Fixes + Chargeback Screen (✅ Complete)
+
+- **Runbook VM Health Quick Fix — `[object Object]` in result panel**: Added recursive `renderResultValue()` helper that renders nested objects as striped key-value tables and clickable links. Previously all nested fields (checks, remediation, audit) showed `[object Object]`.
+- **Runbook Reset VM Password — crash on volume-booted VMs**: `server["image"]` is `""` (empty string) for volume-booted VMs; `.get()` on a string raised `AttributeError`. Fixed with `isinstance(img_ref, dict)` guard. Also expanded OS detection to `os_distro` Glance field and image-name heuristics — OS type is no longer always "unknown".
+- **Monitoring Current Usage always empty in Kubernetes**: `_load_metrics_cache()` returned early on an empty monitoring-service response, blocking the DB allocation fallback. Fixed: fall through to the DB path if monitoring returns empty `vms`; also skip empty local cache files.
+- **New: Tenant Chargeback screen**: Per-VM estimated cost scoped to the authenticated tenant's projects only. Period selector (24 h/7d/30d/90d), currency override, expandable VM rows showing pricing basis. Uses flavor-specific prices from `metering_pricing`, falls back to vCPU+RAM rates from `metering_config`. Prominent "estimation only" disclaimer. DB grants for `tenant_portal_role` applied automatically on startup.
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.2 — Tenant Portal Bug Fixes: Runbooks, Dashboard Quota, Snapshot Coverage, Monitoring (✅ Complete)
 

@@ -4260,6 +4260,7 @@ GRANT INSERT ON auth_audit_log TO tenant_portal_role;
 GRANT INSERT ON notification_log TO tenant_portal_role;
 GRANT SELECT, INSERT, UPDATE ON tenant_portal_mfa TO tenant_portal_role;
 GRANT USAGE, SELECT ON SEQUENCE tenant_portal_mfa_id_seq TO tenant_portal_role;
+GRANT SELECT ON metering_resources, metering_config, metering_pricing TO tenant_portal_role;
 
 -- Tenant role permissions
 INSERT INTO role_permissions (role, resource, action) VALUES

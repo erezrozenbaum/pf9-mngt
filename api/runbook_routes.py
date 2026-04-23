@@ -102,6 +102,18 @@ def _ensure_tables():
                         ('password_reset_console', 'superadmin', 'admin', 'auto_approve')
                     ON CONFLICT (runbook_name, trigger_role) DO NOTHING
                 """)
+
+                # Grant metering read access to tenant_portal_role (v1.94.0+)
+                # Idempotent: GRANT is a no-op if already granted.
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'tenant_portal_role') THEN
+                            GRANT SELECT ON metering_resources, metering_config, metering_pricing
+                                TO tenant_portal_role;
+                        END IF;
+                    END $$;
+                """)
     except Exception as e:
         logger.warning("Could not ensure runbook tables on startup: %s", e)
 
@@ -1809,22 +1821,43 @@ def _engine_password_console(params: dict, dry_run: bool, actor: str) -> dict:
     cloud_init_supported = True
     cloud_init_note = ""
     is_windows = False
-    img_id = server.get("image", {}).get("id", "")
+    # server["image"] can be a dict {"id": "..."}, an empty string "", or None
+    # for volume-booted VMs — guard against calling .get() on a string.
+    img_ref = server.get("image") or {}
+    img_id = img_ref.get("id", "") if isinstance(img_ref, dict) else str(img_ref)
     if img_id:
         try:
             img_resp = client.session.get(f"{client.glance_endpoint}/v2/images/{img_id}", headers=headers)
             if img_resp.status_code == 200:
                 img_data = img_resp.json()
-                os_type = (img_data.get("os_type", "") or img_data.get("os", "") or "").lower()
+                # Glance stores OS info across several fields; check all of them.
+                os_type = (
+                    img_data.get("os_type") or
+                    img_data.get("os") or
+                    img_data.get("os_distro") or
+                    ""
+                ).lower()
+                # Fall back to image name heuristics when metadata is absent.
+                img_name = (img_data.get("name") or "").lower()
+                if not os_type:
+                    if "windows" in img_name:
+                        os_type = "windows"
+                    elif any(d in img_name for d in (
+                        "ubuntu", "centos", "rhel", "debian", "fedora",
+                        "alpine", "rocky", "alma", "oracle", "sles", "linux",
+                    )):
+                        os_type = "linux"
                 if "windows" in os_type:
                     is_windows = True
                     cloud_init_note = "Windows detected — cloudbase-init required"
-                elif not os_type:
-                    cloud_init_note = "OS type unknown — cloud-init support uncertain"
+                elif os_type:
+                    cloud_init_note = f"OS: {os_type} — cloud-init supported"
+                else:
+                    cloud_init_note = "OS type unknown — cloud-init support assumed (check image metadata)"
         except Exception:
             cloud_init_note = "Could not verify image metadata"
     else:
-        cloud_init_note = "No image reference — booted from volume?"
+        cloud_init_note = "No image reference — booted from volume (cloud-init supported if image was cloud-init-enabled)"
         cloud_init_supported = True  # Assume supported
 
     # Warn if the VM may not have qemu-guest-agent (required for Nova changePassword to

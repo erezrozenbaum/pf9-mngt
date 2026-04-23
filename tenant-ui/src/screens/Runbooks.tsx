@@ -32,6 +32,65 @@ function categoryIcon(cat: string): string {
   return "📖";
 }
 
+// ── Recursive result value renderer ─────────────────────────────────────────
+
+function renderResultValue(v: unknown, depth = 0): React.ReactNode {
+  if (v === null || v === undefined) {
+    return <span style={{ color: "var(--color-text-secondary)", fontSize: ".85rem" }}>—</span>;
+  }
+  if (typeof v !== "object") {
+    const s = String(v);
+    if (s.startsWith("http://") || s.startsWith("https://")) {
+      return <a href={s} target="_blank" rel="noopener noreferrer" style={{ color: "var(--brand-primary)", wordBreak: "break-all", fontSize: ".85rem" }}>{s}</a>;
+    }
+    return <span style={{ fontSize: ".85rem", wordBreak: "break-word" }}>{s}</span>;
+  }
+  if (Array.isArray(v)) {
+    if (v.length === 0) {
+      return <span style={{ color: "var(--color-text-secondary)", fontSize: ".8rem" }}>None</span>;
+    }
+    return (
+      <div style={{ maxHeight: "240px", overflowY: "auto" }}>
+        {v.map((item, i) => (
+          <div key={i} style={{ fontSize: ".8rem", padding: ".35rem .5rem", background: "var(--color-surface-raised)", borderRadius: ".3rem", marginBottom: ".25rem" }}>
+            {typeof item === "object" && item !== null ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
+                {Object.entries(item as Record<string, unknown>).slice(0, 8).map(([ik, iv]) => (
+                  <span key={ik} style={{ color: "var(--color-text-secondary)" }}>
+                    <strong>{ik.replace(/_/g, " ")}:</strong>{" "}
+                    {iv !== null && iv !== undefined ? String(iv) : "—"}
+                  </span>
+                ))}
+              </div>
+            ) : String(item)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  // Object — render as zebra key-value table; recurse for nested objects (max depth 2)
+  return (
+    <div style={{ fontSize: ".8rem", border: "1px solid var(--color-border)", borderRadius: ".3rem", overflow: "hidden" }}>
+      {Object.entries(v as Record<string, unknown>).map(([ik, iv], idx) => (
+        <div key={ik} style={{
+          display: "flex", gap: ".5rem", padding: ".3rem .6rem", flexWrap: "wrap",
+          background: idx % 2 === 0 ? "var(--color-surface-raised)" : "transparent",
+          alignItems: "flex-start",
+        }}>
+          <span style={{ fontWeight: 600, color: "var(--color-text-secondary)", minWidth: "9rem", flexShrink: 0, textTransform: "capitalize" }}>
+            {ik.replace(/_/g, " ")}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {depth < 2
+              ? renderResultValue(iv, depth + 1)
+              : <span style={{ wordBreak: "break-word" }}>{iv !== null && iv !== undefined ? String(iv) : "—"}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Execution result viewer ──────────────────────────────────────────────────
 
 function ExecutionResultPanel({ exec, onClose }: { exec: RunbookExecution; onClose: () => void }) {
@@ -82,50 +141,7 @@ function ExecutionResultPanel({ exec, onClose }: { exec: RunbookExecution; onClo
                 <div style={{ fontSize: ".8rem", fontWeight: 600, textTransform: "capitalize", marginBottom: ".3rem" }}>
                   {k.replace(/_/g, " ")}
                 </div>
-                {Array.isArray(v) ? (
-                  v.length === 0 ? (
-                    <div style={{ color: "var(--color-text-secondary)", fontSize: ".8rem" }}>None</div>
-                  ) : (
-                    <div style={{ maxHeight: "240px", overflowY: "auto" }}>
-                      {v.map((item, i) => (
-                        <div key={i} style={{ fontSize: ".8rem", padding: ".35rem .5rem", background: "var(--color-surface-raised)", borderRadius: ".3rem", marginBottom: ".25rem" }}>
-                          {typeof item === "object" ? (
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
-                              {Object.entries(item as Record<string, unknown>).slice(0, 6).map(([ik, iv]) => (
-                                <span key={ik} style={{ color: "var(--color-text-secondary)" }}>
-                                  <strong>{ik}:</strong> {String(iv)}
-                                </span>
-                              ))}
-                            </div>
-                          ) : String(item)}
-                        </div>
-                      ))}
-                    </div>
-                  )
-                ) : v !== null && typeof v === "object" ? (
-                  // Plain nested object — render as a compact key-value list
-                  <div style={{ fontSize: ".8rem", border: "1px solid var(--color-border)", borderRadius: ".3rem", overflow: "hidden" }}>
-                    {Object.entries(v as Record<string, unknown>).map(([ik, iv], idx) => {
-                      const ivStr = iv !== null && iv !== undefined ? String(iv) : "—";
-                      const isUrl = ivStr.startsWith("http://") || ivStr.startsWith("https://");
-                      return (
-                        <div key={ik} style={{
-                          display: "flex", gap: ".5rem", padding: ".3rem .6rem",
-                          background: idx % 2 === 0 ? "var(--color-surface-raised)" : "transparent",
-                        }}>
-                          <span style={{ fontWeight: 600, color: "var(--color-text-secondary)", minWidth: "9rem", flexShrink: 0, textTransform: "capitalize" }}>
-                            {ik.replace(/_/g, " ")}
-                          </span>
-                          {isUrl
-                            ? <a href={ivStr} target="_blank" rel="noopener noreferrer" style={{ color: "var(--brand-primary)", wordBreak: "break-all" }}>{ivStr}</a>
-                            : <span style={{ wordBreak: "break-word" }}>{ivStr}</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: ".85rem" }}>{String(v ?? "—")}</div>
-                )}
+                {renderResultValue(v)}
               </div>
             ))}
           </div>

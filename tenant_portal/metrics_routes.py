@@ -56,11 +56,16 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
         if os.path.exists(path):
             try:
                 with open(path) as f:
-                    return json.load(f)
+                    data = json.load(f)
+                # Only use the file if it actually contains VM data; an empty cache
+                # file would otherwise block the DB fallback below.
+                if data.get("vms"):
+                    return data
             except Exception as exc:
                 logger.warning("Could not read metrics cache %s: %s", path, exc)
 
     # 2. Try the monitoring service HTTP API (works in K8s where there is no shared volume)
+    _monitoring_empty: Optional[Dict[str, Any]] = None
     try:
         import httpx  # already in requirements via restore_routes
         with httpx.Client(timeout=5.0) as client:
@@ -68,14 +73,18 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
             resp.raise_for_status()
             data = resp.json()
             vms = data.get("data", data.get("vms", []))
-            # Return even when empty: monitoring is reachable but no hypervisors are
-            # configured yet.  Returning a non-None dict keeps cache_available=True so
-            # the UI shows "No metrics collected yet" instead of "Monitoring unreachable".
-            return {
+            monitoring_response = {
                 "vms": vms,
                 "timestamp": data.get("timestamp"),
                 "source": "monitoring",
             }
+            if vms:
+                # Monitoring service has real data — use it.
+                return monitoring_response
+            # Monitoring is reachable but its cache is empty (not yet bootstrapped
+            # or no hypervisors configured).  Save as last-resort fallback so that
+            # cache_available stays True, but keep trying the DB path.
+            _monitoring_empty = monitoring_response
     except Exception as exc:
         logger.warning("Could not fetch metrics from monitoring service %s: %s", _MONITORING_SERVICE_URL, exc)
 
@@ -114,7 +123,10 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
                 }
     except Exception as exc:
         logger.warning("Could not fetch metrics from admin API %s: %s", _INTERNAL_API_URL, exc)
-    return None
+
+    # If monitoring was reachable but empty, return that response so the UI shows
+    # "No metrics collected yet" rather than "Monitoring unreachable".
+    return _monitoring_empty
 
 
 def _normalize_vm_entry(vm: Dict[str, Any]) -> Dict[str, Any]:
@@ -322,3 +334,138 @@ async def metrics_availability(ctx: TenantContext = Depends(get_tenant_context))
         })
 
     return {"availability": result, "total": len(result)}
+
+
+# ---------------------------------------------------------------------------
+# Chargeback / Cost estimation
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/metering/chargeback", summary="Tenant cost estimate (chargeback)")
+async def tenant_chargeback(
+    hours: int = 720,
+    currency: Optional[str] = None,
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """
+    Return per-VM estimated cost for the authenticated tenant's projects.
+
+    This is an ESTIMATION based on vCPU/RAM allocation and the pricing table
+    configured by the platform administrator.  Actual billing may differ.
+
+    Pricing basis (in order of precedence):
+      1. Flavor-specific price from the metering_pricing table
+      2. Per-vCPU + per-GB-RAM hourly rates from metering_config
+      3. Zero (pricing not configured)
+    """
+    from psycopg2.extras import RealDictCursor as _RDC
+
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=_RDC) as cur:
+            inject_rls_vars(cur, ctx)
+
+            # Pricing config (admin-set)
+            cur.execute("SELECT * FROM metering_config WHERE id = 1")
+            cfg = cur.fetchone() or {}
+            cur.execute("SELECT * FROM metering_pricing ORDER BY id")
+            pricing_rows = cur.fetchall()
+
+            since = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
+
+            # Latest metering snapshot per VM, scoped to this tenant's projects
+            cur.execute(
+                """
+                SELECT DISTINCT ON (vm_id)
+                    vm_id, vm_name, project_name,
+                    vcpus_allocated AS vcpus,
+                    ram_allocated_mb AS ram_mb,
+                    flavor AS flavor_name,
+                    collected_at
+                FROM metering_resources
+                WHERE project_id = ANY(%s)
+                  AND collected_at > %s
+                ORDER BY vm_id, collected_at DESC
+                """,
+                (ctx.project_ids, since),
+            )
+            vms = [dict(r) for r in cur.fetchall()]
+            log_action(cur, ctx, "tenant_view_chargeback")
+            conn.commit()
+
+    fb_vcpu = float(cfg.get("cost_per_vcpu_hour") or 0)
+    fb_ram = float(cfg.get("cost_per_gb_ram_hour") or 0)
+    config_currency = cfg.get("cost_currency") or "USD"
+
+    # Build flavor → price map
+    flavor_pricing: Dict[str, float] = {}
+    for p in pricing_rows:
+        if p.get("category") == "flavor":
+            flavor_pricing[p["item_name"]] = float(p.get("cost_per_hour") or 0)
+
+    # Determine display currency
+    if not currency:
+        if pricing_rows:
+            currency = pricing_rows[0].get("currency") or config_currency
+        else:
+            currency = config_currency
+
+    rows = []
+    total_cost = 0.0
+    for vm in vms:
+        fp = flavor_pricing.get(vm.get("flavor_name") or "")
+        if fp and fp > 0:
+            cost_per_hour = fp
+            pricing_basis = f"Flavor price ({vm.get('flavor_name')})"
+        elif fb_vcpu > 0 or fb_ram > 0:
+            cost_per_hour = (vm.get("vcpus") or 0) * fb_vcpu + ((vm.get("ram_mb") or 0) / 1024) * fb_ram
+            pricing_basis = f"{vm.get('vcpus') or 0} vCPU × {fb_vcpu}/hr + {round((vm.get('ram_mb') or 0)/1024, 1)} GB RAM × {fb_ram}/hr"
+        else:
+            cost_per_hour = 0.0
+            pricing_basis = "Pricing not configured"
+
+        estimated_cost = round(cost_per_hour * hours, 4)
+        total_cost += estimated_cost
+        rows.append({
+            "vm_id": vm["vm_id"],
+            "vm_name": vm["vm_name"],
+            "project_name": vm.get("project_name") or "unknown",
+            "vcpus": vm.get("vcpus") or 0,
+            "ram_gb": round((vm.get("ram_mb") or 0) / 1024, 1),
+            "flavor": vm.get("flavor_name") or "unknown",
+            "cost_per_hour": round(cost_per_hour, 6),
+            "estimated_cost": estimated_cost,
+            "pricing_basis": pricing_basis,
+            "last_metering": vm["collected_at"].isoformat() if vm.get("collected_at") else None,
+        })
+
+    rows.sort(key=lambda r: r["estimated_cost"], reverse=True)
+
+    return {
+        "currency": currency,
+        "period_hours": hours,
+        "period_label": _hours_to_label(hours),
+        "vms": rows,
+        "total_estimated_cost": round(total_cost, 2),
+        "total_vms": len(rows),
+        "disclaimer": (
+            "This is an ESTIMATION based on resource allocation and the pricing rates "
+            "configured by your platform administrator. It does not represent a final invoice. "
+            "Actual charges may vary."
+        ),
+        "pricing_basis_note": (
+            f"Rates: {fb_vcpu} {currency}/vCPU/hr, {fb_ram} {currency}/GB-RAM/hr "
+            f"(flavor-specific overrides applied where configured)."
+            if (fb_vcpu > 0 or fb_ram > 0 or flavor_pricing)
+            else "Pricing rates have not been configured by the administrator."
+        ),
+        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+    }
+
+
+def _hours_to_label(hours: int) -> str:
+    if hours <= 24:
+        return f"Last {hours} hours"
+    if hours % 720 == 0:
+        return f"Last {hours // 720} month(s)"
+    if hours % 168 == 0:
+        return f"Last {hours // 168} week(s)"
+    return f"Last {hours // 24} days"

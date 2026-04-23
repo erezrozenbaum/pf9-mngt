@@ -14,6 +14,7 @@ export type Screen =
   | "restore"
   | "runbooks"
   | "reports"
+  | "chargeback"
   | "provision"
   | "activity";
 
