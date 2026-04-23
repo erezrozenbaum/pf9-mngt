@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.1] - 2026-04-23
+
+### Security
+
+- **CVE-2026-28684 — python-dotenv symlink file overwrite** — `python-dotenv 1.0.1` is vulnerable to a symlink-follow attack in `set_key()` / `unset_key()`: when the `.env` path is a symlink and `/tmp` is on a different filesystem (cross-device rename), `shutil.move()` falls back to `shutil.copy2()` which follows the symlink and overwrites the target file. An attacker with write access to the `.env` directory can pre-place a symlink to overwrite arbitrary files writable by the process. Bumped to `python-dotenv==1.2.2` (patched release) in `api/requirements.txt`, `monitoring/requirements.txt`, `notifications/requirements.txt`, and `snapshots/requirements.txt`.
+
 ## [1.93.0] - 2026-04-22
 
 ### Fixed

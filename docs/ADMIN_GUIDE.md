@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.0  
-**Last Updated**: April 22, 2026  
+**Version**: 1.93.1  
+**Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.1 — Security: python-dotenv CVE-2026-28684 (✅ Complete)
+
+- **CVE-2026-28684 (python-dotenv symlink file overwrite)**: Bumped `python-dotenv` from `1.0.1` to `1.2.2` in all four requirements files (`api/`, `monitoring/`, `notifications/`, `snapshots/`). No application behaviour change; upgrade is a drop-in replacement.
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.0 — Tenant Portal Runbooks Bug Fixes (✅ Complete)
 
