@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.2-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -48,6 +48,7 @@ pf9-mngt adds a persistent operational layer on top of Platform9 / OpenStack, co
 - **Automated snapshot & restore workflows** — no native equivalent exists in Platform9 or OpenStack; fully automated, SLA-tracked, audited
 - **VMware → OpenStack migration planning** — end-to-end from RVTools ingestion to PCD auto-provisioning
 - **Governance, audit, and Day-2 tooling** — runbooks, tickets, metering, chargeback, tenant self-service
+- **MSP business value reporting** — SLA compliance tracking per tier (Gold/Silver/Bronze), QBR PDF generation per customer, Account Manager Portfolio dashboard (per-tenant SLA status, vCPU usage, leakage alerts), Executive Health dashboard (fleet SLA gauge, MTTR, revenue leakage)
 
 Works alongside Platform9 via its APIs. Not a replacement — an operational layer on top.
 
@@ -97,7 +98,7 @@ Everything in pf9-mngt is built around four operational concerns:
 | 🔭 **Visibility** | Cross-tenant, multi-region inventory with drift detection, dependency graph, and historical tracking — metadata owned by you, not the platform |
 | ♻️ **Recovery** | Snapshot automation and full VM restore orchestration — two modes, dry-run validation, SLA compliance, no native equivalent in OpenStack |
 | 🎫 **Operations** | Ticketing, 25 built-in runbooks, metering, chargeback, standardized governance workflows, and tenant self-service portal |
-| 🤖 **Intelligence** | AI Ops Copilot (plain-language queries against live infrastructure), capacity and risk scoring, VMware migration planning end-to-end |
+| 🤖 **Intelligence** | AI Ops Copilot (plain-language queries against live infrastructure), Operational Intelligence Feed (capacity, waste, risk and anomaly engines), SLA compliance tracking and breach detection, QBR PDF generator, Account Manager Portfolio and Executive Health dashboards, revenue leakage detection, VMware migration planning end-to-end |
 
 > Everything else in the system — LDAP, multi-region, Kubernetes, export reports — supports one of these four pillars.
 
@@ -124,9 +125,28 @@ Most platforms solve provisioning.
 
 pf9-mngt solves **what happens after deployment** — the snapshot SLAs that must hold, the 3am restore that must succeed, the compliance report due tomorrow, the capacity forecast before the cluster fills up, the VMware migration that has to go right.
 
-Built from real-world operations. 410+ commits, 123 releases, 18 containerized services.
+Built from real-world operations. 670+ commits, 270+ releases, 18 containerized services.
 
 Not theory — from what actually breaks in production.
+
+---
+
+## 🤔 Why Not Just Use Platform9, Scripts, or Grafana?
+
+Because pf9-mngt combines in one system what would otherwise take 5+ separate tools:
+
+| Problem | Typical approach | pf9-mngt |
+|---------|-----------------|----------|
+| Infrastructure inventory | Scripts → CSV dumps | Persistent PostgreSQL, 29 resource types, always yours |
+| Snapshot scheduling | No native scheduler | Policy-driven, cross-tenant, quota-aware, SLA-compliant |
+| VM restore | Manual reconstruction under pressure | Fully automated, two modes, dry-run, audited |
+| VMware migration planning | Spreadsheets + guesswork | End-to-end: RVTools → risk scoring → wave planning → PCD provisioning |
+| Operations governance | Separate ticketing + runbook tool | Built-in: 25 runbooks, full ticket lifecycle, approval gates, metering |
+| MSP reporting | Manual QBRs + spreadsheet SLA tracking | QBR PDF generator, SLA tier compliance, Account Manager Portfolio dashboard |
+
+A custom script solves one problem once. pf9-mngt enforces operational discipline at scale.
+
+> Full technical feature reference: [docs/FEATURES_REFERENCE.md](docs/FEATURES_REFERENCE.md)
 
 ---
 
@@ -174,7 +194,7 @@ After running Demo Mode you'll find:
 | **LDAP Server** | OpenLDAP | internal | Enterprise authentication directory (not exposed to host) |
 | **LDAP Admin** | phpLDAPadmin | 8081 *(dev profile)* | Web-based LDAP management (`--profile dev`) |
 | **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
-| **Database** | PostgreSQL 16 | internal | 95+ tables, audit, metering, migration planner, tenant portal RLS (not exposed to host) |
+| **Database** | PostgreSQL 16 | internal | 160+ tables, audit, metering, migration planner, tenant portal RLS (not exposed to host) |
 | **Database Admin** | pgAdmin4 | 8080 *(dev profile)* | Web-based PostgreSQL management (`--profile dev`) |
 | **Snapshot Worker** | Python | — | Automated snapshot management |
 | **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
@@ -184,7 +204,7 @@ After running Demo Mode you'll find:
 | **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
 | **LDAP Sync Worker** | Python / PostgreSQL / OpenLDAP | — | Bi-directional DB ↔ LDAP sync, polls every 30 s |
 | **Tenant Portal API** | FastAPI / Gunicorn / Python | 8010 | Tenant self-service portal — JWT + RLS, MFA, per-user access allowlist |
-| **Tenant Portal UI** | React 19.2+ / TypeScript / nginx | 8083 *(dev: 8082)* | Tenant self-service web interface — 9 screens, MFA login, per-customer branding, VM provisioning, SG rule editing, dependency graph |
+| **Tenant Portal UI** | React 19.2+ / TypeScript / nginx | 8083 *(dev: 8082)* | Tenant self-service web interface — 10 screens, MFA login, per-customer branding, VM provisioning, SG rule editing, dependency graph |
 
 ![Architecture](docs/images/Architecture.png)
 
@@ -233,7 +253,7 @@ After running Demo Mode you'll find:
 
 Built during a serious Platform9 evaluation — stress-testing real operational workflows revealed four gaps no native tooling covered: **metadata ownership** (no RVTools-equivalent for OpenStack), **VM restore** (no native workflow exists), **snapshot automation** (no native scheduler), and **VMware migration planning** (no native RVTools → PCD workflow).
 
-Rather than pause the evaluation, we solved them. The result is pf9-mngt — 410+ commits, 122 releases, built using AI as a genuine engineering partner alongside regular responsibilities.
+Rather than pause the evaluation, we solved them. The result is pf9-mngt — 670+ commits, 270+ releases, built using AI as a genuine engineering partner alongside regular responsibilities.
 
 > Full engineering story and gap analysis: [docs/ENGINEERING_STORY.md](docs/ENGINEERING_STORY.md)
 
@@ -250,17 +270,29 @@ Rather than pause the evaluation, we solved them. The result is pf9-mngt — 410
 ### VM Inventory
 ![VM Inventory](docs/images/VMs-inventory.png)
 
-### History & Monitoring
-![History & Monitoring](docs/images/History-monitoring.png)
+### Drift Detection
+![Drift Detection](docs/images/Drift_detection.png)
 
-### API Performance
-![API Performance](docs/images/API-Performance.png)
+### Operational Intelligence — Insights Feed, SLA & Capacity
+![Operational Intelligence](docs/images/Intelligence_insights_forcast_and_sla_management.png)
+
+### Intelligence Management Views
+![Intelligence Management Views](docs/images/Intelligence_managemant_views.png)
+
+### Metering & Chargeback
+![Metering & Chargeback](docs/images/Metering_system.png)
+
+### Support Ticket System
+![Support Ticket System](docs/images/Support_ticket_system.png)
+
+### Tenant Portal — Self-Service Infrastructure
+![Tenant Portal](docs/images/Tenant_portal.png)
+
+### Dependency Graph
+![Dependency Graph](docs/images/Dependencies_graph.png)
 
 ### Snapshot Restore Process
 ![Snapshot Restore Process](docs/images/snapshot-restore-process.png)
-
-### Snapshot Restore Audit
-![Snapshot Restore Audit](docs/images/Snapshot-restore-audit.png)
 
 ---
 
@@ -300,10 +332,19 @@ Full incident / change / request lifecycle, SLA tracking, auto-ticketing from he
 ### 📊 Metering & Chargeback
 Per-VM resource tracking, snapshot / restore metering, API usage metrics, efficiency scoring (excellent / good / fair / poor / idle), multi-category pricing, one-click CSV chargeback export.
 
+### 📈 SLA Compliance & Business Intelligence
+SLA tier templates (Gold/Silver/Bronze/Custom), per-tenant KPI measurement (uptime %, RTO, RPO, MTTA, MTTR, backup success), monthly compliance scoring with breach and at-risk detection.
+
+**QBR PDF Generator** — one-click Quarterly Business Review reports with configurable sections: executive summary, ROI interventions, health trend, open items, and methodology. Generated on demand per customer via the tenant detail pane (`POST /api/intelligence/qbr/generate/{tenant_id}`).
+
+**Account Manager Portfolio Dashboard** — per-tenant portfolio grid with SLA status badge, vCPU usage bar, critical/leakage insight counts, and KPI strip (healthy/at-risk/breached). Gives account managers a single-screen view of all their customers without switching tenants.
+
+**Executive Health Dashboard** — fleet-level stacked SLA bar, 6 KPI cards (fleet health %, breached clients, at-risk clients, open critical insights, estimated revenue leakage/month, average MTTR), and narrative sections for leakage and MTTR compliance.
+
 ### 🤖 AI Ops Copilot — Query Layer for the Entire Platform
 Not just an LLM integration — a purpose-built operator assistant that queries your live infrastructure in plain language. Ask *"which tenants are over quota?"*, *"show drift events from last week"*, or *"how many VMs are powered off on host X?"* and get live SQL-backed answers instantly. 40+ built-in intents with tenant / project / host scoping. Ollama backend keeps all data on your network; OpenAI / Anthropic available with automatic sensitive-data redaction.
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.93.0)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.93.2)*
 A completely isolated, MFA-protected web portal that gives your customers read and restore access to their own infrastructure — without exposing your admin panel.
 
 - **Security by design**: data isolated at the PostgreSQL Row-Level Security layer (not just application code); separate JWT namespace; IP-bound Redis sessions; per-user rate limiting.
@@ -331,24 +372,6 @@ A completely isolated, MFA-protected web portal that gives your customers read a
 *Total operator effort: decisions and approvals. The system handles the rest.*
 
 > This same workflow applies to snapshot SLA breaches, drift events, capacity warnings, and tenant offboarding — all integrated, all audited.
-
----
-
-## 🤔 Why Not Just Use Platform9, Scripts, or Grafana?
-
-Because pf9-mngt combines in one system what would otherwise take 5+ separate tools:
-
-| Problem | Typical approach | pf9-mngt |
-|---------|-----------------|----------|
-| Infrastructure inventory | Scripts → CSV dumps | Persistent PostgreSQL, 29 resource types, always yours |
-| Snapshot scheduling | No native scheduler | Policy-driven, cross-tenant, quota-aware, SLA-compliant |
-| VM restore | Manual reconstruction under pressure | Fully automated, two modes, dry-run, audited |
-| VMware migration planning | Spreadsheets + guesswork | End-to-end: RVTools → risk scoring → wave planning → PCD provisioning |
-| Operations governance | Separate ticketing + runbook tool | Built-in: 25 runbooks, full ticket lifecycle, approval gates, metering |
-
-A custom script solves one problem once. pf9-mngt enforces operational discipline at scale.
-
-> Full technical feature reference: [docs/FEATURES_REFERENCE.md](docs/FEATURES_REFERENCE.md)
 
 ---
 
@@ -614,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🩹 7 Bug Fixes: Tenant Portal + Migration Planner Analysis — v1.93.2
+
+**[v1.93.2](CHANGELOG.md)** — Bug-fix release. **Tenant portal (6 fixes):** VM Health Quick Fix runbook sent `vm_name` instead of UUID (`server_id` param key) → Nova 404, now always sends UUID. Reset VM Password result panel rendered nested objects as `[object Object]` — added striped key-value renderer with URL linkification. VM Rightsizing `x-lookup: vms_multi` was unhandled — added multi-checkbox selector sending a UUID array. Dashboard quota showed 0 used for all resources — DB fallback counts from `servers+flavors`/`volumes+snapshots` when Nova/Cinder returns flat integers. Snapshot Coverage calendar tooltips and history tab now include `error_message` (failure reason). Monitoring "service unreachable" banner shown when pod was running and returning empty data — fixed by returning the HTTP 200 response immediately regardless of empty `vms` list. **Migration Planner Analysis (1 fix):** All Analysis sub-view tabs (VMs, Tenants, Networks, Hosts, Clusters, Stats) returned 404 — `SourceAnalysis.tsx` used `project.id` (integer PK `1`) instead of `project.project_id` (UUID) to construct API URLs. 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
+
 ### 🩹 Tenant Portal Runbooks Bug Fixes — v1.93.0
 
 **[v1.93.0](CHANGELOG.md)** — Bug-fix release for tenant portal runbooks. Execute dialog was permanently stuck on "Run Dry Run" because `supports_dry_run` and `parameters_schema` were missing from the list endpoint response — VM-targeted runbooks (`VM Health Quick Fix`, `Snapshot Before Escalation`) never rendered the VM selector and always executed without a `server_id`, returning 0 items. All runbook results showed "0 items found / 0 actioned" because `items_found`/`items_actioned` are stored as separate DB columns (not inside the `result` JSONB) and were never wired through the TypeScript interface or normalisers. Result panel also read from the wrong nesting level (`result.result` instead of `result`). Fixed across `tenant_portal/environment_routes.py`, `api/restore_management.py`, `tenant-ui/src/lib/api.ts`, and `Runbooks.tsx`. Quota Threshold Check description updated to not imply cross-project scope. 538 unit tests pass, 0 HIGH Bandit findings.
@@ -799,7 +826,7 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 **Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 422+ commits, 121 releases, 16 containerized services, 170+ API endpoints — built alongside regular responsibilities.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 670+ commits, 270+ releases, 18 containerized services, 170+ API endpoints — built alongside regular responsibilities.
 
 ---
 
@@ -811,4 +838,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Tests**: 538 passed, 31 skipped | **Version**: 1.93.1 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.2 | **Last Updated**: April 2026

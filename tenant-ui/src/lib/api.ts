@@ -362,6 +362,7 @@ export interface SnapshotRecord {
   run_date: string;
   status: string;
   region_display_name: string;
+  error_message: string | null;
 }
 
 /** Raw snapshot history records for charting (status = OK | ERROR | SKIPPED) */
@@ -403,6 +404,7 @@ export async function apiSnapshotHistory(
       run_date:            String(r.run_date ?? r.created_at ?? ""),
       status,
       region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+      error_message:       (r.error_message ?? null) as string | null,
     };
   });
 }

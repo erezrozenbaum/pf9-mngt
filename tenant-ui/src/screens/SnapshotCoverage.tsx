@@ -2,29 +2,36 @@ import { useEffect, useState } from "react";
 import {
   apiCompliance,
   apiSnapshotHistory,
-  apiSnapshots,
   type ComplianceRow,
   type SnapshotRecord,
-  type Snapshot,
 } from "../lib/api";
 
 // ── Calendar helpers ─────────────────────────────────────────────────────────
 
 type DayStatus = "ok" | "fail" | "none";
 
-function buildCalendarData(records: SnapshotRecord[]): Map<string, Map<string, DayStatus>> {
-  const result = new Map<string, Map<string, DayStatus>>();
+function buildCalendarData(records: SnapshotRecord[]): {
+  calMap: Map<string, Map<string, DayStatus>>;
+  errorMap: Map<string, Map<string, string>>;
+} {
+  const calMap = new Map<string, Map<string, DayStatus>>();
+  const errorMap = new Map<string, Map<string, string>>();
   for (const r of records) {
-    if (!result.has(r.vm_id)) result.set(r.vm_id, new Map());
+    if (!calMap.has(r.vm_id)) calMap.set(r.vm_id, new Map());
+    if (!errorMap.has(r.vm_id)) errorMap.set(r.vm_id, new Map());
     const dateKey = r.run_date.slice(0, 10);
-    const existing = result.get(r.vm_id)!.get(dateKey);
+    const existing = calMap.get(r.vm_id)!.get(dateKey);
     const isOk = r.status.toLowerCase() === "success";
     // A day is "ok" if at least one snapshot succeeded; "fail" only if all failed
     if (!existing || (existing === "fail" && isOk)) {
-      result.get(r.vm_id)!.set(dateKey, isOk ? "ok" : "fail");
+      calMap.get(r.vm_id)!.set(dateKey, isOk ? "ok" : "fail");
+    }
+    // Store the error message for failed days (first failure message wins)
+    if (!isOk && r.error_message && !errorMap.get(r.vm_id)!.has(dateKey)) {
+      errorMap.get(r.vm_id)!.set(dateKey, r.error_message);
     }
   }
-  return result;
+  return { calMap, errorMap };
 }
 
 function getLast30Days(): string[] {
@@ -46,7 +53,7 @@ const STATUS_CELL_CLASS: Record<DayStatus | "none", string> = {
 
 // ── CalendarGrid ─────────────────────────────────────────────────────────────
 
-interface CalRow { label: string; vmId: string; data: Map<string, DayStatus>; }
+interface CalRow { label: string; vmId: string; data: Map<string, DayStatus>; errors: Map<string, string>; }
 
 function CalendarGrid({ rows, days }: { rows: CalRow[]; days: string[] }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -64,7 +71,7 @@ function CalendarGrid({ rows, days }: { rows: CalRow[]; days: string[] }) {
           ))}
       </div>
 
-      {rows.map(({ label, vmId, data }) => (
+      {rows.map(({ label, vmId, data, errors }) => (
         <div key={vmId} style={{ display: "flex", alignItems: "center", marginBottom: "3px" }}>
           <div style={{
             width: "120px",
@@ -82,11 +89,12 @@ function CalendarGrid({ rows, days }: { rows: CalRow[]; days: string[] }) {
             {days.map((d) => {
               const val: DayStatus = data.get(d) ?? "none";
               const isToday = d === today;
+              const errMsg = val === "fail" ? (errors.get(d) ?? "") : "";
               return (
                 <div
                   key={d}
                   className={STATUS_CELL_CLASS[val]}
-                  title={`${d}${isToday ? " (today)" : ""}: ${val === "ok" ? "Snapshot OK" : val === "fail" ? "Snapshot failed" : "No snapshot"}`}
+                  title={`${d}${isToday ? " (today)" : ""}: ${val === "ok" ? "Snapshot OK" : val === "fail" ? `Snapshot failed${errMsg ? `: ${errMsg}` : ""}` : "No snapshot"}`}
                   style={isToday ? { outline: "2px solid var(--brand-primary, #1A73E8)", outlineOffset: "1px", borderRadius: "2px" } : undefined}
                 />
               );
@@ -107,7 +115,6 @@ interface Props {
 export function SnapshotCoverage({ regionFilter }: Props) {
   const [compliance, setCompliance] = useState<ComplianceRow[]>([]);
   const [history, setHistory] = useState<SnapshotRecord[]>([]);
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"calendar" | "list">("calendar");
@@ -115,12 +122,11 @@ export function SnapshotCoverage({ regionFilter }: Props) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    Promise.all([apiCompliance(), apiSnapshotHistory(), apiSnapshots()])
-      .then(([c, h, s]) => {
+    Promise.all([apiCompliance(), apiSnapshotHistory()])
+      .then(([c, h]) => {
         if (!active) return;
         setCompliance(c);
         setHistory(h);
-        setSnapshots(s);
       })
       .catch((e: unknown) => { if (active) setError(e instanceof Error ? e.message : "Failed to load"); })
       .finally(() => { if (active) setLoading(false); });
@@ -134,16 +140,17 @@ export function SnapshotCoverage({ regionFilter }: Props) {
     ? compliance.filter((c) => c.region_display_name === regionFilter)
     : compliance;
 
-  const filteredSnapshots = regionFilter
-    ? snapshots.filter((s) => s.region_display_name === regionFilter)
-    : snapshots;
+  const filteredHistory = regionFilter
+    ? history.filter((h) => h.region_display_name === regionFilter)
+    : history;
 
-  const calData = buildCalendarData(history);
+  const { calMap, errorMap } = buildCalendarData(history);
   const days = getLast30Days();
   const calRows: CalRow[] = filteredCompliance.map((c) => ({
-    label: c.vm_name,
-    vmId:  c.vm_id,
-    data:  calData.get(c.vm_id) ?? new Map(),
+    label:  c.vm_name,
+    vmId:   c.vm_id,
+    data:   calMap.get(c.vm_id) ?? new Map(),
+    errors: errorMap.get(c.vm_id) ?? new Map(),
   }));
 
   return (
@@ -213,7 +220,7 @@ export function SnapshotCoverage({ regionFilter }: Props) {
           Snapshot Calendar (30d)
         </button>
         <button className={`tab-btn${tab === "list" ? " active" : ""}`} onClick={() => setTab("list")}>
-          Snapshot List ({filteredSnapshots.length})
+          Snapshot History ({filteredHistory.length})
         </button>
       </div>
 
@@ -242,34 +249,34 @@ export function SnapshotCoverage({ regionFilter }: Props) {
 
       {tab === "list" && (
         <div className="card table-wrap" style={{ padding: 0 }}>
-          {filteredSnapshots.length === 0 ? (
-            <div className="empty-state">No snapshots found.</div>
+          {filteredHistory.length === 0 ? (
+            <div className="empty-state">No snapshot history found.</div>
           ) : (
             <table>
               <thead>
                 <tr>
                   <th>VM</th>
-                  <th>Snapshot</th>
                   <th>Date</th>
-                  <th>Size</th>
                   <th>Region</th>
                   <th>Status</th>
+                  <th>Failure Reason</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredSnapshots.map((s) => (
-                  <tr key={s.snapshot_id}>
-                    <td>{s.vm_name}</td>
-                    <td style={{ fontFamily: "monospace", fontSize: ".8rem" }}>{s.snapshot_name}</td>
-                    <td>{new Date(s.created_at).toLocaleString()}</td>
-                    <td>{s.size_gb !== null ? `${s.size_gb.toFixed(1)} GB` : "—"}</td>
-                    <td>{s.region_display_name}</td>
+                {filteredHistory.map((r) => (
+                  <tr key={r.record_id}>
+                    <td style={{ fontWeight: 500 }}>{r.vm_name}</td>
+                    <td>{new Date(r.run_date).toLocaleString()}</td>
+                    <td>{r.region_display_name}</td>
                     <td>
-                      {s.status.toLowerCase() === "available"
-                        ? <span className="badge badge-green">Available</span>
-                        : s.status.toLowerCase() === "failed"
+                      {r.status === "success"
+                        ? <span className="badge badge-green">OK</span>
+                        : r.status === "failed"
                         ? <span className="badge badge-red">Failed</span>
-                        : <span className="badge badge-amber">{s.status}</span>}
+                        : <span className="badge badge-amber">{r.status}</span>}
+                    </td>
+                    <td style={{ fontSize: ".8rem", color: "var(--color-error)", maxWidth: "300px", wordBreak: "break-word" }}>
+                      {r.error_message ?? "—"}
                     </td>
                   </tr>
                 ))}

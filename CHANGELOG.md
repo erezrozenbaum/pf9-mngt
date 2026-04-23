@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.2] - 2026-04-24
+
+### Fixed
+
+- **Runbook VM Health Quick Fix — "Server not found: HTTP 404"** — `ExecuteDialog` was sending `vm_name` (display name) as the parameter value when the schema key was not literally `"vm_id"` (e.g. `server_id`). Nova's `GET /servers/{id}` requires a UUID; passing a name returned 404. The option `value` in the VM selector now always uses `v.vm_id` regardless of the parameter key name (`tenant-ui/src/screens/Runbooks.tsx`).
+
+- **Runbook result panel — `[object Object]` for nested result fields** — `ExecutionResultPanel` rendered non-array, non-primitive values with `String(v)`, producing `[object Object]` for nested objects (`console_access`, `password_reset`, `cloud_init_check`, `audit` in the Reset VM Password runbook). Added a plain-object branch that renders nested objects as a compact striped key-value table. URLs in result objects are rendered as clickable links.
+
+- **VM Rightsizing — `server_ids` parameter showed a plain text input instead of a VM selector** — The `x-lookup: "vms_multi"` annotation was not handled by `ExecuteDialog`. Added a multi-select checkbox list for any `vms_multi` parameter, letting users pick specific VMs (or leave blank to analyse all VMs in the project). Selected UUIDs are sent as a JSON array. Managed with a separate `selectedVmIds` state variable.
+
+- **Dashboard Quota Usage — instances/vCPU/RAM showing 0 used** — PF9 Nova/Cinder returns flat integers (limits only) even when called with `?usage=true`, so the `_used()` helper (which expects `{limit, in_use, reserved}` dicts) always returned 0. Added a DB-fallback in `_internal_tenant_quota` (`api/restore_management.py`): when the first quota dict value is not a dict, in-use figures are counted directly from the `servers`+`flavors` tables (compute) and `volumes`+`snapshots` tables (storage).
+
+- **Snapshot Coverage — failures show no explanation** — `SnapshotRecord` TypeScript interface was missing `error_message`; the `apiSnapshotHistory` normaliser did not map it. Added `error_message: string | null` to both. Calendar tooltips for red (failed) cells now append the failure reason (e.g. `Oct 15: Snapshot failed: quota exceeded`). The "Snapshot List" tab is renamed "Snapshot History" and now shows `snapshot_records` rows (which include `error_message`) with a **Failure Reason** column, replacing the raw Cinder snapshot list.
+
+- **Monitoring Current Usage — "Monitoring service is unreachable" when pod is running** — `_load_metrics_cache()` fell through to the admin API DB fallback when the monitoring service responded with an empty `data` list (no hypervisors configured yet). If the DB fallback also returned empty, the function returned `None` → `cache_available: False` → wrong "unreachable" message. Fixed: a successful HTTP 200 from the monitoring service is now returned immediately regardless of whether it contains data, keeping `cache_available: True` so the UI shows "No metrics collected yet. Ensure PF9_HOSTS is configured..." (`tenant_portal/metrics_routes.py`).
+
+- **Migration Planner Analysis — all sub-routes return 404** — `SourceAnalysis.tsx` was deriving `pid` from `project.id` (the integer auto-increment primary key, e.g. `1`) instead of `project.project_id` (the UUID, e.g. `a3f7...`). Every API call in the Analysis view (`/api/migration/projects/{pid}/vms`, `/tenants`, `/hosts`, `/clusters`, `/networks`, `/stats`) was constructed with the integer, which does not match any DB row (all routes key on the UUID column). The Analysis tab showed empty data on every tab after RVTools upload. Fixed: `const pid = project.project_id` (`pf9-ui/src/components/migration/SourceAnalysis.tsx`).
+
 ## [1.93.1] - 2026-04-23
 
 ### Security

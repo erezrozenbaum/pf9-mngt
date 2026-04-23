@@ -3037,6 +3037,58 @@ def setup_restore_routes(app):
                     return int(v.get("in_use", 0))
                 return 0
 
+            # If Nova returned flat integers (no ?usage=true support), all _used() calls
+            # return 0. Fall back to DB counts for accurate in-use figures.
+            if compute and not isinstance(next(iter(compute.values()), None), dict):
+                try:
+                    from db_pool import get_connection as _get_conn
+                    from psycopg2.extras import RealDictCursor as _RDC
+                    with _get_conn() as _cn:
+                        with _cn.cursor(cursor_factory=_RDC) as _cu:
+                            _cu.execute(
+                                "SELECT COUNT(*) AS instances, "
+                                "COALESCE(SUM(f.vcpus), 0) AS cores, "
+                                "COALESCE(SUM(f.ram_mb), 0) AS ram "
+                                "FROM servers s LEFT JOIN flavors f ON f.id = s.flavor_id "
+                                "WHERE s.project_id = %s AND s.status NOT IN ('DELETED', 'SOFT_DELETED')",
+                                (project_id,),
+                            )
+                            _db = dict(_cu.fetchone() or {})
+                    for _k, _dbk in [("instances", "instances"), ("cores", "cores"), ("ram", "ram")]:
+                        _lim = int(compute.get(_k, -1) or -1)
+                        compute[_k] = {"limit": _lim, "in_use": int(_db.get(_dbk, 0) or 0), "reserved": 0}
+                except Exception:
+                    pass  # Best-effort — keep existing (zero) values
+
+            # Same fallback for Cinder storage
+            if storage and not isinstance(next(iter(storage.values()), None), dict):
+                try:
+                    from db_pool import get_connection as _get_conn
+                    from psycopg2.extras import RealDictCursor as _RDC
+                    with _get_conn() as _cn:
+                        with _cn.cursor(cursor_factory=_RDC) as _cu:
+                            _cu.execute(
+                                "SELECT COUNT(*) AS volumes, COALESCE(SUM(size_gb), 0) AS gigabytes "
+                                "FROM volumes WHERE project_id = %s AND status != 'deleted'",
+                                (project_id,),
+                            )
+                            _vol = dict(_cu.fetchone() or {})
+                            _cu.execute(
+                                "SELECT COUNT(*) AS snapshots FROM snapshots "
+                                "WHERE project_id = %s AND status != 'deleted'",
+                                (project_id,),
+                            )
+                            _snap = dict(_cu.fetchone() or {})
+                    for _k, _dbd in [
+                        ("volumes",   int(_vol.get("volumes", 0) or 0)),
+                        ("gigabytes", int(_vol.get("gigabytes", 0) or 0)),
+                        ("snapshots", int(_snap.get("snapshots", 0) or 0)),
+                    ]:
+                        _lim = int(storage.get(_k, -1) or -1)
+                        storage[_k] = {"limit": _lim, "in_use": _dbd, "reserved": 0}
+                except Exception:
+                    pass  # Best-effort
+
             results.append({
                 "project_id": project_id,
                 "compute": {

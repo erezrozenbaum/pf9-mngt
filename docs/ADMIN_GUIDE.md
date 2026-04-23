@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.1  
+**Version**: 1.93.2  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,17 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.2 — Tenant Portal Bug Fixes: Runbooks, Dashboard Quota, Snapshot Coverage, Monitoring (✅ Complete)
+
+- **VM Health Quick Fix 404**: `ExecuteDialog` now always sends the VM UUID (not display name) for any `x-lookup: "vms"` parameter, fixing Nova 404 when the param key is `server_id`.
+- **Reset VM Password `[object Object]`**: `ExecutionResultPanel` renders nested result objects as striped key-value tables. Console/VNC URLs rendered as clickable links.
+- **VM Rightsizing multi-VM selector**: `x-lookup: "vms_multi"` params now render as a multi-checkbox list in `ExecuteDialog`; selected UUIDs sent as a JSON array.
+- **Dashboard Quota Usage all 0**: DB fallback in `_internal_tenant_quota` counts VMs/vCPUs/RAM from `servers+flavors` tables when Nova/Cinder API returns flat integers (no `?usage=true` support).
+- **Snapshot Coverage failures no explanation**: Added `error_message` to `SnapshotRecord` interface and normaliser. Calendar tooltips now show the failure reason. "Snapshot History" list tab shows `snapshot_records` rows with a **Failure Reason** column.
+- **Monitoring "unreachable" when pod is running**: `_load_metrics_cache()` now returns a non-None dict when the monitoring service HTTP call succeeds with empty data, keeping `cache_available: True` and showing the correct "no data yet" message.
+- **Migration Planner Analysis — all sub-routes return 404**: `SourceAnalysis.tsx` used `project.id` (integer PK, e.g. `1`) instead of `project.project_id` (UUID) to construct every API URL in the Analysis view. All tabs (VMs, Tenants, Networks, Hosts, Clusters, Stats) returned 404. Fixed: `const pid = project.project_id` (`pf9-ui/src/components/migration/SourceAnalysis.tsx`).
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.1 — Security: python-dotenv CVE-2026-28684 (✅ Complete)
 

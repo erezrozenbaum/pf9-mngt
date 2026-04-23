@@ -102,8 +102,29 @@ function ExecutionResultPanel({ exec, onClose }: { exec: RunbookExecution; onClo
                       ))}
                     </div>
                   )
+                ) : v !== null && typeof v === "object" ? (
+                  // Plain nested object — render as a compact key-value list
+                  <div style={{ fontSize: ".8rem", border: "1px solid var(--color-border)", borderRadius: ".3rem", overflow: "hidden" }}>
+                    {Object.entries(v as Record<string, unknown>).map(([ik, iv], idx) => {
+                      const ivStr = iv !== null && iv !== undefined ? String(iv) : "—";
+                      const isUrl = ivStr.startsWith("http://") || ivStr.startsWith("https://");
+                      return (
+                        <div key={ik} style={{
+                          display: "flex", gap: ".5rem", padding: ".3rem .6rem",
+                          background: idx % 2 === 0 ? "var(--color-surface-raised)" : "transparent",
+                        }}>
+                          <span style={{ fontWeight: 600, color: "var(--color-text-secondary)", minWidth: "9rem", flexShrink: 0, textTransform: "capitalize" }}>
+                            {ik.replace(/_/g, " ")}
+                          </span>
+                          {isUrl
+                            ? <a href={ivStr} target="_blank" rel="noopener noreferrer" style={{ color: "var(--brand-primary)", wordBreak: "break-all" }}>{ivStr}</a>
+                            : <span style={{ wordBreak: "break-word" }}>{ivStr}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 ) : (
-                  <div style={{ fontSize: ".85rem" }}>{String(v)}</div>
+                  <div style={{ fontSize: ".85rem" }}>{String(v ?? "—")}</div>
                 )}
               </div>
             ))}
@@ -129,19 +150,26 @@ function ExecuteDialog({
 }) {
   const [dryRun, setDryRun] = useState(runbook.risk_level.toLowerCase() !== "low");
   const [params, setParams] = useState<Record<string, string>>({});
+  const [selectedVmIds, setSelectedVmIds] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Determine if this runbook needs a VM param from the schema.
-  // Match: any property with x-lookup="vms", or named vm_id / vm_name / server_id.
+  // Determine VM-selector params from the schema.
+  // Single VM: any property with x-lookup="vms", or conventionally named vm_id / vm_name / server_id.
+  // Multi VM:  any property with x-lookup="vms_multi" (list of UUIDs).
   const schema = runbook.parameters_schema ?? {};
   const props = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
   const vmPropEntry = Object.entries(props).find(
     ([k, def]) => def["x-lookup"] === "vms" || k === "vm_id" || k === "vm_name" || k === "server_id"
   );
+  const vmsMultiEntry = Object.entries(props).find(([, def]) => def["x-lookup"] === "vms_multi");
   const needsVm = Boolean(vmPropEntry);
   const vmParamKey = vmPropEntry ? vmPropEntry[0] : "vm_id";
-  const extraParams = Object.entries(props).filter(([k]) => k !== vmParamKey && k !== "target_project" && k !== "region_id");
+  const vmsMultiKey = vmsMultiEntry ? vmsMultiEntry[0] : null;
+  const vmsMultiDef = vmsMultiEntry ? vmsMultiEntry[1] : null;
+  const extraParams = Object.entries(props).filter(
+    ([k]) => k !== vmParamKey && k !== vmsMultiKey && k !== "target_project" && k !== "region_id"
+  );
 
   const handleRun = async () => {
     setRunning(true);
@@ -149,6 +177,10 @@ function ExecuteDialog({
     try {
       const finalParams: Record<string, unknown> = {};
       Object.entries(params).forEach(([k, v]) => { if (v) finalParams[k] = v; });
+      // Multi-VM param: send array of UUIDs (empty = all VMs in project, per engine docs)
+      if (vmsMultiKey && selectedVmIds.length > 0) {
+        finalParams[vmsMultiKey] = selectedVmIds;
+      }
       const result = await apiExecuteRunbook(runbook.name, finalParams, dryRun);
       onDone(result);
     } catch (e: unknown) {
@@ -183,9 +215,47 @@ function ExecuteDialog({
               <select className="select" value={params[vmParamKey] ?? ""}
                 onChange={(e) => setParams((p) => ({ ...p, [vmParamKey]: e.target.value }))}>
                 <option value="">— Select VM —</option>
-                {vms.map((v) => <option key={v.vm_id} value={vmParamKey === "vm_id" ? v.vm_id : v.vm_name}>{v.vm_name}</option>)}
+                {/* Always send vm_id (UUID) regardless of the param key name */}
+                {vms.map((v) => <option key={v.vm_id} value={v.vm_id}>{v.vm_name}</option>)}
               </select>
             </label>
+          </div>
+        )}
+
+        {vmsMultiKey && (
+          <div style={{ marginBottom: "1rem" }}>
+            <div style={{ fontSize: ".85rem", fontWeight: 600, marginBottom: ".3rem" }}>
+              {String(vmsMultiDef?.title ?? vmsMultiKey.replace(/_/g, " ")).replace(/\b\w/g, (c) => c.toUpperCase())}
+            </div>
+            {vmsMultiDef?.description && (
+              <div style={{ fontSize: ".75rem", color: "var(--color-text-secondary)", marginBottom: ".4rem" }}>
+                {String(vmsMultiDef.description)}
+              </div>
+            )}
+            <div style={{
+              maxHeight: "180px", overflowY: "auto", border: "1px solid var(--color-border)",
+              borderRadius: ".35rem", padding: ".4rem .6rem",
+            }}>
+              {vms.length === 0
+                ? <div style={{ fontSize: ".8rem", color: "var(--color-text-secondary)" }}>No VMs found</div>
+                : vms.map((v) => (
+                  <label key={v.vm_id} style={{ display: "flex", alignItems: "center", gap: ".5rem", fontSize: ".8125rem", padding: ".2rem 0", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedVmIds.includes(v.vm_id)}
+                      onChange={(e) => setSelectedVmIds((prev) =>
+                        e.target.checked ? [...prev, v.vm_id] : prev.filter((id) => id !== v.vm_id)
+                      )}
+                    />
+                    {v.vm_name}
+                  </label>
+                ))}
+            </div>
+            {vms.length > 0 && (
+              <div style={{ fontSize: ".72rem", color: "var(--color-text-secondary)", marginTop: ".25rem" }}>
+                {selectedVmIds.length === 0 ? "None selected — engine will analyse all VMs in project" : `${selectedVmIds.length} VM${selectedVmIds.length !== 1 ? "s" : ""} selected`}
+              </div>
+            )}
           </div>
         )}
 

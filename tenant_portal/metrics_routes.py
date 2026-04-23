@@ -68,12 +68,14 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
             resp.raise_for_status()
             data = resp.json()
             vms = data.get("data", data.get("vms", []))
-            if vms:
-                return {
-                    "vms": vms,
-                    "timestamp": data.get("timestamp"),
-                }
-            # Monitoring service responded but has no VMs — fall through to API fallback
+            # Return even when empty: monitoring is reachable but no hypervisors are
+            # configured yet.  Returning a non-None dict keeps cache_available=True so
+            # the UI shows "No metrics collected yet" instead of "Monitoring unreachable".
+            return {
+                "vms": vms,
+                "timestamp": data.get("timestamp"),
+                "source": "monitoring",
+            }
     except Exception as exc:
         logger.warning("Could not fetch metrics from monitoring service %s: %s", _MONITORING_SERVICE_URL, exc)
 

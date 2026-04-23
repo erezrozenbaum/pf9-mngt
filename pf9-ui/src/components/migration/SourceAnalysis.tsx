@@ -202,7 +202,7 @@ interface MigrationFunnel {
 /* ------------------------------------------------------------------ */
 
 export default function SourceAnalysis({ project, onProjectUpdated, onViewTenantGraph }: Props) {
-  const pid = project.id;
+  const pid = project.project_id;
   const [subView, setSubView] = useState<SubView>("dashboard");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
