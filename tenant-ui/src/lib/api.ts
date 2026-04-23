@@ -454,6 +454,8 @@ export interface VmMetrics {
   storage_pct: number | null;
   storage_used_gb: number | null;
   storage_total_gb: number | null;
+  ram_total_mb: number | null;
+  vcpus: number | null;
   iops_read: number | null;
   iops_write: number | null;
   network_rx_mb: number | null;
@@ -480,6 +482,8 @@ function _normaliseMetrics(r: Record<string, unknown>): VmMetrics {
     storage_pct:      (r.storage_pct     ?? r.storage_usage_percent      ?? null) as number | null,
     storage_used_gb:  (r.storage_used_gb  ?? null) as number | null,
     storage_total_gb: (r.storage_total_gb ?? null) as number | null,
+    ram_total_mb:     (r.ram_total_mb ?? r.memory_total_mb ?? null) as number | null,
+    vcpus:            (r.vcpus ?? null) as number | null,
     iops_read:        (r.iops_read   ?? null) as number | null,
     iops_write:       (r.iops_write  ?? null) as number | null,
     network_rx_mb:    (r.network_rx_mb  ?? r.network_rx_mbps  ?? null) as number | null,
@@ -488,12 +492,13 @@ function _normaliseMetrics(r: Record<string, unknown>): VmMetrics {
   };
 }
 
-export async function apiMetricsVms(): Promise<{ vms: VmMetrics[]; cacheAvailable: boolean }> {
+export async function apiMetricsVms(): Promise<{ vms: VmMetrics[]; cacheAvailable: boolean; monitoringSource: string | null }> {
   const raw = await tenantFetch<Record<string, unknown>>("/tenant/metrics/vms");
   const list = (Array.isArray(raw) ? raw : ((raw.vms ?? []) as unknown[])) as Record<string, unknown>[];
   return {
     vms: list.map(_normaliseMetrics),
     cacheAvailable: raw.cache_available !== false,
+    monitoringSource: (raw.monitoring_source ?? null) as string | null,
   };
 }
 

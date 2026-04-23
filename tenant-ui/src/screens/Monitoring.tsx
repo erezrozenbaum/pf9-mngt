@@ -10,9 +10,10 @@ function uptimeColor(pct: number | null): string {
   return "var(--color-error)";
 }
 
-function MetricItem({ label, value, unit = "%" }: { label: string; value: number | null; unit?: string }) {
-  const display = value !== null ? `${value.toFixed(unit === "%" ? 0 : 1)}${unit}` : "—";
+function MetricItem({ label, value, unit = "%", alloc }: { label: string; value: number | null; unit?: string; alloc?: string }) {
+  const display = value !== null ? `${value.toFixed(unit === "%" ? 0 : 1)}${unit}` : (alloc ?? "—");
   const barPct   = (value !== null && unit === "%") ? Math.min(value, 100) : null;
+  const dimmed   = value === null;
   const color    = barPct !== null
     ? (barPct >= 90 ? "var(--color-error)" : barPct >= 70 ? "var(--color-warning)" : "var(--brand-primary)")
     : "var(--brand-primary)";
@@ -21,7 +22,7 @@ function MetricItem({ label, value, unit = "%" }: { label: string; value: number
     <div style={{ paddingBottom: ".5rem", borderBottom: "1px solid var(--color-border)", marginBottom: ".5rem" }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".8125rem", marginBottom: barPct !== null ? ".2rem" : 0 }}>
         <span style={{ color: "var(--color-text-secondary)" }}>{label}</span>
-        <span style={{ fontWeight: 600, color: barPct !== null ? color : "var(--color-text)" }}>{display}</span>
+        <span style={{ fontWeight: 600, color: dimmed ? "var(--color-text-secondary)" : (barPct !== null ? color : "var(--color-text)") }}>{display}</span>
       </div>
       {barPct !== null && (
         <div className="progress-track" style={{ height: "5px" }}>
@@ -33,14 +34,17 @@ function MetricItem({ label, value, unit = "%" }: { label: string; value: number
 }
 
 function VmMetricsCard({ m }: { m: VmMetrics }) {
+  const ramGb = m.ram_total_mb != null ? `${(m.ram_total_mb / 1024).toFixed(0)} GB` : undefined;
+  const diskGb = m.storage_total_gb != null ? `${m.storage_total_gb} GB` : undefined;
+  const cpuAlloc = m.vcpus != null ? `${m.vcpus} vCPU` : undefined;
   return (
     <div className="card" style={{ padding: "1rem" }}>
       <div style={{ fontWeight: 600, fontSize: ".9rem", marginBottom: ".75rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {m.vm_name}
       </div>
-      <MetricItem label="CPU"           value={m.cpu_pct} />
-      <MetricItem label="RAM"           value={m.ram_pct} />
-      <MetricItem label="Storage"       value={m.storage_pct} />
+      <MetricItem label="CPU"           value={m.cpu_pct} alloc={cpuAlloc} />
+      <MetricItem label="RAM"           value={m.ram_pct} alloc={ramGb} />
+      <MetricItem label="Storage"       value={m.storage_pct} alloc={diskGb} />
       {(m.iops_read !== null || m.iops_write !== null) && (
         <MetricItem
           label="IOPS (r+w)"
@@ -67,6 +71,7 @@ export function Monitoring({ regionFilter }: Props) {
   const [availability, setAvailability] = useState<AvailabilityRow[]>([]);
   const [metrics, setMetrics] = useState<VmMetrics[]>([]);
   const [cacheAvailable, setCacheAvailable] = useState(true);
+  const [monitoringSource, setMonitoringSource] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"availability" | "usage">("availability");
@@ -80,6 +85,7 @@ export function Monitoring({ regionFilter }: Props) {
         setAvailability(a);
         setMetrics(m.vms);
         setCacheAvailable(m.cacheAvailable);
+        setMonitoringSource(m.monitoringSource);
       })
       .catch((e: unknown) => { if (active) setError(e instanceof Error ? e.message : "Failed to load"); })
       .finally(() => { if (active) setLoading(false); });
@@ -169,9 +175,16 @@ export function Monitoring({ regionFilter }: Props) {
               : "No metrics collected yet. Ensure PF9_HOSTS is configured and the monitoring service can reach the hypervisor nodes."}
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "1rem" }}>
-            {filteredMetrics.map((m) => <VmMetricsCard key={m.vm_id} m={m} />)}
-          </div>
+          <>
+            {monitoringSource === "allocation" && (
+              <div style={{ margin: ".75rem 0", padding: ".6rem 1rem", background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "6px", fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
+                ℹ️ Showing <strong>allocated resources</strong> (vCPU / RAM / disk from flavor). Live CPU &amp; RAM usage requires Prometheus node-exporter on the hypervisor nodes.
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "1rem" }}>
+              {filteredMetrics.map((m) => <VmMetricsCard key={m.vm_id} m={m} />)}
+            </div>
+          </>
         )
       )}
     </div>

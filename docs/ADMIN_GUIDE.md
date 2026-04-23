@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.4  
+**Version**: 1.93.5  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.5 — VM Provisioning QEMU Channel Fix + Monitoring Allocation View (✅ Complete)
+
+- **VM Provisioning (Linux) — QEMU guest agent 409 despite cloud-init install**: Root cause: Glance image was missing `hw_qemu_guest_agent=yes`. Without it, Nova/libvirt does not add the `virtio-serial` channel device (`org.qemu.guest_agent.0`) to the domain XML. The agent installs and starts inside the VM via cloud-init but has no hardware path; Nova `changePassword` returns 409. Fixed: provisioning loop now patches Linux images with `hw_qemu_guest_agent=yes` before VM creation — same pattern as Windows `hw_disk_bus`/`hw_firmware_type` patching (`api/vm_provisioning_routes.py`).
+- **Monitoring Current Usage all dashes**: `vcpus` was not forwarded through `_normalize_vm_entry()` in the DB allocation fallback. `MetricItem` component now accepts an `alloc` string shown when no live percentage exists (e.g. `2 vCPU`, `4 GB`, `20 GB`). A banner explains that live usage requires Prometheus node-exporter. (`tenant_portal/metrics_routes.py`, `Monitoring.tsx`, `api.ts`).
+- **Runbook Reset VM Password — HTTP 409 generic note**: Nova 409 + `QEMU guest agent is not enabled` now shows actionable install instructions (apt/yum). The pre-emptive Guest Agent Warning no longer appears for all Linux VMs; it only appears when the password reset fails with a guest-agent error (`api/runbook_routes.py`).
+- 524 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.4 — New VM Portal Sync, SLA Compliance Click, + 4 More Fixes (✅ Complete)
 

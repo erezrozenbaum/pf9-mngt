@@ -165,6 +165,8 @@ def _normalize_vm_entry(vm: Dict[str, Any]) -> Dict[str, Any]:
         "network_rx_mbps": vm.get("network_rx_mbps"),
         "network_tx_mbps": vm.get("network_tx_mbps"),
         "last_updated": vm.get("last_updated") or vm.get("timestamp"),
+        # Allocation hint: vcpus from flavor (present in DB fallback path, None otherwise)
+        "vcpus": vm.get("vcpus") or None,
     }
 
 
@@ -233,6 +235,7 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
                     "memory_usage_percent": None,
                     "memory_total_mb": v["ram_mb"] or None,
                     "storage_total_gb": v["disk_gb"] or None,
+                    "vcpus": v["vcpus"] or None,
                     "last_updated": None,
                 })
                 for v in db_rows
@@ -240,6 +243,15 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
             logger.info("metrics_all_vms: returning %d VMs from DB allocation fallback", len(result))
         except Exception as exc:
             logger.warning("metrics_all_vms DB allocation fallback failed: %s", exc)
+        else:
+            log_action_bare(ctx, "tenant_view_metrics")
+            return {
+                "vms": result,
+                "total": len(result),
+                "cache_available": True,
+                "monitoring_source": "allocation",
+                "cache_timestamp": None,
+            }
 
     log_action_bare(ctx, "tenant_view_metrics")
     return {

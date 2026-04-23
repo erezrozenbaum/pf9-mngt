@@ -1860,16 +1860,9 @@ def _engine_password_console(params: dict, dry_run: bool, actor: str) -> dict:
         cloud_init_note = "No image reference — booted from volume (cloud-init supported if image was cloud-init-enabled)"
         cloud_init_supported = True  # Assume supported
 
-    # Warn if the VM may not have qemu-guest-agent (required for Nova changePassword to
-    # take effect on Linux). VMs provisioned before v1.83.20 did not receive the agent
-    # via cloud-init; the Nova API call returns 202 but the password is silently discarded.
+    # guest_agent_warning is set after the password reset attempt if it fails with a
+    # QEMU guest agent error, so we pre-initialise it here and update below.
     guest_agent_warning = None
-    if not is_windows:
-        guest_agent_warning = (
-            "qemu-guest-agent must be installed and running inside the VM for "
-            "Nova changePassword to take effect. VMs provisioned before v1.83.20 "
-            "may not have it — verify with: systemctl status qemu-guest-agent"
-        )
 
     result: Dict[str, Any] = {
         "server_id": server_id,
@@ -1906,10 +1899,26 @@ def _engine_password_console(params: dict, dry_run: bool, actor: str) -> dict:
             }
             items_actioned += 1
         else:
+            _pw_note = "changePassword may not be supported by this hypervisor/image"
+            _pw_text_lower = pw_resp.text.lower()
+            if pw_resp.status_code == 409 and ("guest agent" in _pw_text_lower or "qemu" in _pw_text_lower):
+                _pw_note = (
+                    "QEMU guest agent is not enabled in this VM. "
+                    "Install and start it inside the VM, then retry:\n"
+                    "  Ubuntu/Debian: sudo apt install -y qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent\n"
+                    "  RHEL/CentOS/Rocky: sudo yum install -y qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent"
+                )
+                if not is_windows:
+                    guest_agent_warning = (
+                        "qemu-guest-agent must be installed and running inside the VM for "
+                        "Nova changePassword to take effect. "
+                        "Verify current status with: systemctl status qemu-guest-agent"
+                    )
+                    result["guest_agent_warning"] = guest_agent_warning
             result["password_reset"] = {
                 "attempted": True, "success": False,
                 "error": f"HTTP {pw_resp.status_code}: {pw_resp.text[:200]}",
-                "note": "changePassword may not be supported by this hypervisor/image",
+                "note": _pw_note,
             }
     except Exception as e:
         result["password_reset"] = {"attempted": True, "success": False, "error": str(e)}

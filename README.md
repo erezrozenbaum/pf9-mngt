@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.4-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.5-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -636,6 +636,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+### 🩹 VM Provisioning QEMU Channel Fix + Monitoring Allocation View — v1.93.5
+
+**[v1.93.5](CHANGELOG.md)** — Bug-fix release. **VM Provisioning:** Linux images were never patched with `hw_qemu_guest_agent=yes` before VM creation; Nova/libvirt therefore never added the virtio-serial channel device to the domain XML, making `changePassword` always return 409 even for VMs where cloud-init successfully installed the agent. Fixed: provisioning loop now patches Linux images with `hw_qemu_guest_agent=yes` (same pattern as Windows `hw_disk_bus`/`hw_firmware_type` patching). **Monitoring:** Current Usage cards showed `—` when using the DB allocation fallback; cards now show allocated vCPU/RAM/disk with an info banner. **Runbooks:** Reset VM Password 409 now shows distro-specific install instructions instead of the generic note; pre-emptive Guest Agent Warning removed from all-Linux flow. 524 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
+
 ### 🩹 New VM Portal Sync + SLA Compliance + 4 More Fixes — v1.93.4
 
 **[v1.93.4](CHANGELOG.md)** — Bug-fix release. **Tenant portal:** New VMs created after a fresh RVtools sync were invisible in the tenant portal because `upsert_servers()` never set `region_id` (left `NULL`); tenant portal query `WHERE region_id = ANY(%s)` silently excluded them — fixed by assigning the default region in `db_writer.py` and backfilling existing `NULL` rows on startup. My Infrastructure status filter (`Running`/`Stopped`/`Error` dropdown) showed "No VMs found" for all specific selections because the option values (`"running"`, `"stopped"`) didn’t match the OpenStack DB values (`"ACTIVE"`, `"SHUTOFF"`). Snapshot SLA Compliance card — clicking a tenant row showed nothing for compliant tenants (`warnings.length > 0` condition blocked the details row); now always shows either the issues list or a “All volumes compliant” confirmation. Also: monitoring DB fallback when cache empty, chargeback 500 fix, panel widened to 680px, snapshot calendar `"OK"` vs `"success"` comparison. 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
@@ -844,4 +848,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.4 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.5 | **Last Updated**: April 2026

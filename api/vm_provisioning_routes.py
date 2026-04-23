@@ -714,10 +714,10 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                 "windows" if "windows" in raw_os or "win" in raw_os else "linux"
             )
 
-            # Ensure Windows images carry the required Glance properties so Nova
-            # configures the correct virtual hardware (SCSI bus, virtio-scsi model,
-            # BIOS firmware).  We patch the image before creating the boot volume so
-            # that the properties are present when Cinder and Nova inspect it.
+            # Ensure images carry the required Glance properties so Nova
+            # configures the correct virtual hardware.  We patch the image before
+            # creating the boot volume so that the properties are present when
+            # Cinder and Nova inspect it.
             if os_type == "windows":
                 try:
                     admin_client.update_image_properties(image_id, {
@@ -730,6 +730,22 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                     _log_activity(conn, "vm_provisioning_vm", str(vm_id),
                                    "image_patch_warning",
                                    f"{vm.get('image_name')}: could not patch Windows image "
+                                   f"properties — {_img_patch_err}",
+                                   batch.get("created_by", "system"))
+            else:
+                # Linux: set hw_qemu_guest_agent=yes so Nova/libvirt adds the
+                # virtio-serial channel (org.qemu.guest_agent.0) to the domain XML.
+                # Without this property the channel device is absent even if cloud-init
+                # installs and starts qemu-guest-agent — the agent has no hardware path
+                # to communicate through, and Nova changePassword returns 409.
+                try:
+                    admin_client.update_image_properties(image_id, {
+                        "hw_qemu_guest_agent": "yes",
+                    })
+                except Exception as _img_patch_err:
+                    _log_activity(conn, "vm_provisioning_vm", str(vm_id),
+                                   "image_patch_warning",
+                                   f"{vm.get('image_name')}: could not patch Linux image "
                                    f"properties — {_img_patch_err}",
                                    batch.get("created_by", "system"))
 
