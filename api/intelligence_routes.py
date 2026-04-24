@@ -702,6 +702,11 @@ def get_client_health(
     """
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Resolve project UUID → human-readable name used in metering_efficiency
+            cur.execute("SELECT name FROM projects WHERE id = %s", (tenant_id,))
+            _proj_row = cur.fetchone()
+            project_key = _proj_row["name"] if _proj_row else tenant_id
+
             # 1. Efficiency — avg over last 7 days for this tenant
             cur.execute(
                 """
@@ -717,7 +722,7 @@ def get_client_health(
                 WHERE collected_at >= NOW() - INTERVAL '7 days'
                   AND (project_name = %s OR project_name ILIKE %s)
                 """,
-                (tenant_id, f"%{tenant_id}%"),
+                (project_key, f"%{project_key}%"),
             )
             eff_row = cur.fetchone() or {}
             efficiency_score = float(eff_row.get("avg_score") or 0)
@@ -1085,6 +1090,11 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
         # Re-use the same query logic as the public endpoint
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Resolve project UUID → human-readable name used in metering_efficiency
+                cur.execute("SELECT name FROM projects WHERE id = %s", (tenant_id,))
+                _proj_row = cur.fetchone()
+                project_key = _proj_row["name"] if _proj_row else tenant_id
+
                 # Efficiency
                 cur.execute(
                     """
@@ -1100,7 +1110,7 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
                     WHERE collected_at >= NOW() - INTERVAL '7 days'
                       AND (project_name = %s OR project_name ILIKE %s)
                     """,
-                    (tenant_id, f"%{tenant_id}%"),
+                    (project_key, f"%{project_key}%"),
                 )
                 eff = cur.fetchone() or {}
 

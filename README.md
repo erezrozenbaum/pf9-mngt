@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.11-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.12-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -344,7 +344,7 @@ SLA tier templates (Gold/Silver/Bronze/Custom), per-tenant KPI measurement (upti
 ### 🤖 AI Ops Copilot — Query Layer for the Entire Platform
 Not just an LLM integration — a purpose-built operator assistant that queries your live infrastructure in plain language. Ask *"which tenants are over quota?"*, *"show drift events from last week"*, or *"how many VMs are powered off on host X?"* and get live SQL-backed answers instantly. 40+ built-in intents with tenant / project / host scoping. Ollama backend keeps all data on your network; OpenAI / Anthropic available with automatic sensitive-data redaction.
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.93.10)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.93.12)*
 A completely isolated, MFA-protected web portal that gives your customers read and restore access to their own infrastructure — without exposing your admin panel.
 
 - **Security by design**: data isolated at the PostgreSQL Row-Level Security layer (not just application code); separate JWT namespace; IP-bound Redis sessions; per-user rate limiting.
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🩹 Storage % + Efficiency + Capacity Runway display fixes — v1.93.12
+
+**[v1.93.12](CHANGELOG.md)** — Bug-fix release. **Storage bar 100% for all VMs:** The DB allocation fallback set `storage_used_gb = flavor_disk_gb` and `storage_total_gb = flavor_disk_gb`, making the percentage always 100%. Fixed by setting `storage_used_gb = None` so no misleading bar is drawn — the allocated disk size in GB is still shown as a label. **Health Overview Efficiency=0:** The internal `client-health` API received the tenant's project UUID but `metering_efficiency` stores human-readable project names (e.g. `ORG1`); the UUID matched zero rows, returning `COALESCE(AVG, 0) = 0`. Fixed by resolving the UUID via the `projects` table before the query. **Capacity Runway red "0":** When quotas are not configured, `capacity_runway_days` is correctly `null` but the `HealthDials` component mapped `null → 0`, rendering a red ring with "no data". Now renders a neutral grey empty ring with "no quota configured" label. 538 unit tests pass, TypeScript clean.
+
 ### ✨ Platform9 Gnocchi Real Telemetry + CI Docker Fix — v1.93.10
 
 **[v1.93.10](CHANGELOG.md)** — Feature + fix release. **Real VM metrics from Platform9 Gnocchi:** The tenant portal Current Usage tab now queries Platform9's Gnocchi telemetry API for real CPU %, resident memory MB, disk IOPS, and network MB/s — the same values visible in Platform9's own resource-utilization UI. Uses existing `PF9_AUTH_URL`/`PF9_USERNAME`/`PF9_PASSWORD` credentials. Fires as step 3 in the metrics fallback chain (after the monitoring-service cache, before DB allocation estimates). Token caching, parallel per-VM queries via `asyncio.gather`, and graceful degradation to DB allocation when Ceilometer is not installed. New "Live Platform9 telemetry" UI badge. **CI Docker build fix:** Release pipeline tenant-portal and API images were taking 10+ minutes under QEMU ARM64 due to `RUN chown -R 1000:1000 /app` recursively chown-ing thousands of pip package files through emulated syscalls; switched to `COPY --chown=1000:1000` with targeted directory chown only. 538 unit tests pass, TypeScript clean.
@@ -869,4 +873,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.10 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.12 | **Last Updated**: April 2026

@@ -24,7 +24,7 @@ export interface ClientHealth {
 
 interface DialProps {
   label: string;
-  value: number;     // 0–100
+  value: number | null;  // null = no data: renders empty grey ring
   sublabel?: string;
   color?: string;
 }
@@ -46,9 +46,9 @@ function scoreColor(v: number): string {
 }
 
 function Dial({ label, value, sublabel, color }: DialProps) {
-  const pct    = Math.min(100, Math.max(0, value));
+  const pct    = value == null ? 0 : Math.min(100, Math.max(0, value));
   const offset = CIRCUMF - (pct / 100) * CIRCUMF;
-  const fill   = color ?? scoreColor(pct);
+  const fill   = value == null ? "rgba(255,255,255,0.25)" : (color ?? scoreColor(pct));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem" }}>
@@ -86,7 +86,7 @@ function Dial({ label, value, sublabel, color }: DialProps) {
           fontWeight="700"
           fontFamily="inherit"
         >
-          {Math.round(pct)}
+          {value == null ? "\u2014" : Math.round(pct)}
         </text>
       </svg>
       <div style={{ fontWeight: 600, fontSize: "0.85rem", textAlign: "center" }}>{label}</div>
@@ -108,12 +108,12 @@ interface Props {
 }
 
 export function HealthDials({ health }: Props) {
-  const runwayScore = health.capacity_runway_days == null
-    ? 0
+  const runwayScore: number | null = health.capacity_runway_days == null
+    ? null
     : Math.min(100, (health.capacity_runway_days / 90) * 100); // 90 days = 100%
 
   const runwaySub = health.capacity_runway_days == null
-    ? "no data"
+    ? "no quota configured"
     : `${health.capacity_runway_days}d until ${health.capacity_runway_resource ?? "limit"}`;
 
   const stabSub = health.open_critical || health.open_high || health.open_medium
@@ -144,7 +144,7 @@ export function HealthDials({ health }: Props) {
         label="Capacity Runway"
         value={runwayScore}
         sublabel={runwaySub}
-        color={runwayScore < 30 ? "#ef4444" : runwayScore < 60 ? "#f97316" : "#22c55e"}
+        color={runwayScore == null ? undefined : (runwayScore < 30 ? "#ef4444" : runwayScore < 60 ? "#f97316" : "#22c55e")}
       />
     </div>
   );

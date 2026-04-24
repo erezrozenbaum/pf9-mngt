@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.11  
-**Last Updated**: April 23, 2026  
+**Version**: 1.93.12  
+**Last Updated**: April 24, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.12 — Storage %, Efficiency & Capacity Runway fixes (✅ Complete)
+
+- **Tenant portal — Storage bar always 100%**: The DB allocation fallback computed `storage_used_gb = flavor_disk_gb` and `storage_total_gb = flavor_disk_gb`, so `used/total = 100%` for every VM. Fixed by passing `storage_used_gb = None` to the normaliser — no percentage bar is rendered; the allocated disk GB is still shown as a text label (`tenant_portal/metrics_routes.py`).
+- **Health Overview — Efficiency score always 0**: `GET /tenant/client-health` forwarded the project UUID to the admin API, which queried `metering_efficiency WHERE project_name = <uuid>`. The table stores human-readable names (e.g. `ORG1`), so no rows matched and `COALESCE(AVG, 0)` returned 0. Fixed by resolving the UUID to a project name via the `projects` table lookup before the efficiency query. Same fix applied to the public `/api/intelligence/client-health/{tenant_id}` endpoint (`api/intelligence_routes.py`).
+- **Health Overview — Capacity Runway shows red “0” when no quotas are configured**: `capacity_runway_days` is correctly returned as `null` by the API when no quota ceiling is set, but `HealthDials.tsx` mapped `null → 0` for the ring score, rendering a red arc and "no data" label. Changed to render a neutral grey empty ring with “no quota configured” sublabel to clearly distinguish “no quota data” from “quota exhausted” (`tenant-ui/src/components/HealthDials.tsx`).
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.11 — RVTools Transaction Abort Fix + Tenant Portal Current Usage Fix + System Alert Rules (✅ Complete)
 

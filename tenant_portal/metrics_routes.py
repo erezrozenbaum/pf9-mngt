@@ -294,7 +294,7 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
                         "memory_usage_percent": mem_pct,
                         "memory_total_mb":     v.get("ram_mb") or None,
                         "storage_total_gb":    disk,
-                        "storage_used_gb":     disk,   # provisioned ≈ best-effort actual
+                        "storage_used_gb":     None,  # show GB allocation only; don't show misleading 100% bar
                         "vcpus":               v.get("vcpus") or None,
                         "last_updated":        None,
                     })

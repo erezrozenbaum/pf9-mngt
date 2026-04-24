@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.12] - 2026-04-24
+
+### Fixed
+
+- **Tenant portal — Current Usage Storage bar shows 100% for all VMs** — The DB allocation fallback in `metrics_routes.py` set `storage_used_gb = flavor_disk_gb` and `storage_total_gb = flavor_disk_gb`, making the percentage always 100 %. Fixed by setting `storage_used_gb = None` so no percentage bar is rendered; the allocated disk size in GB is still shown as a label (`tenant_portal/metrics_routes.py`).
+
+- **Health Overview — Efficiency score always 0** — The internal `client-health` API endpoint received the tenant's project UUID (e.g. `4ec6a593…`) from the tenant portal. It queried `metering_efficiency` with `project_name = <uuid>`, but the table stores the human-readable name (e.g. `ORG1`), so every query returned 0 rows → `COALESCE(AVG, 0) = 0`. Fixed by resolving the project UUID to its human-readable name via a `projects` table lookup before the efficiency query. Same fix applied to the public `/api/intelligence/client-health/{tenant_id}` endpoint (`api/intelligence_routes.py`).
+
+- **Health Overview — Capacity Runway dial shows red "0"** — When no OpenStack quota is configured for a tenant, `capacity_runway_days` is correctly returned as `null` from the API. The `HealthDials` component was mapping `null → 0` for the runway score, rendering a red dial with "no data". Changed so that `null` maps to a neutral empty grey ring (no arc, "—" centre text, "no quota configured" sublabel) to clearly distinguish "no data" from "quota exhausted" (`tenant-ui/src/components/HealthDials.tsx`).
+
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
+
 ## [1.93.11] - 2026-04-24
 
 ### Added

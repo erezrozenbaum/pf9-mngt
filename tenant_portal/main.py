@@ -46,7 +46,7 @@ app = FastAPI(
         "Self-service portal for Platform9 customers. "
         "All endpoints are scoped to the authenticated tenant's projects and regions."
     ),
-    version="1.93.11",
+    version="1.93.12",
     docs_url="/tenant/docs" if os.getenv("ENABLE_DOCS", "false").lower() == "true" else None,
     redoc_url=None,
     openapi_url="/tenant/openapi.json" if os.getenv("ENABLE_DOCS", "false").lower() == "true" else None,
