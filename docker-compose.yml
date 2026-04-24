@@ -743,6 +743,14 @@ services:
       REDIS_PORT: "6379"
       TENANT_RESTORE_ENABLED: ${TENANT_RESTORE_ENABLED:-true}
       MONITORING_SERVICE_URL: http://pf9_monitoring:8001
+      # Platform9 / Gnocchi telemetry (same credentials as the admin API)
+      PF9_AUTH_URL: ${PF9_AUTH_URL}
+      PF9_USERNAME: ${PF9_USERNAME}
+      PF9_PASSWORD: ${PF9_PASSWORD:-}
+      PF9_USER_DOMAIN: ${PF9_USER_DOMAIN:-Default}
+      PF9_PROJECT_NAME: ${PF9_PROJECT_NAME:-service}
+      PF9_PROJECT_DOMAIN: ${PF9_PROJECT_DOMAIN:-Default}
+      PF9_REGION_NAME: ${PF9_REGION_NAME:-region-one}
       # tenant_portal_db_password and jwt_secret are read from /run/secrets/ when files exist;
       # env vars above are used as fallback in dev with empty secret files.
     volumes:

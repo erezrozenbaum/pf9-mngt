@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.9  
+**Version**: 1.93.10  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.10 — Platform9 Gnocchi Real Telemetry Integration + CI Docker Build Fix (✅ Complete)
+
+- **Current Usage tab: real CPU %, memory MB, IOPS, network from Platform9 Gnocchi**: New `tenant_portal/pf9_telemetry.py` module authenticates to Keystone, discovers the Gnocchi (metric) service endpoint, and fan-outs parallel per-VM queries via `asyncio.gather`. Fires as step 3 in the metrics fallback chain (after monitoring cache, before DB allocation). Uses same `PF9_AUTH_URL`/`PF9_USERNAME`/`PF9_PASSWORD` credentials as the admin API. Added PF9 env vars to Docker Compose and Helm tenant-portal deployment. UI badge "Live Platform9 telemetry" shown when Gnocchi data is active; degrades to DB allocation when Ceilometer is not collecting (`tenant_portal/pf9_telemetry.py`, `tenant_portal/metrics_routes.py`, `Monitoring.tsx`, `docker-compose.yml`, `k8s/helm/...`).
+- **CI release pipeline — tenant-portal and API images build in 10+ minutes under QEMU ARM64**: `RUN chown -R 1000:1000 /app` ran after pip install, recursively chown-ing thousands of package files through QEMU emulated syscalls. Switched to `COPY --chown=1000:1000` for source files; `chown` now only runs on `/app/logs` and `/app/static` (`api/Dockerfile`, `tenant_portal/Dockerfile`).
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.9 — Monitoring Current Usage DB Fallback Fix (✅ Complete)
 

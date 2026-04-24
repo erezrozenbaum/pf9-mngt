@@ -86,6 +86,24 @@ spec:
                   name: {{ .Values.secrets.internalServiceSecret }}
                   key: secret
                   optional: true
+            # --- Platform9 / Gnocchi telemetry (same credentials as admin API) ---
+            - name: PF9_AUTH_URL
+              value: {{ .Values.pf9.authUrl | quote }}
+            - name: PF9_USER_DOMAIN
+              value: {{ .Values.pf9.userDomain | quote }}
+            - name: PF9_PROJECT_NAME
+              value: {{ .Values.pf9.projectName | quote }}
+            - name: PF9_PROJECT_DOMAIN
+              value: {{ .Values.pf9.projectDomain | quote }}
+            - name: PF9_REGION_NAME
+              value: {{ .Values.pf9.regionName | quote }}
+            - name: PF9_USERNAME
+              value: {{ .Values.pf9.username | quote }}
+            - name: PF9_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.pf9Credentials }}
+                  key: password
           livenessProbe:
             httpGet:
               path: /tenant/health

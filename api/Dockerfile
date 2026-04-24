@@ -17,20 +17,16 @@ COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy API sources, shared module, DB migration scripts, and docs into the image
-COPY api/ ./
-COPY p9_common.py ./
-COPY run_migration.py ./
-COPY db/ ./db/
-COPY docs/ ./docs/
+COPY --chown=1000:1000 api/ ./
+COPY --chown=1000:1000 p9_common.py ./
+COPY --chown=1000:1000 run_migration.py ./
+COPY --chown=1000:1000 db/ ./db/
+COPY --chown=1000:1000 docs/ ./docs/
 
-# Ensure runtime-writable directories exist before ownership transfer.
-# Named volumes (app_logs → /app/logs) are initialised from the image layer;
-# if the directory is absent the volume is created root-owned and UID 1000
-# cannot write to it (logging.FileHandler fails → container never healthy).
-RUN mkdir -p /app/logs /app/static
-
-# Transfer ownership to UID 1000 so the pod (runAsUser: 1000) can write /app/static and other runtime dirs.
-RUN chown -R 1000:1000 /app
+# Ensure runtime-writable directories exist; owned by app user (chown only these
+# dirs — not all of /app, which would recursively chown thousands of pip package
+# files and is extremely slow under QEMU ARM64 emulation on GitHub Actions).
+RUN mkdir -p /app/logs /app/static && chown 1000:1000 /app/logs /app/static
 USER 1000
 
 # C7: 4 workers; max-requests restarts workers after 1000 requests to prevent memory leaks

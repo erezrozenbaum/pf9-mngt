@@ -27,6 +27,7 @@ from db_pool import get_tenant_connection
 from middleware import get_tenant_context, inject_rls_vars
 from tenant_context import TenantContext
 from audit_helper import log_action, log_action_bare
+from pf9_telemetry import fetch_gnocchi_vm_metrics
 
 logger = logging.getLogger("tenant_portal.metrics")
 
@@ -205,10 +206,13 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
             result.append(_normalize_vm_entry(vm))
 
     # If live monitoring cache is empty (K8s without Prometheus exporters configured),
-    # fall back to allocation-based data directly from the DB (servers + flavors + hypervisors).
-    # We compute cpu_usage_percent / memory_usage_percent as the VM's share of its
-    # hypervisor's capacity — same formula used by the admin API's /monitoring/vm-metrics.
+    # try Platform9 Gnocchi real telemetry first, then fall back to DB allocation estimates.
+    #
+    # Step A — query DB for VM inventory (needed by both Gnocchi and allocation fallback).
+    # Step B — try Platform9 Gnocchi: real CPU %, memory MB, IOPS, network MB/s.
+    # Step C — DB allocation estimate: vCPU/RAM share of hypervisor capacity.
     if not result and owned_ids:
+        db_rows: List[Dict[str, Any]] = []
         try:
             with get_tenant_connection() as _conn:
                 with _conn.cursor(cursor_factory=RealDictCursor) as _cur:
@@ -242,26 +246,57 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
                     )
                     db_rows = [dict(r) for r in _cur.fetchall()]
                     _conn.commit()
+        except Exception as exc:
+            logger.warning("metrics_all_vms DB query failed: %s", exc)
+
+        # --- Step B: Platform9 Gnocchi real telemetry ---
+        if db_rows:
+            vm_info = {
+                v["vm_id"]: {
+                    "name":    v["vm_name"],
+                    "ram_mb":  v["ram_mb"] or None,
+                    "vcpus":   v["vcpus"] or None,
+                    "disk_gb": v["disk_gb"] or None,
+                }
+                for v in db_rows
+            }
+            try:
+                gnocchi_result = await fetch_gnocchi_vm_metrics(list(vm_info.keys()), vm_info)
+                if gnocchi_result:
+                    gnocchi_vms = [_normalize_vm_entry(v) for v in gnocchi_result["vms"]]
+                    log_action_bare(ctx, "tenant_view_metrics")
+                    return {
+                        "vms": gnocchi_vms,
+                        "total": len(gnocchi_vms),
+                        "cache_available": True,
+                        "monitoring_source": "gnocchi",
+                        "cache_timestamp": gnocchi_result.get("timestamp"),
+                    }
+            except Exception as exc:
+                logger.warning("Gnocchi telemetry fetch failed: %s", exc)
+
+        # --- Step C: DB allocation estimate (last resort) ---
+        try:
             result = []
             for v in db_rows:
                 cpu_pct = None
-                if v["h_vcpus"] and v["h_vcpus"] > 0 and v["vcpus"]:
+                if v.get("h_vcpus") and v["h_vcpus"] > 0 and v.get("vcpus"):
                     cpu_pct = round(v["vcpus"] / v["h_vcpus"] * 100, 1)
                 mem_pct = None
-                if v["h_mem_mb"] and v["h_mem_mb"] > 0 and v["ram_mb"]:
+                if v.get("h_mem_mb") and v["h_mem_mb"] > 0 and v.get("ram_mb"):
                     mem_pct = round(v["ram_mb"] / v["h_mem_mb"] * 100, 1)
-                disk = v["disk_gb"] or None
+                disk = v.get("disk_gb") or None
                 result.append(
                     _normalize_vm_entry({
-                        "vm_id":  v["vm_id"],
-                        "vm_name": v["vm_name"],
-                        "cpu_usage_percent": cpu_pct,
+                        "vm_id":               v["vm_id"],
+                        "vm_name":             v["vm_name"],
+                        "cpu_usage_percent":   cpu_pct,
                         "memory_usage_percent": mem_pct,
-                        "memory_total_mb": v["ram_mb"] or None,
-                        "storage_total_gb": disk,
-                        "storage_used_gb": disk,   # provisioned = best-effort actual (no live data)
-                        "vcpus": v["vcpus"] or None,
-                        "last_updated": None,
+                        "memory_total_mb":     v.get("ram_mb") or None,
+                        "storage_total_gb":    disk,
+                        "storage_used_gb":     disk,   # provisioned ≈ best-effort actual
+                        "vcpus":               v.get("vcpus") or None,
+                        "last_updated":        None,
                     })
                 )
             logger.info("metrics_all_vms: returning %d VMs from DB allocation fallback", len(result))

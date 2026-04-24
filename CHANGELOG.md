@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.10] - 2026-04-24
+
+### Added
+
+- **Monitoring — Platform9 Gnocchi telemetry integration** — The tenant portal's Current Usage tab now queries the Platform9 Gnocchi API for real VM metrics (CPU %, resident memory MB, disk IOPS read/write, network RX/TX MB/s) using the same Keystone credentials already configured for the admin API (`PF9_AUTH_URL`, `PF9_USERNAME`, `PF9_PASSWORD`). This fires as step 3 in the metrics fallback chain (after the monitoring-service cache and before the DB allocation estimate), so tenants on Kubernetes deployments without Prometheus node-exporters see real telemetry instead of allocation estimates — the same CPU GHz, memory GB, and IOPS values Platform9's own UI shows. A new `tenant_portal/pf9_telemetry.py` module handles Keystone auth (with module-level token caching), Gnocchi endpoint discovery from the service catalog, and parallel per-VM metric queries via `asyncio.gather`. If Gnocchi returns all-null values (Ceilometer not installed), it degrades gracefully to the existing DB allocation fallback. A "Live Platform9 telemetry" badge is shown in the UI when Gnocchi data is active; the "allocation-based usage" banner continues to appear when falling back (`tenant_portal/pf9_telemetry.py`, `tenant_portal/metrics_routes.py`, `tenant-ui/src/screens/Monitoring.tsx`, `docker-compose.yml`, `k8s/helm/pf9-mngt/templates/tenant-portal/deployment.yaml`).
+
+### Fixed
+
+- **CI — Release pipeline tenant-portal image build hangs under QEMU ARM64** — Both `api/Dockerfile` and `tenant_portal/Dockerfile` ran `RUN chown -R 1000:1000 /app` after all `pip install` steps. Under QEMU-emulated ARM64 on GitHub Actions runners, this recursively `chown`s every file installed by pip (thousands of entries) via emulated syscalls, causing the build to take 10+ minutes. Fixed by switching to `COPY --chown=1000:1000` for application source files and limiting the `RUN chown` to only the writable runtime directories (`/app/logs`, `/app/static`) — a handful of directories instead of thousands of files (`api/Dockerfile`, `tenant_portal/Dockerfile`).
+
 ## [1.93.9] - 2026-04-23
 
 ### Fixed

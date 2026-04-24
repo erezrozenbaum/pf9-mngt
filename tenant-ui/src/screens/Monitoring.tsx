@@ -176,6 +176,11 @@ export function Monitoring({ regionFilter }: Props) {
           </div>
         ) : (
           <>
+            {monitoringSource === "gnocchi" && (
+              <div style={{ margin: ".75rem 0", padding: ".6rem 1rem", background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "6px", fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
+                ✅ Showing <strong>live Platform9 telemetry</strong> (Gnocchi/Ceilometer). CPU&nbsp;%, memory MB, IOPS, and network throughput are real-time values from the OpenStack compute agent.
+              </div>
+            )}
             {monitoringSource === "allocation" && (
               <div style={{ margin: ".75rem 0", padding: ".6rem 1rem", background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "6px", fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
                 ℹ️ Showing <strong>allocation-based usage</strong> (vCPU / RAM share of hypervisor capacity; disk from flavor). Live CPU &amp; RAM usage requires Prometheus node-exporter on the hypervisor nodes.
