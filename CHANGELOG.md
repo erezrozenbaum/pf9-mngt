@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.9] - 2026-04-23
+
+### Fixed
+
+- **Monitoring — Current Usage tab shows "No metrics collected yet" in Kubernetes** — The local DB allocation fallback in `metrics_all_vms()` (and the admin API's `/monitoring/vm-metrics` endpoint) used a `jsonb_array_elements(vol.raw_json->'attachments')` subquery to resolve disk size from attached volumes. If any row in the `volumes` table stored `attachments` as a non-array JSONB value the entire query failed with `ERROR: cannot extract elements from a non-array`, the exception was silently caught, and the tab showed the "No metrics collected yet" message for all VMs. Fixed by guarding the `jsonb_array_elements` call with `jsonb_typeof(vol.raw_json->'attachments') = 'array'` so malformed rows are skipped instead of aborting the query (`tenant_portal/metrics_routes.py`, `api/main.py`).
+
+- **Monitoring — Current Usage excludes SHUTOFF/PAUSED/ERROR VMs** — The DB fallback filtered `WHERE s.status = 'ACTIVE'`, hiding VMs that are powered off or in an error state. Changed to `WHERE s.status NOT IN ('DELETED', 'SOFT_DELETED')` so all live VMs owned by the tenant appear with their allocation-based usage regardless of power state (`tenant_portal/metrics_routes.py`, `api/main.py`).
+
 ## [1.93.8] - 2026-04-23
 
 ### Fixed

@@ -221,10 +221,12 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
                                COALESCE(NULLIF(fl.disk_gb, 0),
                                  (SELECT COALESCE(SUM(vol.size_gb), 0)
                                   FROM volumes vol
-                                  WHERE EXISTS (
-                                    SELECT 1 FROM jsonb_array_elements(vol.raw_json->'attachments') att
-                                    WHERE att->>'server_id' = s.id
-                                  ))
+                                  WHERE jsonb_typeof(vol.raw_json->'attachments') = 'array'
+                                    AND EXISTS (
+                                      SELECT 1
+                                      FROM jsonb_array_elements(vol.raw_json->'attachments') att
+                                      WHERE att->>'server_id' = s.id
+                                    ))
                                ) AS disk_gb,
                                h.vcpus   AS h_vcpus,
                                h.memory_mb AS h_mem_mb
@@ -232,7 +234,8 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
                         LEFT JOIN flavors fl ON fl.id = s.flavor_id
                         LEFT JOIN hypervisors h
                             ON h.hostname = s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname'
-                        WHERE s.id = ANY(%s) AND s.status = 'ACTIVE'
+                        WHERE s.id = ANY(%s)
+                          AND s.status NOT IN ('DELETED', 'SOFT_DELETED')
                         ORDER BY s.name
                         """,
                         (list(owned_ids),),

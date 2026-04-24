@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.8  
+**Version**: 1.93.9  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.9 — Monitoring Current Usage DB Fallback Fix (✅ Complete)
+
+- **Current Usage tab empty ("No metrics collected yet") in Kubernetes**: `jsonb_array_elements(vol.raw_json->'attachments')` threw `cannot extract elements from a non-array` when any volume had malformed `attachments` JSONB, aborting the entire fallback query silently. Guarded with `jsonb_typeof() = 'array'`. Also broadened status filter to `NOT IN ('DELETED','SOFT_DELETED')` so SHUTOFF/PAUSED VMs appear (`tenant_portal/metrics_routes.py`, `api/main.py`).
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.8 — Layout Flicker + Monitoring 500 + CI Fix (✅ Complete)
 

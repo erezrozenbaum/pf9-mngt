@@ -4668,8 +4668,9 @@ def monitoring_vm_metrics():
         COALESCE(fl.ram_mb, 0) AS memory_total_mb,
         COALESCE(fl.ram_mb, 0) AS memory_allocated_mb,
         COALESCE(NULLIF(fl.disk_gb, 0),
-            (SELECT COALESCE(SUM(vol.size_gb), 0) FROM volumes vol 
-             WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(vol.raw_json->'attachments') att 
+            (SELECT COALESCE(SUM(vol.size_gb), 0) FROM volumes vol
+             WHERE jsonb_typeof(vol.raw_json->'attachments') = 'array'
+               AND EXISTS (SELECT 1 FROM jsonb_array_elements(vol.raw_json->'attachments') att
                            WHERE att->>'server_id' = s.id))
         ) AS storage_allocated_gb,
         -- Per-VM CPU/RAM usage cannot be determined from DB alone;
@@ -4688,7 +4689,7 @@ def monitoring_vm_metrics():
     LEFT JOIN domains d ON d.id = p.domain_id
     LEFT JOIN flavors fl ON fl.id = s.flavor_id
     LEFT JOIN hypervisors h ON h.hostname = s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname'
-    WHERE s.status = 'ACTIVE'
+    WHERE s.status NOT IN ('DELETED', 'SOFT_DELETED')
     ORDER BY s.name;
     """
     rows = run_query(sql)
