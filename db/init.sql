@@ -606,7 +606,7 @@ CREATE TABLE IF NOT EXISTS users_history (
     id           BIGSERIAL PRIMARY KEY,
     user_id      TEXT NOT NULL,
     run_id       BIGINT REFERENCES inventory_runs(id),
-    name         TEXT NOT NULL,
+    name         TEXT,
     email        TEXT,
     enabled      BOOLEAN DEFAULT true,
     domain_id    TEXT,
@@ -4026,6 +4026,15 @@ INSERT INTO system_settings (key, value, description)
 VALUES ('rvtools_retention_days', '30', 'Number of days to keep RVTools Excel exports on disk')
 ON CONFLICT (key) DO NOTHING;
 
+INSERT INTO system_settings (key, value, description) VALUES
+  ('alert.rvtools_enabled',           'true',  'Enable rvtools failure alert emails'),
+  ('alert.rvtools_recipients',        '',       'Comma-separated email addresses for rvtools alerts'),
+  ('alert.rvtools_failure_threshold', '3',      'Number of consecutive failures before sending an alert'),
+  ('alert.rvtools_recovery_enabled',  'true',   'Send a recovery email when rvtools succeeds after failures'),
+  ('alert.rvtools_in_alert_state',    'false',  'Auto-managed: true while consecutive failures >= threshold'),
+  ('alert.rvtools_last_alert_run_id', '',       'Auto-managed: run ID when last alert email was sent')
+ON CONFLICT (key) DO NOTHING;
+
 -- =========================================================================
 -- TENANT PORTAL — v1.84.0 (Phase P0 + P1)
 -- Added by migrate_tenant_portal.sql; mirrored here for fresh installs.
@@ -4241,6 +4250,7 @@ END $$;
 GRANT USAGE ON SCHEMA public TO tenant_portal_role;
 
 GRANT SELECT ON servers, volumes, snapshots, snapshot_records TO tenant_portal_role;
+GRANT SELECT ON hypervisors TO tenant_portal_role;
 GRANT SELECT ON flavors, inventory_runs TO tenant_portal_role;
 GRANT SELECT ON networks, subnets, ports TO tenant_portal_role;
 GRANT SELECT ON security_groups, security_group_rules TO tenant_portal_role;

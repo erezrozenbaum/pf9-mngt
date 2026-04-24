@@ -459,3 +459,118 @@ async def send_test_webhook(body: TestWebhookRequest):
             results["teams"] = {"status": "ok" if ok else "error"}
 
     return {"results": results}
+
+
+# ---------------------------------------------------------------------------
+# System alert rules (rvtools / service health)
+# ---------------------------------------------------------------------------
+
+_ALERT_SETTING_KEYS = [
+    "alert.rvtools_enabled",
+    "alert.rvtools_recipients",
+    "alert.rvtools_failure_threshold",
+    "alert.rvtools_recovery_enabled",
+    # read-only state keys (managed automatically)
+    "alert.rvtools_in_alert_state",
+    "alert.rvtools_last_alert_run_id",
+]
+
+_ALERT_DEFAULTS = {
+    "alert.rvtools_enabled": "true",
+    "alert.rvtools_recipients": "",
+    "alert.rvtools_failure_threshold": "3",
+    "alert.rvtools_recovery_enabled": "true",
+    "alert.rvtools_in_alert_state": "false",
+    "alert.rvtools_last_alert_run_id": "",
+}
+
+
+class AlertRulesUpdate(BaseModel):
+    enabled: bool = True
+    recipients: str = ""  # comma-separated email addresses
+    failure_threshold: int = 3
+    recovery_enabled: bool = True
+
+    @field_validator("failure_threshold")
+    @classmethod
+    def _threshold_range(cls, v: int) -> int:
+        if not 1 <= v <= 100:
+            raise ValueError("failure_threshold must be between 1 and 100")
+        return v
+
+
+@router.get("/system-alert-rules", dependencies=[Depends(require_permission("notifications", "read"))])
+async def get_system_alert_rules():
+    """Return current system alert rule configuration."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT key, value FROM system_settings WHERE key LIKE 'alert.rvtools_%'"
+            )
+            rows = {r[0]: r[1] for r in cur.fetchall()}
+
+    cfg = {**_ALERT_DEFAULTS, **rows}
+    return {
+        "enabled": cfg["alert.rvtools_enabled"].lower() in ("true", "1", "yes"),
+        "recipients": cfg["alert.rvtools_recipients"],
+        "failure_threshold": int(cfg["alert.rvtools_failure_threshold"]),
+        "recovery_enabled": cfg["alert.rvtools_recovery_enabled"].lower() in ("true", "1", "yes"),
+        "in_alert_state": cfg["alert.rvtools_in_alert_state"].lower() in ("true", "1", "yes"),
+        "last_alert_run_id": cfg["alert.rvtools_last_alert_run_id"] or None,
+    }
+
+
+@router.put("/system-alert-rules", dependencies=[Depends(require_permission("notifications", "write"))])
+async def update_system_alert_rules(body: AlertRulesUpdate):
+    """Update system alert rule configuration."""
+    updates = {
+        "alert.rvtools_enabled": "true" if body.enabled else "false",
+        "alert.rvtools_recipients": body.recipients.strip(),
+        "alert.rvtools_failure_threshold": str(body.failure_threshold),
+        "alert.rvtools_recovery_enabled": "true" if body.recovery_enabled else "false",
+    }
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for key, value in updates.items():
+                cur.execute(
+                    """INSERT INTO system_settings (key, value)
+                       VALUES (%s, %s)
+                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()""",
+                    (key, value),
+                )
+        conn.commit()
+    return {"status": "ok", "updated": updates}
+
+
+class AlertTestRequest(BaseModel):
+    to_email: str
+
+
+@router.post("/system-alert-rules/test", dependencies=[Depends(require_permission("notifications", "write"))])
+async def test_system_alert_email(body: AlertTestRequest):
+    """Send a test RVTools alert email to verify the configuration."""
+    cfg = get_smtp_config()
+    if not cfg["enabled"] or not cfg["host"]:
+        raise HTTPException(
+            status_code=400,
+            detail="SMTP is not enabled. Configure SMTP via Settings before testing alerts.",
+        )
+    html = f"""
+<html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto">
+<div style="background:#d32f2f;color:#fff;padding:16px 20px;border-radius:6px 6px 0 0">
+  <h2 style="margin:0">&#x26A0; [TEST] RVTools Alert Notification</h2>
+</div>
+<div style="background:#fafafa;padding:20px;border:1px solid #ddd;border-radius:0 0 6px 6px">
+  <p>This is a <strong>test alert email</strong> from the Platform9 Management System.</p>
+  <p>If you received this, your alert configuration is working correctly.</p>
+  <p style="color:#888;font-size:12px;margin-top:24px">
+    Sent at: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}
+  </p>
+</div>
+</body></html>"""
+    try:
+        ok = smtp_send_email(body.to_email, "[TEST] PF9 RVTools Alert Notification", html, raise_on_error=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"SMTP error: {exc}") from exc
+    return {"status": "ok" if ok else "error"}
+

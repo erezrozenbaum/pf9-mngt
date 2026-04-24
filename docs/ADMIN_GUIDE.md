@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.10  
+**Version**: 1.93.11  
 **Last Updated**: April 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.11 — RVTools Transaction Abort Fix + Tenant Portal Current Usage Fix + System Alert Rules (✅ Complete)
+
+- **RVTools — "current transaction is aborted" on every run**: Four compounding bugs in `db_writer.py` caused the PostgreSQL connection to enter `INERROR` state at the start of every inventory run. Root causes: (1) `_auto_ticket_for_drift` called inside a try/except block that held an open savepoint — any exception triggered `ROLLBACK TO SAVEPOINT` on an already-released savepoint, hard-aborting the transaction; (2) `upsert_servers` used `WHERE enabled = TRUE` against `pf9_regions` but the column is `is_enabled`; (3) `users_history.name NOT NULL` violated by nameless OpenStack service accounts; (4) narrow exception handler in `_upsert_with_history`. All four fixed. DB migration (`db/migrate_v1_93_11.sql`) also adds a `pf9_regions.enabled` generated alias for backward compatibility with old images during rolling K8s deployments.
+- **Tenant portal — Current Usage tab empty in Kubernetes**: `metrics_routes.py` returned early when the metrics cache was absent (all K8s pods), skipping the DB allocation fallback entirely. Fixed to always run the DB allocation path when VMs are owned. Also granted `SELECT` on `hypervisors` to `tenant_portal_role` (previously blocked the JOIN silently).
+- **System Alert Rules — RVTools failure notifications**: New alert system sends email when RVTools inventory sync fails N consecutive times (configurable, default 3) and a recovery email on first success after a failure streak. State persisted in `system_settings`. Admin UI card added under Notifications → Settings → System Alert Rules with enable/disable, recipient list, threshold, recovery toggle, live alert-state badge, and test-email button.
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
 
 ### v1.93.10 — Platform9 Gnocchi Real Telemetry Integration + CI Docker Build Fix (✅ Complete)
 

@@ -6,10 +6,17 @@ Handles all database operations for storing inventory data
 import os
 import json
 import hashlib
+import logging
+import smtplib
+import ssl
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import List, Dict, Any, Optional
 import psycopg2
 from psycopg2.extras import execute_values, RealDictCursor
+
+logger = logging.getLogger("pf9_db_writer")
 
 
 # Database configuration from environment
@@ -30,6 +37,232 @@ def db_connect():
         password=DB_PASSWORD,
     )
 
+
+# ---------------------------------------------------------------------------
+# Alert helpers
+# ---------------------------------------------------------------------------
+
+def _get_smtp_config_from_db(conn) -> dict:
+    """Read SMTP config from system_settings table (keys: smtp.*)."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT before_smtp_read")
+            try:
+                cur.execute(
+                    "SELECT key, value FROM system_settings WHERE key LIKE 'smtp.%'"
+                )
+                rows = cur.fetchall()
+                cur.execute("RELEASE SAVEPOINT before_smtp_read")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT before_smtp_read")
+                rows = []
+        settings = {r[0]: r[1] for r in rows}
+        raw_enabled = settings.get("smtp.enabled", "").lower()
+        enabled = raw_enabled in ("true", "1", "yes") if raw_enabled else False
+        host = settings.get("smtp.host", os.getenv("SMTP_HOST", ""))
+        port_str = settings.get("smtp.port", os.getenv("SMTP_PORT", "587"))
+        port = int(port_str) if str(port_str).isdigit() else 587
+        tls_str = settings.get("smtp.use_tls", os.getenv("SMTP_USE_TLS", "true"))
+        use_tls = tls_str.lower() in ("true", "1", "yes")
+        return {
+            "enabled": enabled,
+            "host": host,
+            "port": port,
+            "use_tls": use_tls,
+            "username": settings.get("smtp.username", os.getenv("SMTP_USERNAME", "")),
+            "password": settings.get("smtp.password", os.getenv("SMTP_PASSWORD", "")),
+            "from_address": settings.get("smtp.from_address", os.getenv("SMTP_FROM_ADDRESS", "pf9-mgmt@example.com")),
+            "from_name": settings.get("smtp.from_name", os.getenv("SMTP_FROM_NAME", "Platform9 Management")),
+        }
+    except Exception as e:
+        logger.warning("_get_smtp_config_from_db failed: %s", e)
+        return {"enabled": False, "host": ""}
+
+
+def _send_alert_email(smtp_cfg: dict, to_addrs: list, subject: str, html_body: str) -> bool:
+    """Send an alert email using the provided SMTP config dict."""
+    if not smtp_cfg.get("enabled") or not smtp_cfg.get("host"):
+        logger.info("SMTP disabled/unconfigured — skipping alert '%s'", subject)
+        return False
+    msg = MIMEMultipart("alternative")
+    msg["From"] = f"{smtp_cfg['from_name']} <{smtp_cfg['from_address']}>"
+    msg["To"] = ", ".join(to_addrs)
+    msg["Subject"] = subject
+    msg.attach(MIMEText(html_body, "html"))
+    try:
+        if smtp_cfg["use_tls"]:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP(smtp_cfg["host"], smtp_cfg["port"], timeout=30) as srv:
+                srv.ehlo()
+                srv.starttls(context=ctx)
+                srv.ehlo()
+                if smtp_cfg["username"]:
+                    srv.login(smtp_cfg["username"], smtp_cfg["password"])
+                srv.sendmail(smtp_cfg["from_address"], to_addrs, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp_cfg["host"], smtp_cfg["port"], timeout=30) as srv:
+                srv.ehlo()
+                if smtp_cfg["username"]:
+                    srv.login(smtp_cfg["username"], smtp_cfg["password"])
+                srv.sendmail(smtp_cfg["from_address"], to_addrs, msg.as_string())
+        logger.info("Alert email sent to %s: %s", to_addrs, subject)
+        return True
+    except Exception as e:
+        logger.warning("Alert email send failed: %s", e)
+        return False
+
+
+def _build_failure_html(consec: int, run_id: int) -> str:
+    return f"""
+<html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto">
+<div style="background:#d32f2f;color:#fff;padding:16px 20px;border-radius:6px 6px 0 0">
+  <h2 style="margin:0">&#x26A0; RVTools Inventory Sync Alert</h2>
+</div>
+<div style="background:#fafafa;padding:20px;border:1px solid #ddd;border-radius:0 0 6px 6px">
+  <p>The RVTools inventory sync has <strong>failed {consec} consecutive time{"s" if consec != 1 else ""}</strong>.</p>
+  <table style="border-collapse:collapse;width:100%">
+    <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;width:160px">Last Run ID</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee">#{run_id}</td></tr>
+    <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold">Consecutive Failures</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee">{consec}</td></tr>
+    <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold">Time (UTC)</td>
+        <td style="padding:6px 10px">{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</td></tr>
+  </table>
+  <p style="margin-top:16px">Please check the scheduler worker logs and verify connectivity to the OpenStack environment.</p>
+  <p style="color:#888;font-size:12px;margin-top:24px">This alert was sent by Platform9 Management &mdash; RVTools monitor.</p>
+</div>
+</body></html>"""
+
+
+def _build_recovery_html(run_id: int) -> str:
+    return f"""
+<html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto">
+<div style="background:#388e3c;color:#fff;padding:16px 20px;border-radius:6px 6px 0 0">
+  <h2 style="margin:0">&#x2705; RVTools Inventory Sync Recovered</h2>
+</div>
+<div style="background:#fafafa;padding:20px;border:1px solid #ddd;border-radius:0 0 6px 6px">
+  <p>The RVTools inventory sync has <strong>completed successfully</strong> and is no longer in a failed state.</p>
+  <table style="border-collapse:collapse;width:100%">
+    <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;width:160px">Run ID</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee">#{run_id}</td></tr>
+    <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold">Time (UTC)</td>
+        <td style="padding:6px 10px">{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</td></tr>
+  </table>
+  <p style="color:#888;font-size:12px;margin-top:24px">This alert was sent by Platform9 Management &mdash; RVTools monitor.</p>
+</div>
+</body></html>"""
+
+
+def _set_system_setting(conn, key: str, value: str):
+    """Upsert a key in system_settings (runs in a new savepoint to avoid aborting the outer tx)."""
+    with conn.cursor() as cur:
+        cur.execute("SAVEPOINT before_setting_update")
+        try:
+            cur.execute(
+                """INSERT INTO system_settings (key, value)
+                   VALUES (%s, %s)
+                   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()""",
+                (key, value),
+            )
+            cur.execute("RELEASE SAVEPOINT before_setting_update")
+        except Exception as e:
+            cur.execute("ROLLBACK TO SAVEPOINT before_setting_update")
+            logger.warning("_set_system_setting(%s) failed: %s", key, e)
+
+
+def check_rvtools_alert(conn, run_id: int, status: str) -> None:
+    """
+    Called after finish_inventory_run(). Checks consecutive failure count and
+    sends an alert email when the threshold is reached, and a recovery email
+    on the first success after a failure streak.
+
+    All DB reads/writes use savepoints so a failure here never aborts the
+    caller's transaction.
+    """
+    try:
+        # --- Load alert config from DB ---
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT before_alert_read")
+            try:
+                cur.execute(
+                    "SELECT key, value FROM system_settings WHERE key LIKE 'alert.rvtools_%'"
+                )
+                cfg = {r[0]: r[1] for r in cur.fetchall()}
+                cur.execute("RELEASE SAVEPOINT before_alert_read")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT before_alert_read")
+                return  # Can't read config — skip silently
+
+        if cfg.get("alert.rvtools_enabled", "true").lower() not in ("true", "1", "yes"):
+            return
+
+        recipients_str = cfg.get("alert.rvtools_recipients", "").strip()
+        if not recipients_str:
+            logger.info("check_rvtools_alert: no recipients configured — skipping")
+            return
+
+        threshold = max(1, int(cfg.get("alert.rvtools_failure_threshold", "3")))
+        recipients = [e.strip() for e in recipients_str.split(",") if e.strip()]
+        in_alert = cfg.get("alert.rvtools_in_alert_state", "false").lower() in ("true", "1", "yes")
+
+        smtp_cfg = _get_smtp_config_from_db(conn)
+
+        if status == "failure":
+            # Count how many consecutive failures exist up to and including this run
+            with conn.cursor() as cur:
+                cur.execute("SAVEPOINT before_recent_read")
+                try:
+                    cur.execute(
+                        """SELECT status FROM inventory_runs
+                           WHERE source = 'pf9_rvtools'
+                           ORDER BY id DESC LIMIT %s""",
+                        (threshold,),
+                    )
+                    recent = [r[0] for r in cur.fetchall()]
+                    cur.execute("RELEASE SAVEPOINT before_recent_read")
+                except Exception:
+                    cur.execute("ROLLBACK TO SAVEPOINT before_recent_read")
+                    return
+
+            consec = sum(1 for _ in (s for s in recent if s == "failure")
+                         for _stop in [False] if not _stop)
+            # Simpler: count leading failures
+            consec = 0
+            for s in recent:
+                if s == "failure":
+                    consec += 1
+                else:
+                    break
+
+            if consec >= threshold and not in_alert:
+                subject = (
+                    f"[ALERT] RVTools inventory sync failed {consec} consecutive time"
+                    + ("s" if consec != 1 else "")
+                )
+                sent = _send_alert_email(smtp_cfg, recipients, subject, _build_failure_html(consec, run_id))
+                if sent:
+                    _set_system_setting(conn, "alert.rvtools_in_alert_state", "true")
+                    _set_system_setting(conn, "alert.rvtools_last_alert_run_id", str(run_id))
+                    conn.commit()
+
+        elif status == "success" and in_alert:
+            recovery_enabled = cfg.get("alert.rvtools_recovery_enabled", "true").lower() in ("true", "1", "yes")
+            if recovery_enabled:
+                _send_alert_email(
+                    smtp_cfg, recipients,
+                    "[RESOLVED] RVTools inventory sync recovered successfully",
+                    _build_recovery_html(run_id),
+                )
+            _set_system_setting(conn, "alert.rvtools_in_alert_state", "false")
+            conn.commit()
+
+    except Exception as e:
+        logger.warning("check_rvtools_alert failed: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# Inventory run lifecycle
+# ---------------------------------------------------------------------------
 
 def start_inventory_run(conn, source: str = "pf9_rvtools") -> int:
     """Start a new inventory run and return its ID"""
@@ -56,6 +289,7 @@ def finish_inventory_run(conn, run_id: int, status: str = "success", notes: Opti
             WHERE id = %s
         """, (status, notes, run_id))
         conn.commit()
+    check_rvtools_alert(conn, run_id, status)
 
 
 def _compute_change_hash(record: Dict[str, Any], exclude_fields: List[str] = None) -> str:
@@ -164,8 +398,12 @@ def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],
         new_val = str(new_record.get(field, "")) if new_record.get(field) is not None else None
         if old_val == new_val:
             continue
-        # Field changed — emit drift event
+        # Field changed — emit drift event.
+        # Use a per-event savepoint so that a failed INSERT does NOT leave the
+        # PostgreSQL transaction in an aborted state, which would propagate as
+        # "current transaction is aborted" errors on all subsequent queries.
         try:
+            cur.execute("SAVEPOINT before_drift_event")
             cur.execute("""
                 INSERT INTO drift_events
                     (rule_id, resource_type, resource_id, resource_name,
@@ -189,27 +427,37 @@ def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],
                 new_val,
                 rule["description"],
             ))
-
-            # T3.1 — auto-incident ticket for critical/warning drift
-            _auto_ticket_for_drift(
-                cur.connection,
-                severity=rule["severity"],
-                resource_type=table_name,
-                resource_id=str(record_id),
-                resource_name=new_record.get("name") or new_record.get("hostname") or str(record_id),
-                project_id=new_record.get("project_id") or old_row.get("project_id"),
-                project_name=new_record.get("project_name") or old_row.get("project_name"),
-                field_changed=field,
-                description=rule["description"],
-            )
+            cur.execute("RELEASE SAVEPOINT before_drift_event")
 
         except Exception as drift_err:
-            # Non-fatal — log but don't break inventory sync
+            # Non-fatal — roll back only this event and log; the outer transaction
+            # and any previously written history entries are preserved.
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT before_drift_event")
+            except Exception:
+                pass
             import logging
             logging.getLogger("db_writer").warning(
                 "Drift event insert failed for %s/%s field %s: %s",
                 table_name, record_id, field, drift_err,
             )
+            continue
+
+        # T3.1 — auto-incident ticket for critical/warning drift.
+        # Called OUTSIDE the savepoint try/except so that any failure here
+        # cannot trigger a ROLLBACK TO on an already-released savepoint,
+        # which would leave the PG transaction in a hard-aborted state.
+        _auto_ticket_for_drift(
+            cur.connection,
+            severity=rule["severity"],
+            resource_type=table_name,
+            resource_id=str(record_id),
+            resource_name=new_record.get("name") or new_record.get("hostname") or str(record_id),
+            project_id=new_record.get("project_id") or old_row.get("project_id"),
+            project_name=new_record.get("project_name") or old_row.get("project_name"),
+            field_changed=field,
+            description=rule["description"],
+        )
 
 
 def _infer_os_from_image_name(name: str) -> Optional[str]:
@@ -338,18 +586,19 @@ def _upsert_with_history(
                     if old_row and drift_rules:
                         _detect_drift(cur, table_name, rid, old_row, record, drift_rules)
 
-        except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn) as e:
-            # History table doesn't exist or has wrong schema — roll back only
-            # the history writes, preserving the main upsert above.
-            # This is intentional fail-safe behaviour, but log a warning so
-            # operators know which migration is missing.
-            cur.execute("ROLLBACK TO SAVEPOINT before_history")
+        except Exception as e:
+            # ANY failure in history/drift tracking (missing table, wrong schema,
+            # NOT NULL violation, unique violation, aborted-transaction cascade, etc.)
+            # must roll back only the history writes and NEVER abort the outer
+            # transaction that already wrote the main upsert data above.
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT before_history")
+            except Exception:
+                pass
             import logging as _logging
             _logging.getLogger(__name__).warning(
-                "History tracking silently skipped for table '%s' — "
-                "schema mismatch (%s: %s). "
-                "Run the corresponding migration (e.g. migrate_os_tracking.sql) "
-                "against the database to re-enable history recording.",
+                "History/drift tracking skipped for table '%s' — %s: %s. "
+                "Run the corresponding migration against the database to fix this.",
                 table_name, type(e).__name__, e
             )
 
@@ -373,6 +622,7 @@ def _upsert_with_history(
                 for missing_id in deleted_ids:
                     missing_row = deleted_rows.get(missing_id, {})
                     try:
+                        cur.execute("SAVEPOINT before_del_drift_event")
                         cur.execute("""
                             INSERT INTO drift_events
                                 (rule_id, resource_type, resource_id, resource_name,
@@ -396,23 +646,32 @@ def _upsert_with_history(
                             "deleted",
                             f"{table_name[:-1]} '{missing_row.get('name') or missing_id}' was deleted from OpenStack",
                         ))
-                        _auto_ticket_for_drift(
-                            conn,
-                            severity=deletion_rule["severity"],
-                            resource_type=table_name,
-                            resource_id=missing_id,
-                            resource_name=missing_row.get("name") or missing_row.get("hostname") or missing_id,
-                            project_id=missing_row.get("project_id"),
-                            project_name=missing_row.get("project_name"),
-                            field_changed="status",
-                            description=f"{table_name[:-1]} '{missing_row.get('name') or missing_id}' was deleted from OpenStack",
-                        )
+                        cur.execute("RELEASE SAVEPOINT before_del_drift_event")
+
                     except Exception as del_drift_err:
+                        try:
+                            cur.execute("ROLLBACK TO SAVEPOINT before_del_drift_event")
+                        except Exception:
+                            pass
                         import logging
                         logging.getLogger("db_writer").warning(
                             "Deletion drift event failed for %s/%s: %s",
                             table_name, missing_id, del_drift_err,
                         )
+                        continue
+
+                    # Called OUTSIDE the savepoint try/except — see comment in _detect_drift.
+                    _auto_ticket_for_drift(
+                        conn,
+                        severity=deletion_rule["severity"],
+                        resource_type=table_name,
+                        resource_id=missing_id,
+                        resource_name=missing_row.get("name") or missing_row.get("hostname") or missing_id,
+                        project_id=missing_row.get("project_id"),
+                        project_name=missing_row.get("project_name"),
+                        field_changed="status",
+                        description=f"{table_name[:-1]} '{missing_row.get('name') or missing_id}' was deleted from OpenStack",
+                    )
     
     return len(records)
 
@@ -500,15 +759,22 @@ def upsert_servers(conn, servers: List[Dict[str, Any]], run_id: Optional[int] = 
     default_region_id = None
     try:
         with conn.cursor() as _rc:
-            _rc.execute(
-                "SELECT id FROM pf9_regions WHERE enabled = TRUE ORDER BY id LIMIT 1"
-            )
-            _rr = _rc.fetchone()
-            if not _rr:
-                _rc.execute("SELECT id FROM pf9_regions ORDER BY id LIMIT 1")
+            _rc.execute("SAVEPOINT before_region_lookup")
+            try:
+                # Column is is_enabled (not enabled) — use a savepoint so a
+                # schema mismatch never aborts the outer transaction.
+                _rc.execute(
+                    "SELECT id FROM pf9_regions WHERE is_enabled = TRUE ORDER BY id LIMIT 1"
+                )
                 _rr = _rc.fetchone()
-            if _rr:
-                default_region_id = _rr[0]
+                if not _rr:
+                    _rc.execute("SELECT id FROM pf9_regions ORDER BY id LIMIT 1")
+                    _rr = _rc.fetchone()
+                if _rr:
+                    default_region_id = _rr[0]
+                _rc.execute("RELEASE SAVEPOINT before_region_lookup")
+            except Exception:
+                _rc.execute("ROLLBACK TO SAVEPOINT before_region_lookup")
     except Exception:
         pass  # pf9_regions may not exist in very old deployments — safe to ignore
     

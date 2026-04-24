@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.11] - 2026-04-24
+
+### Added
+
+- **System Alert Rules — RVTools failure notifications** — The admin API now monitors the RVTools inventory sync and automatically sends email alerts when consecutive failures reach a configurable threshold (default: 3). A green "recovered" email is sent on the first success after a failure streak. Alert state is persisted in `system_settings` so no alerts are lost across container or pod restarts. Configuration is exposed in the Admin UI under **Admin Tools → Notifications → Settings → System Alert Rules**: toggle enabled, set comma-separated recipient emails, adjust the failure threshold (1–100), and toggle recovery emails. A "Send Test Alert Email" button verifies SMTP delivery. Three new REST endpoints: `GET/PUT /notifications/system-alert-rules`, `POST /notifications/system-alert-rules/test`. Six new `system_settings` keys (`alert.rvtools_*`) seeded by `db/init.sql` on fresh installs and by `db/migrate_v1_93_11.sql` on upgrades (`db_writer.py`, `api/notification_routes.py`, `pf9-ui/src/components/NotificationSettings.tsx`, `db/init.sql`, `db/migrate_v1_93_11.sql`).
+
+### Fixed
+
+- **RVTools — "current transaction is aborted" on every run for 20+ hours** — Four compounding bugs in `db_writer.py` caused the PostgreSQL connection to enter an unrecoverable `INERROR` state at the start of every inventory run, making all subsequent writes fail immediately:
+  1. `_detect_drift()` and the deletion-drift loop called `_auto_ticket_for_drift()` **inside** a `try/except` block that held an open savepoint (`before_drift_event`). Any exception inside `_auto_ticket_for_drift` triggered `ROLLBACK TO SAVEPOINT` on an already-released savepoint, hard-aborting the entire PostgreSQL transaction.
+  2. `upsert_servers()` pre-query used `WHERE enabled = TRUE` against `pf9_regions`, but the column is `is_enabled`. The `UndefinedColumn` error was silently swallowed in Python but left the PostgreSQL transaction in `INERROR`, so every subsequent statement in the same connection failed with "current transaction is aborted".
+  3. `users_history.name` had a `NOT NULL` constraint; OpenStack service accounts return users without names, triggering `NotNullViolation` → transaction aborted.
+  4. `_upsert_with_history()` only caught `UndefinedTable | UndefinedColumn`; any other exception propagated and aborted the outer transaction.
+  Fixes: `_auto_ticket_for_drift` moved outside all savepoint `try` blocks; `is_enabled` column name corrected with a savepoint wrapper; `users_history.name` made nullable; exception handler broadened to `Exception`. DB-level backward-compatibility column (`pf9_regions.enabled` as a generated alias for `is_enabled`) added to keep the v1.93.10 K8s image working during rolling deployments (`db_writer.py`, `db/init.sql`, `db/migrate_v1_93_11.sql`).
+
+- **Tenant portal — Current Usage tab empty ("No metrics collected yet") in Kubernetes** — When the metrics cache file is absent (all K8s pods), `metrics_routes.py` returned early before attempting the DB allocation fallback. Restructured to always run the DB allocation path when `owned_ids` is non-empty, whether the cache is `None` or the cache produced zero results for the tenant. Additionally granted `SELECT` on `hypervisors` to `tenant_portal_role` — the DB allocation JOIN was silently failing with a permission error, leaving the allocation path with zero rows (`tenant_portal/metrics_routes.py`, `db/init.sql`, `db/migrate_v1_93_11.sql`).
+
+- 538 unit tests pass, 0 HIGH Bandit findings, TypeScript clean.
+
 ## [1.93.10] - 2026-04-24
 
 ### Added

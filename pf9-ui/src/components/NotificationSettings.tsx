@@ -71,6 +71,15 @@ interface NotificationStats {
   };
 }
 
+interface AlertRules {
+  enabled: boolean;
+  recipients: string;
+  failure_threshold: number;
+  recovery_enabled: boolean;
+  in_alert_state: boolean;
+  last_alert_run_id: string | null;
+}
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const EVENT_TYPE_META: Record<string, { label: string; icon: string; description: string }> = {
@@ -128,6 +137,15 @@ const NotificationSettings: React.FC<Props> = ({ isAdmin }) => {
   const [smtpFormSaving, setSmtpFormSaving] = useState(false);
   const [showSmtpForm, setShowSmtpForm] = useState(false);
 
+  // System alert rules state (admin-only)
+  const [alertRules, setAlertRules] = useState<AlertRules | null>(null);
+  const [alertForm, setAlertForm] = useState({ enabled: true, recipients: "", failure_threshold: 3, recovery_enabled: true });
+  const [alertRulesSaving, setAlertRulesSaving] = useState(false);
+  const [alertRulesMsg, setAlertRulesMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [alertTestEmail, setAlertTestEmail] = useState("");
+  const [alertTestMsg, setAlertTestMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [alertTestSending, setAlertTestSending] = useState(false);
+
   const PAGE_SIZE = 25;
 
   // ─── Load preferences ──────────────────────────────────────────────────────
@@ -180,6 +198,18 @@ const NotificationSettings: React.FC<Props> = ({ isAdmin }) => {
         setStats(s);
       } catch {
         // non-admin users won't have access — that's fine
+      }
+      try {
+        const ar = await apiFetch<AlertRules>("/notifications/system-alert-rules");
+        setAlertRules(ar);
+        setAlertForm({
+          enabled: ar.enabled,
+          recipients: ar.recipients,
+          failure_threshold: ar.failure_threshold,
+          recovery_enabled: ar.recovery_enabled,
+        });
+      } catch {
+        // ignore — non-admin or not yet configured
       }
     }
   }, [isAdmin]);
@@ -267,6 +297,42 @@ const NotificationSettings: React.FC<Props> = ({ isAdmin }) => {
       setTestMsg({ type: "err", text: e.message });
     } finally {
       setSendingTest(false);
+    }
+  };
+
+  // ─── Alert rules ───────────────────────────────────────────────────────────
+  const saveAlertRules = async () => {
+    setAlertRulesSaving(true);
+    setAlertRulesMsg(null);
+    try {
+      await apiFetch("/notifications/system-alert-rules", {
+        method: "PUT",
+        body: JSON.stringify(alertForm),
+      });
+      setAlertRulesMsg({ type: "ok", text: "Alert rules saved." });
+      const ar = await apiFetch<AlertRules>("/notifications/system-alert-rules");
+      setAlertRules(ar);
+    } catch (e: any) {
+      setAlertRulesMsg({ type: "err", text: e.message });
+    } finally {
+      setAlertRulesSaving(false);
+    }
+  };
+
+  const handleAlertTest = async () => {
+    if (!alertTestEmail.trim()) return;
+    setAlertTestSending(true);
+    setAlertTestMsg(null);
+    try {
+      await apiFetch("/notifications/system-alert-rules/test", {
+        method: "POST",
+        body: JSON.stringify({ to_email: alertTestEmail.trim() }),
+      });
+      setAlertTestMsg({ type: "ok", text: "Test alert sent — check your inbox." });
+    } catch (e: any) {
+      setAlertTestMsg({ type: "err", text: e.message });
+    } finally {
+      setAlertTestSending(false);
     }
   };
 
@@ -605,6 +671,137 @@ const NotificationSettings: React.FC<Props> = ({ isAdmin }) => {
               <div className={`notif-msg ${testMsg.type}`}>{testMsg.text}</div>
             )}
           </div>
+
+          {/* System Alert Rules */}
+          {isAdmin && (
+            <div className="notif-card">
+              <h3>🚨 System Alert Rules</h3>
+              <p style={{ color: "var(--color-text-secondary)", fontSize: 13, marginBottom: 14 }}>
+                Automatically send email alerts when the RVTools inventory sync fails
+                consecutively. A recovery email is sent on the first success after a failure streak.
+              </p>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {/* Master toggle */}
+                <label style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 500 }}>
+                  <input
+                    type="checkbox"
+                    checked={alertForm.enabled}
+                    onChange={(e) => setAlertForm((f) => ({ ...f, enabled: e.target.checked }))}
+                  />
+                  Enable RVTools failure alerts
+                </label>
+
+                {/* Recipients */}
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontWeight: 500 }}>Alert Recipients</span>
+                  <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                    Comma-separated email addresses
+                  </span>
+                  <input
+                    className="notif-input"
+                    placeholder="admin@example.com, ops@example.com"
+                    value={alertForm.recipients}
+                    onChange={(e) => setAlertForm((f) => ({ ...f, recipients: e.target.value }))}
+                  />
+                </label>
+
+                {/* Threshold */}
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontWeight: 500 }}>Failure Threshold</span>
+                  <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                    Number of consecutive failures before sending an alert
+                  </span>
+                  <input
+                    className="notif-input"
+                    type="number"
+                    min={1}
+                    max={100}
+                    style={{ width: 80 }}
+                    value={alertForm.failure_threshold}
+                    onChange={(e) =>
+                      setAlertForm((f) => ({
+                        ...f,
+                        failure_threshold: Math.max(1, parseInt(e.target.value) || 1),
+                      }))
+                    }
+                  />
+                </label>
+
+                {/* Recovery email */}
+                <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={alertForm.recovery_enabled}
+                    onChange={(e) =>
+                      setAlertForm((f) => ({ ...f, recovery_enabled: e.target.checked }))
+                    }
+                  />
+                  Send recovery email when sync succeeds after failures
+                </label>
+
+                {/* Current state indicator */}
+                {alertRules && (
+                  <div
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 6,
+                      fontSize: 13,
+                      background: alertRules.in_alert_state
+                        ? "rgba(211,47,47,0.08)"
+                        : "rgba(56,142,60,0.08)",
+                      color: alertRules.in_alert_state
+                        ? "var(--color-error, #d32f2f)"
+                        : "var(--color-success, #388e3c)",
+                      border: `1px solid ${alertRules.in_alert_state ? "rgba(211,47,47,0.2)" : "rgba(56,142,60,0.2)"}`,
+                    }}
+                  >
+                    {alertRules.in_alert_state
+                      ? `⚠️ Currently in alert state — last alert sent for run #${alertRules.last_alert_run_id}`
+                      : "✅ No active alert — system is healthy"}
+                  </div>
+                )}
+
+                {/* Save */}
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button
+                    className="notif-btn-primary"
+                    onClick={saveAlertRules}
+                    disabled={alertRulesSaving}
+                  >
+                    {alertRulesSaving ? "Saving…" : "💾 Save Alert Rules"}
+                  </button>
+                  {alertRulesMsg && (
+                    <span className={`notif-msg ${alertRulesMsg.type}`}>{alertRulesMsg.text}</span>
+                  )}
+                </div>
+
+                {/* Test */}
+                <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: 12 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 8 }}>Send Test Alert Email</div>
+                  <div className="notif-test-row">
+                    <input
+                      type="email"
+                      className="notif-input"
+                      placeholder="recipient@example.com"
+                      value={alertTestEmail}
+                      onChange={(e) => setAlertTestEmail(e.target.value)}
+                    />
+                    <button
+                      className="notif-btn-secondary"
+                      onClick={handleAlertTest}
+                      disabled={alertTestSending || !alertTestEmail.trim()}
+                    >
+                      {alertTestSending ? "Sending…" : "Send Test"}
+                    </button>
+                  </div>
+                  {alertTestMsg && (
+                    <div className={`notif-msg ${alertTestMsg.type}`}>{alertTestMsg.text}</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Admin Stats */}
           {isAdmin && stats && (

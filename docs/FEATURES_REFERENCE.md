@@ -73,6 +73,7 @@
 
 ### 🔔 Smart Notifications
 - **Event-Driven Alerts**: Snapshot failures, compliance violations, drift events, health score drops
+- **System Alert Rules**: Automatic email when RVTools inventory sync fails consecutively (threshold configurable); recovery email on first success; state persisted in DB; configured via Admin UI → Notifications → Settings
 - **Per-User Preferences**: Subscribe to specific event types with severity filtering (info/warning/critical)
 - **Daily Digest**: Configurable daily summary aggregating all events from past 24 hours
 - **SMTP Flexibility**: Authenticated and unauthenticated relay support, optional TLS

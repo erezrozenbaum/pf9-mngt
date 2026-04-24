@@ -194,19 +194,19 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
     owned_ids = set(_get_tenant_vm_ids(ctx))
 
     metrics = _load_metrics_cache()
-    if metrics is None:
-        log_action_bare(ctx, "tenant_view_metrics")
-        return {"vms": [], "total": 0, "cache_available": False}
 
-    raw_vms = metrics.get("vms") or []
-    result = []
-    for vm in raw_vms:
-        vm_id = vm.get("vm_id") or vm.get("id") or vm.get("uuid")
-        if vm_id in owned_ids:
-            result.append(_normalize_vm_entry(vm))
+    # Filter cache VMs to only those owned by this tenant.
+    result: List[Dict[str, Any]] = []
+    if metrics is not None:
+        raw_vms = metrics.get("vms") or []
+        for vm in raw_vms:
+            vm_id = vm.get("vm_id") or vm.get("id") or vm.get("uuid")
+            if vm_id in owned_ids:
+                result.append(_normalize_vm_entry(vm))
 
-    # If live monitoring cache is empty (K8s without Prometheus exporters configured),
-    # try Platform9 Gnocchi real telemetry first, then fall back to DB allocation estimates.
+    # If cache has nothing for this tenant (no Prometheus, empty monitoring service,
+    # or no cache file in K8s), fall back to DB-derived allocation estimates.
+    # This block runs whether metrics is None OR result is still empty.
     #
     # Step A — query DB for VM inventory (needed by both Gnocchi and allocation fallback).
     # Step B — try Platform9 Gnocchi: real CPU %, memory MB, IOPS, network MB/s.
@@ -316,8 +316,8 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
     return {
         "vms": result,
         "total": len(result),
-        "cache_available": True,
-        "cache_timestamp": metrics.get("timestamp"),
+        "cache_available": metrics is not None,
+        "cache_timestamp": metrics.get("timestamp") if metrics else None,
     }
 
 
