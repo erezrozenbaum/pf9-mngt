@@ -339,6 +339,9 @@ jobs:
           TEST_SUPERADMIN_USER: ci-admin
           TEST_SUPERADMIN_PASSWORD: ${{ env.CI_ADMIN_PASS }}
           TEST_VERIFY_SSL: "false"
+          # Must match the value in .env.ci (which was copied to .env before stack startup).
+          # python-dotenv is not installed in this job, so the key is passed explicitly.
+          METRICS_API_KEY: ci-test-metrics-key-not-for-production
         run: |
           # Coverage is collected for visibility only — no --cov-fail-under gate.
           # Stub-based unit tests intentionally prevent api/ modules from loading,

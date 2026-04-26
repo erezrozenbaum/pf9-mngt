@@ -21,10 +21,10 @@ try:
     _env_file = _root / ".env"
     _env_ci = _root / ".env.ci"
     if _env_file.exists():
-        load_dotenv(_env_file, override=False)
+        load_dotenv(_env_file, override=True)
     elif _env_ci.exists():
         # CI: .env is gitignored; fall back to .env.ci which the stack was started with
-        load_dotenv(_env_ci, override=False)
+        load_dotenv(_env_ci, override=True)
 except ImportError:
     pass  # python-dotenv not installed — rely on shell env
 
