@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.20] - 2026-04-26
+
+### Fixed
+
+- **`check_cluster.py`: Unicode characters replaced with ASCII** — The script used `→`, `—`, and `≤` in print output, causing `UnicodeEncodeError` on Windows terminals using `cp1255` (and other non-UTF-8 code pages). All three characters replaced with ASCII equivalents (`->`, `--`, `<=`). No functional change.
+- **`check_cluster.py`: `/metrics` check corrected to expect `401`** — The script was checking for HTTP `403` (Forbidden) when hitting `/metrics` without an `X-Metrics-Key` header, but the API returns `401` (Unauthorized) for a missing or invalid key. The check now correctly asserts `401`.
+- **`check_cluster.py`: version section header updated** — Section header still read `v1.93.18`; corrected to `v1.93.19`.
+- 582 unit tests pass, 33 skipped, 1 xfailed; 0 HIGH Bandit findings.
+
+---
+
 ## [1.93.19] - 2026-04-26
 
 ### Security

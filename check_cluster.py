@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live cluster verification for v1.93.19 — run on Windows with kubectl configured."""
+"""Live cluster verification for v1.93.20 -- run on Windows with kubectl configured."""
 import json
 import subprocess
 import sys
@@ -47,7 +47,7 @@ def kubectl_exec(pod, *cmd):
     return result.stdout.strip(), result.stderr.strip(), result.returncode
 
 
-# Pods with third-party images — excluded from H8 security context requirements.
+# Pods with third-party images -- excluded from H8 security context requirements.
 # Use exact pod name prefix match (not substring) to avoid catching ldap-sync-worker.
 SKIP_PODS = ("pf9-db-", "pf9-ldap-0")  # StatefulSet pods: pf9-db-0, pf9-ldap-0
 
@@ -77,10 +77,10 @@ wrong_ver = []
 for p in pods:
     for c in p["spec"]["containers"]:
         img = c["image"]
-        if "ghcr.io" in img and ":v1.93.19" not in img:
+        if "ghcr.io" in img and ":v1.93.20" not in img:
             wrong_ver.append(f"{p['metadata']['name']}: {img}")
 if not wrong_ver:
-    ok("all app images tagged v1.93.19")
+    ok("all app images tagged v1.93.20")
 else:
     fail(f"unexpected image versions: {wrong_ver}")
 
@@ -177,7 +177,7 @@ for ing in ingresses:
 # ---------------------------------------------------------------------------
 # C5: NetworkPolicy state
 # ---------------------------------------------------------------------------
-header("C5: NetworkPolicy state (networkPolicy.enabled=true — 17 policies expected)")
+header("C5: NetworkPolicy state (networkPolicy.enabled=true -- 17 policies expected)")
 
 EXPECTED_NETPOLS = {
     "pf9-tenant-portal",  # always-on
@@ -213,7 +213,7 @@ if db_np:
     if "db-migrate" in db_ingress_components:
         ok("pf9-db NetworkPolicy allows db-migrate on port 5432")
     else:
-        fail("pf9-db NetworkPolicy does NOT allow db-migrate — migration jobs will be blocked!")
+        fail("pf9-db NetworkPolicy does NOT allow db-migrate -- migration jobs will be blocked!")
 
 # Verify all policies have both Ingress+Egress types and DNS egress
 for np in nps:
@@ -252,7 +252,7 @@ if api_pod:
         "import urllib.request; r=urllib.request.urlopen('http://localhost:8000/health',timeout=5); print(r.status)"
     )
     if stdout == "200":
-        ok(f"API /health → 200 OK  ({api_pod})")
+        ok(f"API /health -> 200 OK  ({api_pod})")
     else:
         fail(f"API /health returned {stdout!r} stderr={stderr!r}  ({api_pod})")
 else:
@@ -273,7 +273,7 @@ if mon_pod:
         "import urllib.request; r=urllib.request.urlopen('http://localhost:8001/health',timeout=5); print(r.status)"
     )
     if stdout == "200":
-        ok(f"Monitoring /health → 200 OK  ({mon_pod})")
+        ok(f"Monitoring /health -> 200 OK  ({mon_pod})")
     else:
         fail(f"Monitoring /health returned {stdout!r}  ({mon_pod})")
 else:
@@ -291,9 +291,9 @@ if api_pod:
     )
     combined = (stdout + stderr).lower()
     if "escalated" in combined:
-        fail(f"setuid(0) SUCCEEDED — container is running as root or caps not dropped! ({api_pod})")
+        fail(f"setuid(0) SUCCEEDED -- container is running as root or caps not dropped! ({api_pod})")
     elif any(kw in combined for kw in ("not permitted", "permissionerror", "eperm", "operation not")):
-        ok(f"setuid(0) correctly denied — privilege escalation blocked  ({api_pod})")
+        ok(f"setuid(0) correctly denied -- privilege escalation blocked  ({api_pod})")
     else:
         skip(f"setuid test inconclusive (already non-root UID, kernel denied silently): {stdout!r}{stderr!r}")
 
@@ -310,11 +310,11 @@ if api_pod:
 header("FN: Inter-service connectivity")
 
 if api_pod:
-    # API → DB: confirmed via /health endpoint (200 OK above means DB is reachable).
+    # API -> DB: confirmed via /health endpoint (200 OK above means DB is reachable).
     # Direct exec uses backup-worker pod instead (API env vars may use different naming).
-    ok("API → DB connectivity confirmed via /health endpoint (200 OK)")
+    ok("API -> DB connectivity confirmed via /health endpoint (200 OK)")
 
-    # API → Redis
+    # API -> Redis
     redis_script = (
         "import os,redis;"
         "r=redis.Redis(host=os.environ.get('REDIS_HOST','pf9-redis'),"
@@ -324,11 +324,11 @@ if api_pod:
     )
     stdout, stderr, rc = kubectl_exec(api_pod, "python3", "-c", redis_script)
     if "True" in stdout:
-        ok("API → Redis (6379) PING OK")
+        ok("API -> Redis (6379) PING OK")
     else:
-        fail(f"API → Redis FAILED: {stderr or stdout}")
+        fail(f"API -> Redis FAILED: {stderr or stdout}")
 
-# Backup-worker → DB
+# Backup-worker -> DB
 bw_pod = next(
     (p["metadata"]["name"] for p in pods if p["metadata"]["name"].startswith("pf9-backup-worker-")),
     None,
@@ -343,11 +343,11 @@ if bw_pod:
     )
     stdout, stderr, rc = kubectl_exec(bw_pod, "python3", "-c", bw_script)
     if stdout == "OK":
-        ok(f"backup-worker → DB OK")
+        ok(f"backup-worker -> DB OK")
     else:
-        fail(f"backup-worker → DB FAILED: {stderr or stdout}")
+        fail(f"backup-worker -> DB FAILED: {stderr or stdout}")
 
-# Tenant-portal → API
+# Tenant-portal -> API
 tp_pod = next(
     (p["metadata"]["name"] for p in pods if p["metadata"]["name"].startswith("pf9-tenant-portal-")),
     None,
@@ -360,16 +360,16 @@ if tp_pod:
     )
     stdout, stderr, rc = kubectl_exec(tp_pod, "python3", "-c", tp_script)
     if stdout == "200":
-        ok(f"tenant-portal → API (8000) OK")
+        ok(f"tenant-portal -> API (8000) OK")
     else:
-        fail(f"tenant-portal → API FAILED: {stderr or stdout}")
+        fail(f"tenant-portal -> API FAILED: {stderr or stdout}")
 # ---------------------------------------------------------------------------
-# v1.93.18: Auth hardening checks (deployed in v1.93.18, verified in v1.93.19)
+# v1.93.20: Auth hardening checks (deployed in v1.93.20)
 # ---------------------------------------------------------------------------
-header("v1.93.18: Auth hardening — JWT TTL, login rate, jti, metrics key")
+header("v1.93.20: Auth hardening -- JWT TTL, login rate, jti, metrics key")
 
 if api_pod:
-    # Check JWT TTL env var is set and ≤ 60 min
+    # Check JWT TTL env var is set and <= 60 min
     ttl_script = (
         "import os; v=os.environ.get('JWT_ACCESS_TOKEN_EXPIRE_MINUTES',''); "
         "print(v if v else 'NOT_SET')"
@@ -383,13 +383,13 @@ if api_pod:
         try:
             ttl_int = int(ttl)
             if ttl_int <= 60:
-                ok(f"JWT_ACCESS_TOKEN_EXPIRE_MINUTES={ttl_int} (≤60 min — hardened)")
+                ok(f"JWT_ACCESS_TOKEN_EXPIRE_MINUTES={ttl_int} (<=60 min -- hardened)")
             else:
-                fail(f"JWT_ACCESS_TOKEN_EXPIRE_MINUTES={ttl_int} (>60 min — not hardened)")
+                fail(f"JWT_ACCESS_TOKEN_EXPIRE_MINUTES={ttl_int} (>60 min -- not hardened)")
         except ValueError:
             fail(f"JWT_ACCESS_TOKEN_EXPIRE_MINUTES={ttl!r} (non-integer)")
 
-    # Check login rate limit env var — must be 5/minute or less in production
+    # Check login rate limit env var -- must be 5/minute or less in production
     rate_script = (
         "import os; v=os.environ.get('LOGIN_RATE_LIMIT','5/minute'); print(v)"
     )
@@ -400,7 +400,7 @@ if api_pod:
     try:
         lv = int(limit_val)
         if limit_unit == "minute" and lv <= 5:
-            ok(f"LOGIN_RATE_LIMIT={rate} (≤5/minute — hardened)")
+            ok(f"LOGIN_RATE_LIMIT={rate} (<=5/minute -- hardened)")
         elif limit_unit == "minute" and lv <= 10:
             ok(f"LOGIN_RATE_LIMIT={rate} (acceptable for production)")
         else:
@@ -431,8 +431,8 @@ if api_pod:
     )
     stdout, stderr, rc = kubectl_exec(api_pod, "python3", "-c", metrics_key_script)
     if stdout.strip() == "CONFIGURED":
-        ok("METRICS_API_KEY is configured — /metrics endpoint is key-protected")
-        # Try hitting metrics without key — should get 403
+        ok("METRICS_API_KEY is configured -- /metrics endpoint is key-protected")
+        # Try hitting metrics without key -- should get 401 (authentication failure)
         no_key_script = (
             "import urllib.request, urllib.error\n"
             "try:\n"
@@ -445,12 +445,12 @@ if api_pod:
         )
         stdout, stderr, rc = kubectl_exec(api_pod, "python3", "-c", no_key_script)
         code = stdout.strip()
-        if code == "403":
-            ok("/metrics without X-Metrics-Key returns 403 (correctly protected)")
+        if code == "401":
+            ok("/metrics without X-Metrics-Key returns 401 (correctly protected)")
         else:
-            fail(f"/metrics without key returned {code!r} (expected 403)")
+            fail(f"/metrics without key returned {code!r} (expected 401)")
     else:
-        skip("METRICS_API_KEY not configured — /metrics key protection not active (optional in K8s)")
+        skip("METRICS_API_KEY not configured -- /metrics key protection not active (optional in K8s)")
 
     # Verify Redis is reachable for jti revocation
     jti_redis_script = (
@@ -479,8 +479,8 @@ print(f"  FAIL         : {FAIL_COUNT}")
 print(f"  SKIP         : {SKIP_COUNT}")
 print()
 if FAIL_COUNT == 0:
-    print("ALL CHECKS PASSED — v1.93.19 cluster state is healthy")
+    print("ALL CHECKS PASSED -- v1.93.20 cluster state is healthy")
     sys.exit(0)
 else:
-    print(f"{FAIL_COUNT} CHECKS FAILED — review output above")
+    print(f"{FAIL_COUNT} CHECKS FAILED -- review output above")
     sys.exit(1)

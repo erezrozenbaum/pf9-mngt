@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.19  
+**Version**: 1.93.20  
 **Last Updated**: April 26, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.20 — Tooling fixes: check_cluster.py Unicode, 401 check, version header (✅ Complete)
+
+- **`check_cluster.py` Unicode fix** — Script used `→`, `—`, and `≤` in output, causing `UnicodeEncodeError` on Windows `cp1255` terminals. Replaced with ASCII equivalents.
+- **`check_cluster.py` `/metrics` check corrected** — Was asserting HTTP `403`; API returns `401` for a missing or invalid `X-Metrics-Key`. Now asserts `401`.
+- **`check_cluster.py` version header corrected** — Section header read `v1.93.18`; updated to `v1.93.19`.
+- 582 unit tests pass, 33 skipped, 1 xfailed; 0 HIGH Bandit findings.
 
 ### v1.93.19 — K8s JWT TTL fix + metrics API key wired to K8s secret (✅ Complete)
 
