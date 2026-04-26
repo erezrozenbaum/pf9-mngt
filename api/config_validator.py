@@ -2,9 +2,12 @@
 Configuration validation for PF9 Management API
 Validates all required environment variables on startup
 """
+import logging
 import os
 import sys
 from typing import Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Credential vars that may be supplied via Docker secrets file instead of an
 # environment variable.  Keys are the env var name; values are the secret
@@ -55,7 +58,7 @@ class ConfigValidator:
         "PF9_PROJECT_DOMAIN": ("Default", "OpenStack project domain"),
         "PF9_REGION_NAME": ("region-one", "OpenStack region name"),
         "JWT_ALGORITHM": ("HS256", "JWT signing algorithm"),
-        "JWT_ACCESS_TOKEN_EXPIRE_MINUTES": ("90", "JWT token expiration (minutes)"),
+        "JWT_ACCESS_TOKEN_EXPIRE_MINUTES": ("15", "JWT token expiration (minutes)"),
         "ENABLE_AUTHENTICATION": ("true", "Enable authentication"),
         "DEFAULT_ADMIN_USER": ("admin", "Default admin username"),
     }
@@ -131,27 +134,20 @@ class ConfigValidator:
     
     @classmethod
     def print_validation_results(cls, is_valid: bool, errors: List[str], warnings: List[str]):
-        """Print validation results with colors"""
-        print("\n" + "="*70)
-        print("Configuration Validation Results")
-        print("="*70)
-        
+        """Log validation results via structured logger"""
+        logger.info("Configuration Validation Results")
+
         if warnings:
-            print("\n⚠️  WARNINGS:")
             for warning in warnings:
-                print(f"  - {warning}")
-        
+                logger.warning("Config warning: %s", warning)
+
         if errors:
-            print("\n❌ ERRORS:")
             for error in errors:
-                print(f"  - {error}")
-            print("\n" + "="*70)
-            print("❌ Configuration validation FAILED")
-            print("="*70 + "\n")
+                logger.error("Config error: %s", error)
+            logger.critical("Configuration validation FAILED")
         else:
-            print("\n✅ Configuration validation PASSED")
-            print("="*70 + "\n")
-        
+            logger.info("Configuration validation PASSED")
+
         return is_valid
     
     @classmethod
@@ -159,7 +155,7 @@ class ConfigValidator:
         """Validate configuration and exit if errors found"""
         is_valid, errors, warnings = cls.validate()
         cls.print_validation_results(is_valid, errors, warnings)
-        
+
         if not is_valid:
-            print("Fix configuration errors before starting the service.", file=sys.stderr)
+            logger.critical("Fix configuration errors before starting the service.")
             sys.exit(1)

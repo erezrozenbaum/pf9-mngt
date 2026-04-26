@@ -286,6 +286,19 @@ ALLOWED_ORIGINS = [o for o in ALLOWED_ORIGINS if o]
 # the RBAC middleware so any future /internal route is protected by default.
 INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
 
+# Metrics endpoint protection — set METRICS_API_KEY (or docker secret metrics_api_key)
+# to require an X-Metrics-Key header on /metrics and /worker-metrics.
+# If unset, endpoints remain open (backwards compatible) with a startup warning.
+_metrics_key_file = os.path.join(os.getenv("SECRETS_DIR", "/run/secrets"), "metrics_api_key")
+if os.path.isfile(_metrics_key_file):
+    try:
+        with open(_metrics_key_file, "r", encoding="utf-8") as _mf:
+            METRICS_API_KEY = _mf.read().strip()
+    except OSError:
+        METRICS_API_KEY = os.getenv("METRICS_API_KEY", "")
+else:
+    METRICS_API_KEY = os.getenv("METRICS_API_KEY", "")
+
 # Validate configuration on import
 ConfigValidator.validate_and_exit_on_error()
 
@@ -1208,7 +1221,7 @@ async def startup_event():
 # =====================================================================
 
 @app.post("/auth/login", response_model=Token)
-@limiter.limit("10/minute")
+@limiter.limit("5/minute")
 async def login(request: Request, login_data: LoginRequest):
     """Authenticate user and return JWT token"""
     client_ip = get_request_ip(request)
@@ -1798,7 +1811,7 @@ class PasswordResetConfirmRequest(BaseModel):
 
 
 @app.post("/auth/password-reset", status_code=202)
-@limiter.limit("5/minute")
+@limiter.limit("3/hour")
 async def request_password_reset(request: Request, body: PasswordResetRequest):
     """Request a self-service password reset token.
 
@@ -1857,10 +1870,15 @@ async def request_password_reset(request: Request, body: PasswordResetRequest):
         except Exception as e:
             logger.error("Failed to send password reset email for %s: %s", username, e)
     else:
-        # SMTP not configured — log token so operators can relay it manually
+        # SMTP not configured — log that a reset was requested but do NOT log the token.
+        # Set DEBUG_SHOW_RESET_TOKEN=true in dev-only environments to expose it in logs.
         logger.warning(
-            "SMTP disabled; password reset token for '%s': %s", username, token
+            "SMTP disabled; password reset token generated for '%s' but not delivered. "
+            "Configure SMTP to deliver reset emails.",
+            username,
         )
+        if os.getenv("DEBUG_SHOW_RESET_TOKEN", "").lower() in ("true", "1"):
+            logger.debug("[DEV ONLY] Password reset token for '%s': %s", username, token)
 
     log_auth_event(username, "password_reset_requested", True)
     return {"detail": "If that username exists, a reset email has been sent."}
@@ -2001,14 +2019,22 @@ def health(request: Request):
 @app.get("/metrics")
 @limiter.limit("30/minute")
 def get_metrics(request: Request):
-    """Get API performance metrics (public endpoint for monitoring tools)"""
+    """Get API performance metrics. Requires X-Metrics-Key header if METRICS_API_KEY is configured."""
+    if METRICS_API_KEY:
+        key = request.headers.get("X-Metrics-Key", "")
+        if not secrets.compare_digest(key, METRICS_API_KEY):
+            raise HTTPException(status_code=401, detail="Invalid or missing X-Metrics-Key header")
     return performance_metrics.get_stats()
 
 
 @app.get("/worker-metrics")
 @limiter.limit("60/minute")
 def get_worker_metrics(request: Request):
-    """Prometheus-format worker health metrics. Reads pf9:worker:* hashes from Redis."""
+    """Prometheus-format worker health metrics. Requires X-Metrics-Key if METRICS_API_KEY is configured."""
+    if METRICS_API_KEY:
+        key = request.headers.get("X-Metrics-Key", "")
+        if not secrets.compare_digest(key, METRICS_API_KEY):
+            raise HTTPException(status_code=401, detail="Invalid or missing X-Metrics-Key header")
     import time as _t
     try:
         import redis as _redis

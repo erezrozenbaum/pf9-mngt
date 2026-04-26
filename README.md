@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.17-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.18-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,7 +637,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### � Hotfix: migration job unblocked — v1.93.17
+### 🔒 Auth hardening — v1.93.18
+
+**[v1.93.18](CHANGELOG.md)** — Security hardening release. **JWT jti revocation:** Tokens now include a unique `jti` claim; logout stores the jti in Redis for immediate invalidation with DB session as defence-in-depth. **Shorter token lifetimes:** JWT default TTL reduced 90 → 15 min, MFA challenge TTL 5 → 2 min. **Tighter rate limits:** Login endpoint 10 → 5/min, password reset 5/min → 3/hour. **Metrics endpoint protection:** `/metrics` and `/worker-metrics` require `X-Metrics-Key` header when `METRICS_API_KEY` is configured (constant-time comparison). **Log hygiene:** Password reset token no longer logged in plaintext (gate behind `DEBUG_SHOW_RESET_TOKEN=true`). **Secret file permissions:** Write bits on secret files now raise `PermissionError` instead of a warning. **Structured logging:** `config_validator.py` outputs via `logging` module. 581 unit tests pass, 0 HIGH Bandit findings.
+
+### 🩹 Hotfix: migration job unblocked — v1.93.17
 
 **[v1.93.17](CHANGELOG.md)** — Fixed `pf9-db` NetworkPolicy missing `db-migrate` in allowed ingress sources. Helm post-upgrade migration job was stuck in `Init:0/1` because the new NetworkPolicy blocked the init container's DB connectivity check.
 
@@ -893,4 +897,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.17 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.18 | **Last Updated**: April 2026

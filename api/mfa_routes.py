@@ -53,7 +53,7 @@ logger = logging.getLogger("pf9.mfa")
 router = APIRouter(prefix="/auth/mfa", tags=["mfa"])
 
 MFA_ISSUER = "PF9 Management"
-MFA_TOKEN_EXPIRE_MINUTES = 5  # Short-lived token for MFA challenge step
+MFA_TOKEN_EXPIRE_MINUTES = 2  # Short-lived token for MFA challenge step
 BACKUP_CODE_COUNT = 8
 
 # bcrypt context for backup-code hashing (replaces previous SHA-256 approach)

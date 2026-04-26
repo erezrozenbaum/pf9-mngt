@@ -58,7 +58,37 @@ if not _jwt_env:
     )
 JWT_SECRET_KEY = _jwt_env
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "90"))
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+
+# Redis client for fast jti-based token revocation (H11)
+_revocation_client = None
+
+
+def _get_revocation_client():
+    """Return a Redis client for the jti revocation set, or None if unavailable."""
+    global _revocation_client
+    if _revocation_client is not None:
+        try:
+            _revocation_client.ping()
+            return _revocation_client
+        except Exception:
+            _revocation_client = None
+    try:
+        import redis as _redis_lib
+        _redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+        c = _redis_lib.from_url(
+            _redis_url,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+            decode_responses=True,
+        )
+        c.ping()
+        _revocation_client = c
+    except Exception as _exc:
+        logger.debug("Redis revocation client unavailable: %s", _exc)
+        _revocation_client = None
+    return _revocation_client
+
 
 DEFAULT_ADMIN_USER = os.getenv("DEFAULT_ADMIN_USER", "admin")
 DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "")
@@ -580,26 +610,44 @@ class LDAPAuthenticator:
 
 # JWT Token Management
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """Create JWT access token"""
+    """Create JWT access token with a unique jti for revocation tracking."""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    to_encode.update({"exp": expire, "iat": datetime.now(timezone.utc)})
+
+    to_encode.update({
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "jti": secrets.token_urlsafe(16),  # unique ID for per-token revocation
+    })
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 
 def verify_token(token: str) -> Optional[TokenData]:
-    """Verify JWT token and confirm the session has not been revoked (e.g. after logout)"""
+    """Verify JWT token and confirm the session has not been revoked (e.g. after logout).
+
+    Revocation order:
+      1. Redis jti blocklist (fast, O(1)) — populated on logout for tokens with jti.
+      2. DB user_sessions table — fallback for tokens without jti and extra assurance.
+    """
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         username: str = payload.get("sub")
         role: str = payload.get("role")
         if username is None:
             return None
-        # Check the session is still active in the DB (catches post-logout token reuse)
+        # Fast path: Redis jti revocation check
+        jti = payload.get("jti")
+        if jti:
+            try:
+                rc = _get_revocation_client()
+                if rc is not None and rc.exists(f"pf9:revoked:{jti}"):
+                    return None
+            except Exception:
+                pass  # Redis unavailable — fall through to DB check
+        # DB session check (catches post-logout reuse; always runs as defence-in-depth)
         try:
             token_hash = hashlib.sha256(token.encode()).hexdigest()
             with get_connection() as conn:
@@ -612,8 +660,7 @@ def verify_token(token: str) -> Optional[TokenData]:
                     if cur.fetchone() is None:
                         return None
         except Exception:
-            # DB unavailable — fall back to JWT-only validation; revocation cannot
-            # be enforced but the JWT signature and expiry still hold.
+            # DB unavailable — JWT signature + expiry + Redis check still apply.
             pass
         return TokenData(username=username, role=role)
     except JWTError:
@@ -744,18 +791,33 @@ def create_user_session(username: str, role: str, token: str, ip_address: str = 
         logger.error("Error creating session for %s: %s", username, e)
 
 def invalidate_user_session(token: str):
-    """Invalidate user session"""
+    """Invalidate user session in DB and add jti to Redis revocation list."""
     try:
         with get_connection() as conn:
             token_hash = hashlib.sha256(token.encode()).hexdigest()
-            
             with conn.cursor() as cur:
                 cur.execute("""
-                    UPDATE user_sessions SET is_active = false 
+                    UPDATE user_sessions SET is_active = false
                     WHERE token_hash = %s
                 """, (token_hash,))
     except Exception as e:
-        logger.error("Error invalidating session: %s", e)
+        logger.error("Error invalidating session in DB: %s", e)
+    # Also add jti to Redis revocation list for fast rejection on subsequent requests
+    try:
+        payload = jwt.decode(
+            token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM],
+            options={"verify_exp": False},
+        )
+        jti = payload.get("jti")
+        exp = payload.get("exp", 0)
+        if jti:
+            remaining = max(int(exp - datetime.now(timezone.utc).timestamp()), 0)
+            if remaining > 0:
+                rc = _get_revocation_client()
+                if rc is not None:
+                    rc.setex(f"pf9:revoked:{jti}", remaining, "1")
+    except Exception as exc:
+        logger.debug("Could not add jti to Redis revocation list: %s", exc)
 
 def log_auth_event(username: str, action: str, success: bool = True, ip_address: str = None, 
                    user_agent: str = None, resource: str = None, endpoint: str = None, details: dict = None):
