@@ -17,9 +17,14 @@ from pathlib import Path
 # pytest directly on the host (not inside Docker).
 try:
     from dotenv import load_dotenv
-    _env_file = Path(__file__).parent.parent / ".env"
+    _root = Path(__file__).parent.parent
+    _env_file = _root / ".env"
+    _env_ci = _root / ".env.ci"
     if _env_file.exists():
         load_dotenv(_env_file, override=False)
+    elif _env_ci.exists():
+        # CI: .env is gitignored; fall back to .env.ci which the stack was started with
+        load_dotenv(_env_ci, override=False)
 except ImportError:
     pass  # python-dotenv not installed — rely on shell env
 
