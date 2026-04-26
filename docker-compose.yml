@@ -82,6 +82,7 @@ services:
       JWT_SECRET_KEY: "${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY must be set in .env}"
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT:-5/minute}
 
       # === Logging Configuration ===
       LOG_FILE: /app/logs/pf9_api.log

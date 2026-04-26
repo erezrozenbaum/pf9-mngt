@@ -299,7 +299,9 @@ if os.path.isfile(_metrics_key_file):
 else:
     METRICS_API_KEY = os.getenv("METRICS_API_KEY", "")
 
-# Validate configuration on import
+# Login rate limit — configurable for CI/dev environments.
+# Production default: 5/minute.  Set LOGIN_RATE_LIMIT=100/minute in CI.
+_LOGIN_RATE_LIMIT = os.getenv("LOGIN_RATE_LIMIT", "5/minute")
 ConfigValidator.validate_and_exit_on_error()
 
 # Setup structured logging
@@ -1221,7 +1223,7 @@ async def startup_event():
 # =====================================================================
 
 @app.post("/auth/login", response_model=Token)
-@limiter.limit("5/minute")
+@limiter.limit(_LOGIN_RATE_LIMIT)
 async def login(request: Request, login_data: LoginRequest):
     """Authenticate user and return JWT token"""
     client_ip = get_request_ip(request)

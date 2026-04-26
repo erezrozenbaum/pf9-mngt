@@ -316,22 +316,25 @@ class TestMetricsEndpointProtection:
 
 
 class TestLoginRateLimit:
-    """Login endpoint rate limit must be 5/minute or less (v1.93.18 H12)."""
+    """Login endpoint rate limit must be configurable and default to <=5/minute (v1.93.18 H12)."""
 
     def test_login_rate_limit_is_tight(self):
-        """main.py login endpoint must not use 10/minute or higher rate limit."""
+        """main.py login endpoint must use a configurable rate limit defaulting to 5/minute."""
         import os
         main_path = os.path.join(os.path.dirname(__file__), "..", "api", "main.py")
-        with open(main_path) as f:
+        with open(main_path, encoding="utf-8") as f:
             source = f.read()
-        # Check that 10/minute is NOT on the login endpoint
-        assert "@limiter.limit(\"10/minute\")" not in source or \
-            source.find("@limiter.limit(\"10/minute\")") > source.find("/auth/login"), (
-            "Login endpoint rate limit must be reduced from 10/minute"
+        # Rate limit must be read from env var (configurable), not hardcoded
+        assert "_LOGIN_RATE_LIMIT" in source, (
+            "Login rate limit must be configurable via _LOGIN_RATE_LIMIT"
         )
-        # Check that a tight limit IS present near the login endpoint
-        assert "5/minute" in source or "2/minute" in source or "3/minute" in source, (
-            "Login endpoint must have a tight rate limit (5/minute or less)"
+        # The default must be 5/minute (not the original 10/minute)
+        assert '"5/minute"' in source, (
+            "LOGIN_RATE_LIMIT default must be '5/minute'"
+        )
+        # The login endpoint itself must use the variable, not a hardcoded string
+        assert "limiter.limit(_LOGIN_RATE_LIMIT)" in source, (
+            "Login endpoint decorator must use _LOGIN_RATE_LIMIT variable"
         )
 
 

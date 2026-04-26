@@ -47,10 +47,9 @@ _rhelpers_stub = types.ModuleType("request_helpers")
 _rhelpers_stub.get_request_ip = lambda req: "127.0.0.1"
 sys.modules.setdefault("request_helpers", _rhelpers_stub)
 
-if "secret_helper" not in sys.modules:
-    _sh_stub = types.ModuleType("secret_helper")
-    _sh_stub.read_secret = lambda name, env_var=None, default="": ""
-    sys.modules["secret_helper"] = _sh_stub
+_sh_stub = types.ModuleType("secret_helper")
+_sh_stub.read_secret = lambda name, env_var=None, default="": ""
+sys.modules.setdefault("secret_helper", _sh_stub)
 
 
 # ---------------------------------------------------------------------------
