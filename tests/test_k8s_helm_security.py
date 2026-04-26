@@ -93,10 +93,18 @@ def _component(doc: dict) -> str:
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def chart_default():
-    """Helm render with default values (networkPolicy.enabled not set / false)."""
+    """Helm render with default values (networkPolicy.enabled=true as of v1.93.16)."""
     if not HELM_AVAILABLE:
         pytest.skip("helm binary not found")
     return _render_chart()
+
+
+@pytest.fixture(scope="module")
+def chart_netpol_disabled():
+    """Helm render with networkPolicy.enabled explicitly set to false."""
+    if not HELM_AVAILABLE:
+        pytest.skip("helm binary not found")
+    return _render_chart({"networkPolicy.enabled": "false"})
 
 
 @pytest.fixture(scope="module")
@@ -427,17 +435,17 @@ class TestNetworkPolicies:
         assert not missing, f"Missing NetworkPolicies when enabled: {missing}"
 
     @skip_no_helm
-    def test_no_policies_when_disabled(self, chart_default):
+    def test_no_policies_when_disabled(self, chart_netpol_disabled):
         """
-        With default values (networkPolicy.enabled absent/false), only the
-        always-on pf9-tenant-portal policy (templates/tenant-portal/netpol.yaml)
-        should be rendered.  All other policies are gated by networkPolicy.enabled.
+        With networkPolicy.enabled=false, only the always-on pf9-tenant-portal
+        policy (templates/tenant-portal/netpol.yaml) should be rendered.
+        All other policies are gated by networkPolicy.enabled.
         """
-        policies = _by_kind(chart_default, "NetworkPolicy")
+        policies = _by_kind(chart_netpol_disabled, "NetworkPolicy")
         # pf9-tenant-portal has its own always-on NetworkPolicy — not gated by networkPolicy.enabled
         new_policies = [p for p in policies if p["metadata"]["name"] != "pf9-tenant-portal"]
         assert len(new_policies) == 0, (
-            f"Unexpected NetworkPolicies rendered with default values "
+            f"Unexpected NetworkPolicies rendered with networkPolicy.enabled=false "
             f"(excluding always-on pf9-tenant-portal): "
             f"{[p['metadata']['name'] for p in new_policies]}"
         )
@@ -653,8 +661,8 @@ class TestHelmLint:
         )
 
     @skip_no_helm
-    def test_chart_with_netpol_renders_more_resources(self, chart_netpol_enabled, chart_default):
+    def test_chart_with_netpol_renders_more_resources(self, chart_netpol_enabled, chart_netpol_disabled):
         """Enabling NetworkPolicies must add resources, not remove them."""
-        assert len(chart_netpol_enabled) > len(chart_default), (
+        assert len(chart_netpol_enabled) > len(chart_netpol_disabled), (
             "networkPolicy.enabled=true should add NetworkPolicy resources"
         )
