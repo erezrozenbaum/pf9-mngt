@@ -22,10 +22,17 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: ldap-sync-worker
           image: {{ include "pf9mngt.appImage" (dict "repo" .Values.workers.ldapSyncWorker.image.repository "svcTag" .Values.workers.ldapSyncWorker.image.tag "global" .Values.global) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: PF9_DB_HOST
               value: {{ .Values.db.host | quote }}

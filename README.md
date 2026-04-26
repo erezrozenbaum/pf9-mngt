@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.14-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.15-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🔒 Security hardening — v1.93.15
+
+**[v1.93.15](CHANGELOG.md)** — Security hardening release. **Kubernetes NetworkPolicies:** Each service now has a dedicated NetworkPolicy with default-deny semantics (disabled by default — enable with `networkPolicy.enabled=true` after dry-run verification). **Container security contexts:** `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]` added to all application containers; pod-level `seccompProfile: RuntimeDefault` added to all 15 workloads. **Ingress TLS enforcement and rate limiting:** Both admin and tenant-UI ingresses now enforce HTTPS redirect and carry rate-limit annotations. 570 unit tests pass (32 new K8s Helm security tests), 0 HIGH Bandit findings.
+
 ### 🔒 Security hardening — v1.93.14
 
 **[v1.93.14](CHANGELOG.md)** — Security fix release. **Internal route authentication:** The RBAC middleware now validates `X-Internal-Secret` for all `/internal` paths instead of passing them through without any check. **Upload size limit:** `POST /onboarding/upload` now caps reads at 10 MB and returns HTTP 413 for oversized payloads. **Notification digest cap:** The per-user notification digest bucket is now capped at 1000 events in a single SQL statement — oldest events are trimmed when the cap is reached. **Redis authentication:** All services (API, workers, tenant portal) now support `REDIS_PASSWORD`; when set, Redis starts with `--requirepass`. Kubernetes deployments read the password from a K8s secret. 538 unit tests pass, 0 HIGH Bandit findings.
@@ -881,4 +885,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.14 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.15 | **Last Updated**: April 2026

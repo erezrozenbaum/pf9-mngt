@@ -23,10 +23,17 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: backup-worker
           image: {{ include "pf9mngt.appImage" (dict "repo" .Values.workers.backupWorker.image.repository "svcTag" .Values.workers.backupWorker.image.tag "global" .Values.global) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: DB_HOST
               value: {{ .Values.db.host | quote }}

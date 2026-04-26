@@ -238,6 +238,10 @@ tenantUi:
     annotations:
       nginx.ingress.kubernetes.io/proxy-body-size: "10m"
       nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/limit-rps: "60"
+      nginx.ingress.kubernetes.io/limit-connections: "15"
 
 # ---------------------------------------------------------------------------
 # Tenant Portal API (FastAPI)
@@ -483,6 +487,15 @@ workers:
         memory: "64Mi"
 
 # ---------------------------------------------------------------------------
+# Network Policies (C5)
+# ---------------------------------------------------------------------------
+networkPolicy:
+  # Set to true to deploy NetworkPolicies for all services.
+  # Default: false — deploy and validate first, then enable per-environment.
+  # The pf9-tenant-portal policy is always-on (in templates/tenant-portal/netpol.yaml).
+  enabled: false
+
+# ---------------------------------------------------------------------------
 # Reports shared storage (RVTools Excel exports — shared between API and scheduler)
 # ---------------------------------------------------------------------------
 reports:
@@ -506,3 +519,7 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-body-size: "100m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "20"

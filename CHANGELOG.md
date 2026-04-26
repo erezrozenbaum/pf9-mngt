@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.15] - 2026-04-28
+
+### Security
+
+- **Kubernetes NetworkPolicies added for all services** — Each service in the pf9-mngt namespace now has a dedicated `NetworkPolicy` with explicit `Ingress` and `Egress` rules (default-deny semantics). Policies are disabled by default (`networkPolicy.enabled: false` in `values.yaml`) to allow a controlled rollout with `--dry-run=server` verification before enabling in production. When enabled, policies cover: API, DB, Redis, LDAP, UI, Tenant UI, Monitoring, and all nine background workers. The existing always-on Tenant Portal policy (`templates/tenant-portal/netpol.yaml`) is unchanged. DNS egress to `kube-system` (CoreDNS) is explicitly allowed in every policy.
+
+- **Container security contexts hardened for all application pods** — Every application container (API, monitoring, tenant portal, UI, tenant UI, Redis, and all nine workers) now sets `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]`. Pod-level security contexts now include `seccompProfile.type: RuntimeDefault` (Kubernetes 1.27+ GA). Third-party images (PostgreSQL, OpenLDAP) are excluded as they require privileged startup sequences. `readOnlyRootFilesystem: true` is deferred to the next release pending per-service emptyDir volume mapping.
+
+- **Ingress SSL redirect and rate limiting enforced** — Both the admin ingress (`pf9-mngt`) and tenant UI ingress (`pf9-tenant-ui`) now carry `nginx.ingress.kubernetes.io/ssl-redirect: "true"`, `force-ssl-redirect: "true"`, `limit-rps: "100"` (admin) / `"60"` (tenant), and `limit-connections: "20"` (admin) / `"15"` (tenant) annotations. HTTP traffic is automatically redirected to HTTPS at the ingress layer.
+
+- 570 unit tests pass (32 new K8s Helm security tests added), 0 HIGH Bandit findings.
+
 ## [1.93.14] - 2026-04-27
 
 ### Security

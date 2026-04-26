@@ -22,10 +22,17 @@ spec:
         runAsNonRoot: true
         runAsUser: 999
         fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redis
           image: "{{ .Values.redisService.image.repository }}:{{ .Values.redisService.image.tag }}"
           imagePullPolicy: {{ .Values.redisService.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: REDIS_PASSWORD
               valueFrom:

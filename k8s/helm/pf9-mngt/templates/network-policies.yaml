@@ -1,0 +1,982 @@
+{{- if .Values.networkPolicy.enabled }}
+# ===========================================================================
+# NetworkPolicies — default-deny-all ingress + egress per service.
+# Enabled when networkPolicy.enabled=true (see values.yaml).
+#
+# The pf9-tenant-portal policy is managed separately in
+# templates/tenant-portal/netpol.yaml (always-on, not gated here).
+#
+# Label selectors match the live cluster pod labels:
+#   app.kubernetes.io/name=pf9-mngt
+#   app.kubernetes.io/instance=pf9-mngt
+#   app.kubernetes.io/component=<component>
+#
+# Namespace labels confirmed on cluster:
+#   ingress-nginx:        kubernetes.io/metadata.name=ingress-nginx
+#   ingress-nginx-tenant: kubernetes.io/metadata.name=ingress-nginx-tenant
+#   kube-system:          kubernetes.io/metadata.name=kube-system
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# API
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-api
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # nginx ingress controller (admin UI + API traffic)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8000
+          protocol: TCP
+    # Internal calls from tenant-portal (/internal/*)
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: tenant-portal
+      ports:
+        - port: 8000
+          protocol: TCP
+    # Metering worker calls API
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: metering-worker
+      ports:
+        - port: 8000
+          protocol: TCP
+    # Scheduler worker calls API
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: scheduler-worker
+      ports:
+        - port: 8000
+          protocol: TCP
+    # Monitoring service calls API for internal service discovery
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: monitoring
+      ports:
+        - port: 8000
+          protocol: TCP
+
+  egress:
+    # PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    # OpenLDAP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: ldap
+      ports:
+        - port: 389
+          protocol: TCP
+    # Platform9 / Keystone external
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 5000
+          protocol: TCP
+    # DNS (CoreDNS)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Database (PostgreSQL)
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-db
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: db
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    {{- $dbClients := list "api" "backup-worker" "intelligence-worker" "ldap-sync-worker" "metering-worker" "notification-worker" "scheduler-worker" "search-worker" "sla-worker" "snapshot-worker" "tenant-portal" }}
+    {{- range $dbClients }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: {{ . }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+
+  egress:
+    # DNS only (postgres doesn't initiate outbound connections)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Redis
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-redis
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    {{- $redisClients := list "api" "backup-worker" "intelligence-worker" "metering-worker" "scheduler-worker" "search-worker" "sla-worker" "snapshot-worker" "tenant-portal" }}
+    {{- range $redisClients }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: {{ . }}
+      ports:
+        - port: 6379
+          protocol: TCP
+    {{- end }}
+
+  egress:
+    # DNS only
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# OpenLDAP
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-ldap
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ldap
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ldap
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # API authenticates users via LDAP
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - port: 389
+          protocol: TCP
+    # LDAP sync worker syncs directory data
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: ldap-sync-worker
+      ports:
+        - port: 389
+          protocol: TCP
+    # Backup worker reads LDAP for backup metadata
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: backup-worker
+      ports:
+        - port: 389
+          protocol: TCP
+
+  egress:
+    # DNS only
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Admin UI (pf9-ui — nginx serving React SPA)
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-ui
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ui
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # DNS only (nginx serves static files, no backend calls)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Tenant UI (pf9-tenant-ui — nginx serving tenant React SPA)
+# ---------------------------------------------------------------------------
+{{- if .Values.tenantUi.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-tenant-ui
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-ui
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: tenant-ui
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx-tenant
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # DNS only
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}
+
+# ---------------------------------------------------------------------------
+# Monitoring service
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-monitoring
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: monitoring
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # nginx ingress controller (Prometheus metrics path /metrics/.*)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8001
+          protocol: TCP
+    # Metering worker queries monitoring metrics
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: metering-worker
+      ports:
+        - port: 8001
+          protocol: TCP
+    # Scheduler worker queries monitoring metrics
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: scheduler-worker
+      ports:
+        - port: 8001
+          protocol: TCP
+    # Tenant portal queries monitoring for Current Usage tab
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: tenant-portal
+      ports:
+        - port: 8001
+          protocol: TCP
+
+  egress:
+    # Admin API (internal service discovery endpoint)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - port: 8000
+          protocol: TCP
+    # Platform9 external endpoints
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 5000
+          protocol: TCP
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Worker: Backup
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-backup-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backup-worker
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []   # workers don't serve traffic
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: ldap
+      ports:
+        - port: 389
+          protocol: TCP
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 5000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Worker: Intelligence
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-intelligence-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: intelligence-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: intelligence-worker
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 5000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Worker: LDAP Sync
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-ldap-sync-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ldap-sync-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ldap-sync-worker
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: ldap
+      ports:
+        - port: 389
+          protocol: TCP
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Worker: Metering
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-metering-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metering-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: metering-worker
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: monitoring
+      ports:
+        - port: 8001
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - port: 8000
+          protocol: TCP
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Worker: Notification
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-notification-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: notification-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: notification-worker
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    # SMTP (TLS submission port)
+    - to: []
+      ports:
+        - port: 587
+          protocol: TCP
+        - port: 465
+          protocol: TCP
+        - port: 25
+          protocol: TCP
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Worker: Scheduler
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-scheduler-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler-worker
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - port: 8000
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: monitoring
+      ports:
+        - port: 8001
+          protocol: TCP
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 5000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Worker: Search
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-search-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: search-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: search-worker
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Worker: SLA
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-sla-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sla-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sla-worker
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Worker: Snapshot
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-snapshot-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: snapshot-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: snapshot-worker
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress: []
+
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 5000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+{{- end }}{{/* networkPolicy.enabled */}}

@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.14  
+**Version**: 1.93.15  
 **Last Updated**: April 26, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.15 — Kubernetes security hardening (✅ Complete)
+
+- **Kubernetes NetworkPolicies**: Each service in the `pf9-mngt` namespace now has a dedicated `NetworkPolicy` with explicit `Ingress` and `Egress` rules enforcing default-deny semantics. Policies are disabled by default (`networkPolicy.enabled: false`) to allow controlled rollout. Enable in production after verifying with `helm upgrade --dry-run=server`. Covers: API, DB, Redis, LDAP, UI, Tenant UI, Monitoring, and all nine background workers. The always-on Tenant Portal policy (`templates/tenant-portal/netpol.yaml`) is unchanged.
+- **Container security contexts hardened**: All application containers now set `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]`. Pod-level security contexts now include `seccompProfile.type: RuntimeDefault` (supported on Kubernetes 1.27+). PostgreSQL and OpenLDAP pods are excluded (require privileged startup). `readOnlyRootFilesystem: true` is deferred to the next release.
+- **Ingress TLS enforcement and rate limiting**: Both admin (`pf9-mngt`) and tenant-UI (`pf9-tenant-ui`) ingresses now carry `ssl-redirect: "true"`, `force-ssl-redirect: "true"`, `limit-rps`, and `limit-connections` nginx annotations. HTTP requests are automatically redirected to HTTPS at the ingress layer.
+- 570 unit tests pass (32 new K8s Helm security tests), 0 HIGH Bandit findings.
 
 ### v1.93.14 — Security hardening (✅ Complete)
 

@@ -22,10 +22,17 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 101   # nginx default user
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: tenant-ui
           image: {{ include "pf9mngt.appImage" (dict "repo" .Values.tenantUi.image.repository "svcTag" .Values.tenantUi.image.tag "global" .Values.global) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8080
               name: http

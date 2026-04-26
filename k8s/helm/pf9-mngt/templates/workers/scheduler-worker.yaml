@@ -22,10 +22,17 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: scheduler-worker
           image: {{ include "pf9mngt.appImage" (dict "repo" .Values.workers.schedulerWorker.image.repository "svcTag" .Values.workers.schedulerWorker.image.tag "global" .Values.global) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: PF9_AUTH_URL
               value: {{ .Values.pf9.authUrl | quote }}
