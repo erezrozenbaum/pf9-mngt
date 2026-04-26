@@ -328,7 +328,7 @@ jobs:
         # (added in v1.83.52 for worker resilience / observability).
         # python-multipart is required by FastAPI's UploadFile/File for the
         # branding logo upload endpoint (added in v1.85.9).
-        run: pip install pytest-cov pytest-asyncio fastapi pydantic passlib python-jose tenacity redis httpx python-multipart
+        run: pip install pytest-cov pytest-asyncio fastapi pydantic passlib python-jose tenacity redis httpx python-multipart pyyaml
 
       - name: Run full test suite with coverage
         env:
