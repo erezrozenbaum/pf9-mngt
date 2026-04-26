@@ -46,6 +46,11 @@ spec:
               value: {{ .Values.redis.host | quote }}
             - name: REDIS_PORT
               value: {{ .Values.redis.port | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.redisSecret }}
+                  key: redis-password
           livenessProbe:
             exec:
               command: ["python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 1800 else 1)"]

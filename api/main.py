@@ -281,6 +281,11 @@ for _extra in os.getenv("PF9_ALLOWED_ORIGINS", os.getenv("PF9_ALLOWED_ORIGIN", "
         ALLOWED_ORIGINS.append(_extra)
 ALLOWED_ORIGINS = [o for o in ALLOWED_ORIGINS if o]
 
+# Internal service-to-service secret (shared with tenant-portal and monitoring)
+# Same env var used by individual /internal route handlers — read once here for
+# the RBAC middleware so any future /internal route is protected by default.
+INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+
 # Validate configuration on import
 ConfigValidator.validate_and_exit_on_error()
 
@@ -473,9 +478,19 @@ async def rbac_middleware(request: Request, call_next):
         path.startswith("/auth") or
         path.startswith("/settings/") or
         path.startswith("/static/") or
-        path.startswith("/internal") or   # internal service-to-service endpoints use X-Internal-Secret
         path in ["/health", "/metrics", "/api/openapi.json", "/api/docs", "/api/redoc", "/demo-mode"]
     ):
+        return await call_next(request)
+
+    # Validate X-Internal-Secret for all /internal paths — this is the
+    # defence-in-depth gate so any future /internal route is protected even
+    # if its handler forgets the per-route check.
+    if path.startswith("/internal"):
+        _req_secret = request.headers.get("X-Internal-Secret", "")
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(
+            _req_secret.encode("utf-8"), INTERNAL_SERVICE_SECRET.encode("utf-8")
+        ):
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
         return await call_next(request)
 
     if request.method == "OPTIONS":
@@ -1999,7 +2014,8 @@ def get_worker_metrics(request: Request):
         import redis as _redis
         _redis_host = os.getenv("REDIS_HOST", "redis")
         _redis_port = int(os.getenv("REDIS_PORT", "6379"))
-        _rc = _redis.Redis(host=_redis_host, port=_redis_port, db=0,
+        _redis_pw = os.getenv("REDIS_PASSWORD") or None
+        _rc = _redis.Redis(host=_redis_host, port=_redis_port, password=_redis_pw, db=0,
                            socket_connect_timeout=2, socket_timeout=2,
                            decode_responses=True)
         _keys = _rc.keys("pf9:worker:*")

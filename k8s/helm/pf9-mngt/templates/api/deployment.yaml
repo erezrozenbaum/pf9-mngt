@@ -233,8 +233,13 @@ spec:
             - name: SMTP_FROM_NAME
               value: {{ .Values.smtp.fromName | quote }}
             # --- Redis / cache ---
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.redisSecret }}
+                  key: redis-password
             - name: REDIS_URL
-              value: {{ .Values.redis.url | quote }}
+              value: "redis://:$(REDIS_PASSWORD)@pf9-redis:6379/0"
             - name: CACHE_ENABLED
               value: {{ .Values.redis.cacheEnabled | quote }}
             - name: CACHE_TTL_SECONDS

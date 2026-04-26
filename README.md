@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.13-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.14-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🔒 Security hardening — v1.93.14
+
+**[v1.93.14](CHANGELOG.md)** — Security fix release. **Internal route authentication:** The RBAC middleware now validates `X-Internal-Secret` for all `/internal` paths instead of passing them through without any check. **Upload size limit:** `POST /onboarding/upload` now caps reads at 10 MB and returns HTTP 413 for oversized payloads. **Notification digest cap:** The per-user notification digest bucket is now capped at 1000 events in a single SQL statement — oldest events are trimmed when the cap is reached. **Redis authentication:** All services (API, workers, tenant portal) now support `REDIS_PASSWORD`; when set, Redis starts with `--requirepass`. Kubernetes deployments read the password from a K8s secret. 538 unit tests pass, 0 HIGH Bandit findings.
+
 ### 🔒 Security hardening — v1.93.13
 
 **[v1.93.13](CHANGELOG.md)** — Security fix release. **Cache invalidation bug:** The cache `invalidate()` helper was building a different key than `wrapper()` (missing `region_id` segment), making every invalidation call a silent no-op. Fixed to use the exact same key structure. **HTML injection in welcome email:** The inline fallback provisioning email template interpolated user-supplied values (`username`, `domain_name`, `project_name`, etc.) directly into HTML without escaping. All values now use `html.escape()`. **Backup path traversal protection:** Backup file deletion now validates the resolved absolute path is within `NFS_BACKUP_PATH` before calling `os.remove()`. **SSRF prevention in PSA webhooks:** Webhook URLs targeting private, loopback, link-local, or reserved IP ranges are now rejected at input validation time. 538 unit tests pass, 0 HIGH Bandit findings.
@@ -877,4 +881,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.13 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.14 | **Last Updated**: April 2026

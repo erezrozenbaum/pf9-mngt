@@ -2126,6 +2126,37 @@ See [SECURITY.md](SECURITY.md) and [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md
 # 5. Ensure backups volume is encrypted at rest
 ```
 
+#### Redis Authentication
+
+Redis runs without a password by default in development. For production deployments, enable Redis authentication:
+
+**Docker Compose:**
+
+```bash
+# Generate a strong password
+REDIS_PASS=$(openssl rand -base64 32)
+
+# Add to your .env file (which is gitignored)
+echo "REDIS_PASSWORD=${REDIS_PASS}" >> .env
+echo "REDIS_URL=redis://:${REDIS_PASS}@redis:6379/0" >> .env
+
+# Also create the secrets file (optional — used if Docker Secrets are enabled)
+echo -n "${REDIS_PASS}" > secrets/redis_password
+```
+
+**Kubernetes:**
+
+```bash
+# Create the K8s secret in the cluster (live secrets are managed out-of-band)
+kubectl create secret generic pf9-redis-secret \
+  --from-literal=redis-password="$(openssl rand -base64 32)" \
+  -n pf9-mngt
+```
+
+The API will automatically use `REDIS_URL=redis://:$(REDIS_PASSWORD)@pf9-redis:6379/0` (injected by the Helm chart via the secret reference). All worker services receive `REDIS_PASSWORD` from the same secret.
+
+> **Note:** Live Kubernetes secrets for this deployment are managed in the internal private repository, not the public repo. Only create them manually on the cluster as shown above.
+
 ---
 
 ## Summary

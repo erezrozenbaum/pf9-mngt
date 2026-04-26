@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.14] - 2026-04-27
+
+### Security
+
+- **Internal service routes now require a validated secret header** — The RBAC middleware previously passed all `/internal` paths through without authentication, meaning any future internal route added without a per-route check would be silently unauthenticated. The middleware now validates the `X-Internal-Secret` header against `INTERNAL_SERVICE_SECRET` using a constant-time comparison before forwarding the request (`api/main.py`).
+
+- **Upload size limit added to bulk onboarding endpoint** — `POST /onboarding/upload` called `file.file.read()` with no limit, which could exhaust API container memory on a large payload. Reads are now capped at 10 MB; payloads exceeding the limit are rejected with HTTP 413 (`api/onboarding_routes.py`).
+
+- **Notification digest queue capped at 1000 events per user** — The digest accumulation SQL appended events indefinitely via the `||` operator. The query now uses a SQL `CASE` expression to trim the oldest events when the bucket reaches 1000, preventing unbounded PostgreSQL `jsonb` column growth (`notifications/main.py`).
+
+- **Redis authentication support added** — Redis previously ran with no password, allowing any process on the Docker/K8s network to read and write the cache. All services now accept a `REDIS_PASSWORD` environment variable. When set, the Redis server starts with `--requirepass`; when empty the server remains open (dev default). All workers, the API, and the tenant portal propagate the password. Kubernetes deployments read the password from the `pf9-redis-secret` K8s secret. See [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) for setup instructions.
+
+- 538 unit tests pass, 0 HIGH Bandit findings.
+
 ## [1.93.13] - 2026-04-26
 
 ### Security

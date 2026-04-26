@@ -789,6 +789,9 @@ def download_template(current_user: dict = Depends(get_current_user)):
 # POST /upload
 # ---------------------------------------------------------------------------
 
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
 @router.post("/upload", status_code=201)
 def upload_batch(
     file: UploadFile = File(...),
@@ -796,7 +799,9 @@ def upload_batch(
     current_user: dict = Depends(require_permission("onboarding", "create")),
 ):
     """Parse and validate uploaded Excel; create a new batch record."""
-    raw = file.file.read()
+    raw = file.file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(raw) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Upload file exceeds 10 MB limit")
     parsed = _parse_excel(raw)
 
     errors = parsed["errors"]

@@ -58,5 +58,14 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.ldapSecrets }}
                   key: sync-key
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.redisSecret }}
+                  key: redis-password
           resources:
             {{- toYaml .Values.workers.ldapSyncWorker.resources | nindent 12 }}

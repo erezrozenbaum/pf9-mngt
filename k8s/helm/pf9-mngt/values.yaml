@@ -45,6 +45,7 @@ secrets:
   copilotSecrets: pf9-copilot-secrets    # keys: openai-api-key, anthropic-api-key (optional)
   tenantPortalDbCredentials: pf9-tenant-portal-db-credentials  # key: password (tenant_portal_role DB user)
   internalServiceSecret: pf9-internal-service-secret          # key: secret (shared token between tenant-portal and admin API)
+  redisSecret: pf9-redis-secret                                # key: redis-password
 
 # ---------------------------------------------------------------------------
 # Shared configuration (used by multiple services)

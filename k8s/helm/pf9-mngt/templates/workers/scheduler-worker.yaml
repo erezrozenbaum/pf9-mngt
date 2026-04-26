@@ -88,6 +88,15 @@ spec:
               value: {{ .Values.api.parallel.maxRegions | quote }}
             - name: REGION_REQUEST_TIMEOUT_SEC
               value: {{ .Values.api.parallel.regionRequestTimeoutSec | quote }}
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.redisSecret }}
+                  key: redis-password
           livenessProbe:
             exec:
               command: ["python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 300 else 1)"]

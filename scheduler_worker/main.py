@@ -41,6 +41,7 @@ import requests as _requests_mod
 # ---------------------------------------------------------------------------
 _REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 _REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+_REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") or None
 _WORKER_NAME = "scheduler_worker"
 _worker_runs_total   = 0
 _worker_errors_total = 0
@@ -52,7 +53,7 @@ def _report_worker_metrics(duration_s: float, had_error: bool, frequency_s: int)
         _worker_errors_total += 1
     try:
         import redis as _redis
-        r = _redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
+        r = _redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, password=_REDIS_PASSWORD, socket_connect_timeout=2)
         r.hset(f"pf9:worker:{_WORKER_NAME}", mapping={
             "runs_total":          _worker_runs_total,
             "errors_total":        _worker_errors_total,
@@ -63,6 +64,7 @@ def _report_worker_metrics(duration_s: float, had_error: bool, frequency_s: int)
         })
     except Exception:
         pass
+
 
 # ---------------------------------------------------------------------------
 # Configuration from environment

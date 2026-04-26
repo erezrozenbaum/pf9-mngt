@@ -26,27 +26,35 @@ spec:
         - name: redis
           image: "{{ .Values.redisService.image.repository }}:{{ .Values.redisService.image.tag }}"
           imagePullPolicy: {{ .Values.redisService.image.pullPolicy }}
-          command:
-            - redis-server
-            - --maxmemory
-            - {{ .Values.redisService.maxmemory | quote }}
-            - --maxmemory-policy
-            - allkeys-lru
-            - --save
-            - ""
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.redisSecret }}
+                  key: redis-password
+            - name: REDISCLI_AUTH
+              value: "$(REDIS_PASSWORD)"
+          command: ["sh", "-c"]
+          args:
+            - >-
+              if [ -n "$REDIS_PASSWORD" ]; then
+                exec redis-server --requirepass "$REDIS_PASSWORD" --maxmemory {{ .Values.redisService.maxmemory | quote }} --maxmemory-policy allkeys-lru --save "";
+              else
+                exec redis-server --maxmemory {{ .Values.redisService.maxmemory | quote }} --maxmemory-policy allkeys-lru --save "";
+              fi
           ports:
             - containerPort: 6379
               name: redis
           livenessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["redis-cli", "--no-auth-warning", "ping"]
             initialDelaySeconds: 15
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["redis-cli", "--no-auth-warning", "ping"]
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3

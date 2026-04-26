@@ -466,16 +466,37 @@ def log_notification(conn, user: Dict, event: Dict, dkey: str, subject: str,
     conn.commit()
 
 
+_MAX_DIGEST_EVENTS = 1000  # cap per-user digest bucket to prevent unbounded growth
+
+
 def queue_for_digest(conn, username: str, email: str, event: Dict):
-    """Accumulate event into the user's digest bucket."""
+    """Accumulate event into the user's digest bucket (capped at _MAX_DIGEST_EVENTS)."""
+    event_json = json.dumps([event])
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO notification_digests (username, email, events_json)
             VALUES (%s, %s, %s::jsonb)
             ON CONFLICT (username)
-            DO UPDATE SET events_json = notification_digests.events_json || %s::jsonb,
-                          email = EXCLUDED.email
-        """, (username, email, json.dumps([event]), json.dumps([event])))
+            DO UPDATE SET events_json = (
+                CASE
+                    WHEN jsonb_array_length(notification_digests.events_json) >= %s
+                    THEN (
+                        SELECT jsonb_agg(elem ORDER BY ord)
+                        FROM jsonb_array_elements(notification_digests.events_json)
+                             WITH ORDINALITY t(elem, ord)
+                        WHERE ord > jsonb_array_length(notification_digests.events_json) - (%s - 1)
+                    ) || %s::jsonb
+                    ELSE notification_digests.events_json || %s::jsonb
+                END
+            ),
+            email = EXCLUDED.email
+        """, (
+            username, email, event_json,           # INSERT values
+            _MAX_DIGEST_EVENTS,                    # CASE: when >= cap
+            _MAX_DIGEST_EVENTS,                    # trim: keep last N-1
+            event_json,                            # append (trim branch)
+            event_json,                            # append (normal branch)
+        ))
     conn.commit()
 
 

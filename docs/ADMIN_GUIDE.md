@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.13  
+**Version**: 1.93.14  
 **Last Updated**: April 26, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.14 — Security hardening (✅ Complete)
+
+- **Internal route authentication**: The RBAC middleware previously passed all `/internal` paths through without any authentication check. The middleware now validates the `X-Internal-Secret` header against `INTERNAL_SERVICE_SECRET` using a constant-time comparison before allowing access to any `/internal` endpoint (`api/main.py`).
+- **Upload size limit on bulk onboarding**: `POST /onboarding/upload` called `file.file.read()` with no limit, which could exhaust API memory on a large payload. Reads are now capped at 10 MB; oversized uploads are rejected with HTTP 413 (`api/onboarding_routes.py`).
+- **Notification digest queue cap**: The per-user notification digest bucket previously grew without bound. It is now capped at 1000 events per user via a SQL `CASE` expression that trims the oldest events when the bucket is full (`notifications/main.py`).
+- **Redis authentication**: All services now accept `REDIS_PASSWORD`. When set, Redis starts with `--requirepass`; when empty it operates in open mode (safe dev default). The API, all workers, and the tenant portal propagate the credential. On Kubernetes the password is sourced from the `pf9-redis-secret` K8s secret. See [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) for setup instructions.
+- 538 unit tests pass, 0 HIGH Bandit findings.
 
 ### v1.93.13 — Security hardening (✅ Complete)
 

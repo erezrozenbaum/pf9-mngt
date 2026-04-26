@@ -75,6 +75,11 @@ spec:
               value: pf9-redis
             - name: REDIS_PORT
               value: "6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.redisSecret }}
+                  key: redis-password
             # --- Internal service URLs ---
             - name: MONITORING_SERVICE_URL
               value: "http://pf9-monitoring:8001"

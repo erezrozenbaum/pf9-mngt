@@ -141,8 +141,8 @@ services:
       COPILOT_ANTHROPIC_API_KEY: ${COPILOT_ANTHROPIC_API_KEY:-}
       COPILOT_ANTHROPIC_MODEL: ${COPILOT_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
       COPILOT_REDACT_SENSITIVE: ${COPILOT_REDACT_SENSITIVE:-true}
-      # C9: Redis cache
-      REDIS_URL: redis://redis:6379/0
+      # C9: Redis cache (password read from REDIS_PASSWORD env var, optional in dev)
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CACHE_ENABLED: ${CACHE_ENABLED:-true}
       CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-60}
     # Port binding added by docker-compose.override.yml for dev (auto-loaded).
@@ -455,10 +455,7 @@ services:
       # --- Worker observability: Redis metrics sink ---
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-    secrets:
-      - pf9_password
-      - jwt_secret
-      - db_password
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     volumes:
       - ./monitoring/cache:/tmp/cache
       - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports
@@ -509,6 +506,7 @@ services:
       # --- Worker observability: Redis metrics sink ---
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     volumes:
       - nfs_backups:/backups
     depends_on:
@@ -568,6 +566,7 @@ services:
       # --- Worker observability: Redis metrics sink ---
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     depends_on:
       - db
       - pf9_monitoring
@@ -606,6 +605,7 @@ services:
       # --- Worker observability: Redis metrics sink ---
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     depends_on:
       - db
       - redis
@@ -628,12 +628,23 @@ services:
           memory: 256m
 
   # C9: Redis — inventory/quota cache (60 s TTL by default)
+  # Set REDIS_PASSWORD in .env to enable requirepass. Leave empty for dev.
   redis:
     image: redis:7-alpine
     container_name: pf9_redis
-    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      REDISCLI_AUTH: "${REDIS_PASSWORD:-}"
+    command: >
+      sh -c '
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+        else
+          exec redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+        fi
+      '
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "ping"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -694,6 +705,7 @@ services:
       # --- Worker observability: Redis metrics sink ---
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
       # db_password, ldap_admin_password, and ldap_sync_key are read from /run/secrets/
       # env vars above are used in dev when secret files are empty
     secrets:
@@ -741,6 +753,7 @@ services:
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
       TENANT_RESTORE_ENABLED: ${TENANT_RESTORE_ENABLED:-true}
       MONITORING_SERVICE_URL: http://pf9_monitoring:8001
       # Platform9 / Gnocchi telemetry (same credentials as the admin API)
@@ -828,6 +841,7 @@ services:
       # --- Worker observability: Redis metrics sink ---
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     depends_on:
       - db
       - redis
@@ -864,6 +878,7 @@ services:
       # --- Worker observability: Redis metrics sink ---
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     depends_on:
       - db
       - redis
@@ -931,3 +946,5 @@ secrets:
     file: ./secrets/integration_key
   tenant_portal_db_password:
     file: ./secrets/tenant_portal_db_password
+  redis_password:
+    file: ./secrets/redis_password
