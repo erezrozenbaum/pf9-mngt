@@ -491,9 +491,8 @@ workers:
 # ---------------------------------------------------------------------------
 networkPolicy:
   # Set to true to deploy NetworkPolicies for all services.
-  # Default: false — deploy and validate first, then enable per-environment.
   # The pf9-tenant-portal policy is always-on (in templates/tenant-portal/netpol.yaml).
-  enabled: false
+  enabled: true
 
 # ---------------------------------------------------------------------------
 # Reports shared storage (RVTools Excel exports — shared between API and scheduler)

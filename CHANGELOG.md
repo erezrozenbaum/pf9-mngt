@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.16] - 2026-04-26
+
+### Security
+
+- **NetworkPolicies enabled in production** — `networkPolicy.enabled` set to `true`. All 16 service NetworkPolicies are now enforced in the `pf9-mngt` namespace. Validated with `helm template | kubectl apply --dry-run=server` before rollout.
+
 ## [1.93.15] - 2026-04-28
 
 ### Security

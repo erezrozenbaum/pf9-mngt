@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.15-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.16-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🔒 NetworkPolicies enabled — v1.93.16
+
+**[v1.93.16](CHANGELOG.md)** — NetworkPolicies activated in production. All 16 service-level NetworkPolicies are now enforced in the `pf9-mngt` namespace following successful `--dry-run=server` validation against the live cluster. Default-deny between all services except explicitly permitted traffic paths.
+
 ### 🔒 Security hardening — v1.93.15
 
 **[v1.93.15](CHANGELOG.md)** — Security hardening release. **Kubernetes NetworkPolicies:** Each service now has a dedicated NetworkPolicy with default-deny semantics (disabled by default — enable with `networkPolicy.enabled=true` after dry-run verification). **Container security contexts:** `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]` added to all application containers; pod-level `seccompProfile: RuntimeDefault` added to all 15 workloads. **Ingress TLS enforcement and rate limiting:** Both admin and tenant-UI ingresses now enforce HTTPS redirect and carry rate-limit annotations. 570 unit tests pass (32 new K8s Helm security tests), 0 HIGH Bandit findings.
@@ -885,4 +889,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.15 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.16 | **Last Updated**: April 2026
