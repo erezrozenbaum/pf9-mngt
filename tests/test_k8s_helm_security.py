@@ -375,7 +375,7 @@ class TestNetworkPolicies:
 
     # Components allowed to egress DB
     DB_CONSUMERS = {
-        "api", "backup-worker", "ldap-sync-worker", "metering-worker",
+        "api", "db-migrate", "backup-worker", "ldap-sync-worker", "metering-worker",
         "notification-worker", "scheduler-worker", "search-worker",
         "sla-worker", "snapshot-worker", "intelligence-worker", "tenant-portal",
     }
@@ -473,6 +473,16 @@ class TestNetworkPolicies:
         assert pol is not None, "pf9-db NetworkPolicy not found"
         allowed = self._ingress_allowed_components(pol, 5432)
         assert "api" in allowed, f"pf9-db policy does not allow 'api' on port 5432 (got: {allowed})"
+
+    @skip_no_helm
+    def test_db_policy_allows_db_migrate_ingress_on_5432(self, chart_netpol_enabled):
+        """Migration job pod must be able to reach the DB through the NetworkPolicy."""
+        pol = _find(chart_netpol_enabled, "NetworkPolicy", "pf9-db")
+        assert pol is not None, "pf9-db NetworkPolicy not found"
+        allowed = self._ingress_allowed_components(pol, 5432)
+        assert "db-migrate" in allowed, (
+            f"pf9-db policy does not allow 'db-migrate' on port 5432 — migration job will be blocked (got: {allowed})"
+        )
 
     @skip_no_helm
     def test_db_policy_allows_all_worker_ingress_on_5432(self, chart_netpol_enabled):

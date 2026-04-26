@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.16-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.17-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,7 +637,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🔒 NetworkPolicies enabled — v1.93.16
+### � Hotfix: migration job unblocked — v1.93.17
+
+**[v1.93.17](CHANGELOG.md)** — Fixed `pf9-db` NetworkPolicy missing `db-migrate` in allowed ingress sources. Helm post-upgrade migration job was stuck in `Init:0/1` because the new NetworkPolicy blocked the init container's DB connectivity check.
+
+### �🔒 NetworkPolicies enabled — v1.93.16
 
 **[v1.93.16](CHANGELOG.md)** — NetworkPolicies activated in production. All 16 service-level NetworkPolicies are now enforced in the `pf9-mngt` namespace following successful `--dry-run=server` validation against the live cluster. Default-deny between all services except explicitly permitted traffic paths.
 
@@ -889,4 +893,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.16 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.17 | **Last Updated**: April 2026

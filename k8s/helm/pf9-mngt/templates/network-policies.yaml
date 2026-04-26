@@ -155,7 +155,7 @@ spec:
     - Egress
 
   ingress:
-    {{- $dbClients := list "api" "backup-worker" "intelligence-worker" "ldap-sync-worker" "metering-worker" "notification-worker" "scheduler-worker" "search-worker" "sla-worker" "snapshot-worker" "tenant-portal" }}
+    {{- $dbClients := list "api" "db-migrate" "backup-worker" "intelligence-worker" "ldap-sync-worker" "metering-worker" "notification-worker" "scheduler-worker" "search-worker" "sla-worker" "snapshot-worker" "tenant-portal" }}
     {{- range $dbClients }}
     - from:
         - podSelector:

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.17] - 2026-04-26
+
+### Fixed
+
+- **NetworkPolicy: db-migrate pod blocked from reaching PostgreSQL** — The `pf9-db` NetworkPolicy was missing `db-migrate` from its allowed ingress sources, causing the Helm post-upgrade migration job to hang in `Init:0/1`. Added `db-migrate` component to the allowed client list on port 5432. Added a dedicated test `test_db_policy_allows_db_migrate_ingress_on_5432` to prevent regression.
+
 ## [1.93.16] - 2026-04-26
 
 ### Security
