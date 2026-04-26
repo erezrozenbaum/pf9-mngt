@@ -25,6 +25,13 @@ services:
   pf9_api:
     ports:
       - "8000:8000"
+    environment:
+      # On Docker Desktop for Windows, bind-mounted secret files get 0o777 permissions,
+      # which the secret_helper.py security check rejects (requires ≤ 0o644 with no write bits).
+      # Setting SECRETS_DIR to a non-existent path causes secret_helper to fall through
+      # to the JWT_SECRET_KEY env var (already defined in docker-compose.yml).
+      # This override is NEVER loaded in production (prod uses -f flags that skip override).
+      SECRETS_DIR: /tmp/no-secrets-dev
 
   pf9_ui:
     ports:

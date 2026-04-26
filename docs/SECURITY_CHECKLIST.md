@@ -302,11 +302,12 @@
   - No passwords, API keys, or tokens appear in any committed Helm values file
   - Verify: `grep -r "password" k8s/helm/pf9-mngt/values.yaml` should return zero credential values
 
-- [ ] **All nine Sealed Secrets created before `helm install`**
+- [ ] **All nine required + optional Sealed Secrets created before `helm install`**
   - Follow the kubeseal commands in `k8s/sealed-secrets/README.md`
   - Required secrets: `pf9-db-credentials`, `pf9-jwt-secret`, `pf9-ldap-secrets`,
     `pf9-smtp-secrets`, `pf9-pf9-credentials`, `pf9-snapshot-creds`,
     `pf9-provision-creds`, `pf9-ssh-credentials`, `pf9-copilot-secrets`
+  - Optional but recommended: `pf9-metrics-secret` *(protects `/metrics` and `/worker-metrics` — v1.93.18+)*
   - Verify all exist before go-live: `kubectl get secrets -n pf9-mngt`
 
 - [ ] **Sealed Secret blobs committed to git**

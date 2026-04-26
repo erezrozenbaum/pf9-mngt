@@ -406,6 +406,21 @@ kubectl create secret generic pf9-copilot-secrets \
 kubectl apply -f k8s/sealed-secrets/pf9-copilot-secrets.yaml
 ```
 
+**pf9-metrics-secret** — API key for `/metrics` and `/worker-metrics` endpoints *(v1.93.18+)*
+```bash
+METRICS_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+kubectl create secret generic pf9-metrics-secret \
+  --namespace pf9-mngt \
+  --from-literal=metrics-api-key="${METRICS_KEY}" \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/metrics-secret.yaml
+kubectl apply -f k8s/sealed-secrets/metrics-secret.yaml
+```
+> Store the value of `$METRICS_KEY` securely — you will need it in the `X-Metrics-Key` header
+> when querying `/metrics` or `/worker-metrics`. The sealed YAML is committed to the private
+> deploy repo (`sealed-secrets/metrics-secret.yaml`).
+
 ### Verify all secrets exist before proceeding
 
 ```bash

@@ -5,23 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.19] - 2026-04-26
+
+### Security
+
+- **`METRICS_API_KEY` propagated to Kubernetes** — The API deployment now reads `METRICS_API_KEY` from the `pf9-metrics-secret` K8s Secret (`key: metrics-api-key`, optional). The sealed secret is committed to the private deploy repo. Without the key set, the metrics endpoint remains unprotected; with it set, all requests to `/metrics` and `/worker-metrics` require a matching `X-Metrics-Key` header.
+
+### Fixed
+
+- **JWT access token TTL corrected in Helm chart** — `values.yaml` had `jwt.accessTokenExpireMinutes: "480"` (8 hours). Reduced to `"60"` to match the Docker Compose default introduced in v1.93.18. Existing running sessions retain their original expiry; new tokens issued after ArgoCD sync will honour the shorter TTL.
+- **`check_cluster.py`: false-PASS on `METRICS_API_KEY` check fixed** — The condition `"CONFIGURED" in stdout` also matched `"NOT_CONFIGURED"`, silently passing the check even when the key was absent. Fixed to `stdout.strip() == "CONFIGURED"`.
+
+### Changed
+
+- `secrets.metricsSecret: pf9-metrics-secret` added to Helm `values.yaml` secrets block.
+- `.env.example` documents `METRICS_API_KEY` generation command.
+- `.env.ci` includes `METRICS_API_KEY=ci-test-metrics-key-not-for-production` for CI integration tests.
+- `docker-compose.yml`: `METRICS_API_KEY: ${METRICS_API_KEY:-}` passes the env var from host to the API container.
+- 568 unit tests pass, 34 skipped, 1 xfailed; 0 HIGH Bandit findings.
+
 ## [1.93.18] - 2026-04-26
 
 ### Security
 
 - **JWT tokens now include a unique `jti` claim** — On logout, the token identifier is stored in Redis with a TTL equal to the remaining token lifetime, providing immediate invalidation without requiring database round-trips on every request. The database session check remains as a defence-in-depth fallback.
-- **JWT access token TTL reduced to 15 minutes** — Previously 90 minutes. The Docker Compose development default is reduced from 480 to 60 minutes. `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` env var still overrides the default.
+- **JWT access token TTL reduced to 15 minutes** — Previously 90 minutes. The Docker Compose development default and the Kubernetes Helm chart default are reduced from 480 to 60 minutes. `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` env var still overrides the default.
 - **Login rate limit tightened to 5/minute** — Reduced from 10/minute to limit brute-force exposure per source IP.
 - **Password reset rate limit changed to 3/hour** — Reduced from 5/minute to limit enumeration and token-spam attacks.
 - **Password reset token no longer logged in plaintext** — The token was previously emitted to the application log when SMTP was disabled. It is now omitted by default; set `DEBUG_SHOW_RESET_TOKEN=true` in development environments to restore the previous behaviour.
 - **MFA challenge token TTL reduced to 2 minutes** — Previously 5 minutes, narrowing the replay window.
-- **`/metrics` and `/worker-metrics` endpoints require `X-Metrics-Key` header** — When `METRICS_API_KEY` is configured (via `/run/secrets/metrics_api_key` or the env var), all requests to the metrics endpoints must supply a matching `X-Metrics-Key` header. Comparison uses `secrets.compare_digest` to prevent timing attacks. Backwards compatible when the key is not configured.
+- **`/metrics` and `/worker-metrics` endpoints require `X-Metrics-Key` header** — When `METRICS_API_KEY` is configured (via `/run/secrets/metrics_api_key` or the env var), all requests to the metrics endpoints must supply a matching `X-Metrics-Key` header. Comparison uses `secrets.compare_digest` to prevent timing attacks. Backwards compatible when the key is not configured. Kubernetes: key is injected from the `pf9-metrics-secret` K8s Secret.
 - **Secret files with group/other write bits now raise `PermissionError`** — Previously a warning was logged. Files with mode `& 0o022` (write bits) are rejected at startup; files that are world-readable but not writable (`0o044`) still emit a warning for Docker 0444 compatibility.
 
 ### Changed
 
 - `config_validator.py` validation output now goes through the structured `logging` module instead of `print()`, ensuring consistent log formatting and allowing log-level filtering.
-- 581 unit tests pass, 33 skipped, 1 xfailed; 0 HIGH Bandit findings.
+- Helm chart `values.yaml`: `jwt.accessTokenExpireMinutes` reduced from `480` to `60`; `secrets.metricsSecret: pf9-metrics-secret` reference added.
+- 568 unit tests pass, 34 skipped, 1 xfailed; 0 HIGH Bandit findings.
 
 ## [1.93.17] - 2026-04-26
 

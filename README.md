@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.18-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.19-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,7 +637,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🔒 Auth hardening — v1.93.18
+### � Hotfix: K8s JWT TTL + metrics key — v1.93.19
+
+**[v1.93.19](CHANGELOG.md)** — Kubernetes config hotfix. **JWT TTL corrected:** `values.yaml` had `accessTokenExpireMinutes: 480`; reduced to `60` to match the Docker Compose default from v1.93.18. **Metrics endpoint protection wired into K8s:** `METRICS_API_KEY` is now injected from `pf9-metrics-secret` K8s Secret into the API pod; sealed secret committed to the private deploy repo. **Cluster check bug fixed:** `check_cluster.py` was false-PASSing the `METRICS_API_KEY` check when the key was absent (`"CONFIGURED" in "NOT_CONFIGURED"` matched). 568 unit tests pass, 0 HIGH Bandit findings.
+
+### �🔒 Auth hardening — v1.93.18
 
 **[v1.93.18](CHANGELOG.md)** — Security hardening release. **JWT jti revocation:** Tokens now include a unique `jti` claim; logout stores the jti in Redis for immediate invalidation with DB session as defence-in-depth. **Shorter token lifetimes:** JWT default TTL reduced 90 → 15 min, MFA challenge TTL 5 → 2 min. **Tighter rate limits:** Login endpoint 10 → 5/min, password reset 5/min → 3/hour. **Metrics endpoint protection:** `/metrics` and `/worker-metrics` require `X-Metrics-Key` header when `METRICS_API_KEY` is configured (constant-time comparison). **Log hygiene:** Password reset token no longer logged in plaintext (gate behind `DEBUG_SHOW_RESET_TOKEN=true`). **Secret file permissions:** Write bits on secret files now raise `PermissionError` instead of a warning. **Structured logging:** `config_validator.py` outputs via `logging` module. 581 unit tests pass, 0 HIGH Bandit findings.
 

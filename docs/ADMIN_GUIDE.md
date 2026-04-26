@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.15  
+**Version**: 1.93.19  
 **Last Updated**: April 26, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,32 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.19 — K8s JWT TTL fix + metrics API key wired to K8s secret (✅ Complete)
+
+- **JWT access token TTL corrected in Helm chart** — `values.yaml` had `jwt.accessTokenExpireMinutes: "480"` (8 hours), out of sync with the 60-minute default set in v1.93.18. Reduced to `"60"`. New tokens issued after ArgoCD sync honour the shorter TTL.
+- **`METRICS_API_KEY` wired in Kubernetes** — The API deployment now reads `METRICS_API_KEY` from the `pf9-metrics-secret` K8s Secret. The sealed secret is committed to the private deploy repo. Requests to `/metrics` and `/worker-metrics` require a matching `X-Metrics-Key` header when the key is present.
+- **`check_cluster.py` false-PASS fixed** — `"CONFIGURED" in stdout` also matched `"NOT_CONFIGURED"`. Fixed to `stdout.strip() == "CONFIGURED"`.
+- 568 unit tests pass, 34 skipped, 1 xfailed; 0 HIGH Bandit findings.
+
+### v1.93.18 — Auth hardening: jti revocation, rate limits, metrics key (✅ Complete)
+
+- **JWT `jti` revocation** — Logout now stores the token `jti` in Redis with TTL equal to remaining token lifetime, enabling immediate invalidation without a DB round-trip on every request.
+- **JWT access token TTL reduced** — From 90 minutes to 60 minutes (env var `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` still overrides).
+- **Login rate limit tightened** — From 10/minute to 5/minute per source IP.
+- **Password reset rate limit** — Changed from 5/minute to 3/hour; token no longer logged in plaintext (set `DEBUG_SHOW_RESET_TOKEN=true` in dev to restore).
+- **MFA challenge TTL reduced** — From 5 minutes to 2 minutes.
+- **`/metrics` and `/worker-metrics` key protection** — When `METRICS_API_KEY` is set, all requests must supply a matching `X-Metrics-Key` header (constant-time comparison).
+- **Secret file permission enforcement** — Files with group/other write bits now raise `PermissionError` at startup.
+- 568 unit tests pass, 34 skipped, 1 xfailed; 0 HIGH Bandit findings.
+
+### v1.93.17 — NetworkPolicy: db-migrate egress fix (✅ Complete)
+
+- **`pf9-db` NetworkPolicy allowed `db-migrate` on port 5432** — The post-upgrade Helm migration job was blocked; ingress rule added for the `db-migrate` component. Regression test added.
+
+### v1.93.16 — NetworkPolicies enabled in production (✅ Complete)
+
+- **`networkPolicy.enabled: true`** — All 16 service NetworkPolicies are now enforced in the `pf9-mngt` namespace. Validated with `helm template | kubectl apply --dry-run=server` before rollout.
 
 ### v1.93.15 — Kubernetes security hardening (✅ Complete)
 

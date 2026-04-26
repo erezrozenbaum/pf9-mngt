@@ -564,8 +564,15 @@ JWT_SECRET_KEY=<generated-64-char-key>
 # NEVER share or commit this value
 
 JWT_ALGORITHM=HS256                  # HMAC SHA256 (default, recommended)
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES=480  # 8 hours
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=60   # 60 minutes (v1.93.18+)
 JWT_REFRESH_TOKEN_EXPIRE_DAYS=30     # 30 days
+
+# Metrics endpoint protection (v1.93.18+)
+METRICS_API_KEY=<generate-random-key>
+# Generate: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+# When set, GET /metrics and GET /worker-metrics require the header:
+#   X-Metrics-Key: <your-key>
+# Leave blank to disable key-protection (not recommended in production).
 
 # Authentication Control
 ENABLE_AUTHENTICATION=true            # Enable LDAP authentication (true/false)

@@ -11,6 +11,17 @@ For the prod stack (nginx on 443): TEST_API_URL=https://localhost pytest ...
 import os
 import pytest
 import requests
+from pathlib import Path
+
+# Load .env from repo root so METRICS_API_KEY etc. are available when running
+# pytest directly on the host (not inside Docker).
+try:
+    from dotenv import load_dotenv
+    _env_file = Path(__file__).parent.parent / ".env"
+    if _env_file.exists():
+        load_dotenv(_env_file, override=False)
+except ImportError:
+    pass  # python-dotenv not installed — rely on shell env
 
 API_URL = os.getenv("TEST_API_URL", "http://localhost:8000")
 # Allow self-signed cert in prod TLS tests
@@ -55,13 +66,21 @@ class TestHealthEndpoint:
 
 class TestMetricsEndpoint:
     def test_metrics_returns_200(self, api):
-        r = requests.get(f"{api}/metrics", verify=VERIFY_SSL, timeout=5)
+        """GET /metrics with valid X-Metrics-Key must return 200.
+        If METRICS_API_KEY is not set, the endpoint is open and 200 is expected without a key.
+        """
+        key = os.getenv("METRICS_API_KEY", "")
+        headers = {"X-Metrics-Key": key} if key else {}
+        r = requests.get(f"{api}/metrics", headers=headers, verify=VERIFY_SSL, timeout=5)
         assert r.status_code == 200
 
-    def test_metrics_unauthenticated(self, api):
-        """Public /metrics endpoint must not require auth (prometheus / monitoring scrape)."""
+    def test_metrics_requires_key_when_configured(self, api):
+        """When METRICS_API_KEY is set, /metrics without the header must return 401."""
+        key = os.getenv("METRICS_API_KEY", "")
+        if not key:
+            pytest.skip("METRICS_API_KEY not configured — endpoint is open, skip enforcement test")
         r = requests.get(f"{api}/metrics", headers={}, verify=VERIFY_SSL, timeout=5)
-        assert r.status_code == 200
+        assert r.status_code == 401
 
 
 class TestProtectedEndpointRequiresAuth:

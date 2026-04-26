@@ -46,6 +46,7 @@ secrets:
   tenantPortalDbCredentials: pf9-tenant-portal-db-credentials  # key: password (tenant_portal_role DB user)
   internalServiceSecret: pf9-internal-service-secret          # key: secret (shared token between tenant-portal and admin API)
   redisSecret: pf9-redis-secret                                # key: redis-password
+  metricsSecret: pf9-metrics-secret                            # key: metrics-api-key
 
 # ---------------------------------------------------------------------------
 # Shared configuration (used by multiple services)
@@ -87,7 +88,7 @@ smtp:
 
 jwt:
   algorithm: HS256
-  accessTokenExpireMinutes: "480"
+  accessTokenExpireMinutes: "60"
 
 redis:
   url: redis://pf9-redis:6379/0

@@ -288,6 +288,13 @@ spec:
                   name: {{ .Values.secrets.internalServiceSecret }}
                   key: secret
                   optional: true
+            # --- Metrics endpoint API key ---
+            - name: METRICS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.metricsSecret }}
+                  key: metrics-api-key
+                  optional: true
             # --- PRODUCTION_MODE guard (JWT startup check) ---
             - name: PRODUCTION_MODE
               value: "true"

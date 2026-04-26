@@ -83,6 +83,7 @@ services:
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
       LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT:-5/minute}
+      METRICS_API_KEY: ${METRICS_API_KEY:-}
 
       # === Logging Configuration ===
       LOG_FILE: /app/logs/pf9_api.log
