@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.12  
-**Last Updated**: April 24, 2026  
+**Version**: 1.93.13  
+**Last Updated**: April 26, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.13 — Security hardening (✅ Complete)
+
+- **Cache invalidation silent no-op fixed**: The `invalidate()` helper in the Redis cache decorator built a key of `{prefix}:{hash}` while `wrapper()` writes `{prefix}:{region_id}:{hash}`. Every invalidation call targeted a nonexistent key, leaving stale data in the cache indefinitely. Fixed to use the exact same key structure (`api/cache.py`).
+- **HTML injection in provisioning welcome email fixed**: The inline fallback template in `api/provisioning_routes.py` interpolated `username`, `password`, `login_url`, `domain_name`, `project_name`, and `user_role` directly into HTML f-strings. All values are now wrapped with `html.escape()`. The Jinja2 template path was already safe (`autoescape=True`).
+- **Path traversal protection in backup file delete**: Backup file deletion now resolves the absolute path and validates it lies within `NFS_BACKUP_PATH` before calling `os.remove()`. Any file outside the backup directory is rejected with an audit log entry (`api/backup_routes.py`).
+- **SSRF prevention for PSA outbound webhooks**: Webhook URLs targeting private, loopback, link-local, or reserved IP ranges are now rejected at input validation time, preventing server-side request forgery to internal services (`api/psa_routes.py`).
+- 538 unit tests pass, 0 HIGH Bandit findings.
 
 ### v1.93.12 — Storage %, Efficiency & Capacity Runway fixes (✅ Complete)
 

@@ -54,8 +54,22 @@ class PsaConfigIn(BaseModel):
     @field_validator("webhook_url")
     @classmethod
     def _validate_url(cls, v: str) -> str:
+        import ipaddress
+        from urllib.parse import urlparse
         if not (v.startswith("https://") or v.startswith("http://")):
             raise ValueError("webhook_url must start with http:// or https://")
+        # Block SSRF: reject URLs that resolve to private/loopback/link-local IPs
+        _host = urlparse(v).hostname or ""
+        try:
+            _ip = ipaddress.ip_address(_host)
+            if _ip.is_private or _ip.is_loopback or _ip.is_link_local or _ip.is_reserved:
+                raise ValueError(
+                    "webhook_url cannot target private, loopback, or link-local IP addresses"
+                )
+        except ValueError as _exc:
+            # Re-raise our own SSRF error; ignore AddressValueError (hostname, not raw IP)
+            if "webhook_url" in str(_exc):
+                raise
         return v
 
     @field_validator("min_severity")

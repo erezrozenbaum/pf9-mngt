@@ -114,14 +114,17 @@ def cached(ttl: int = DEFAULT_TTL, key_prefix: str = ""):
             if client is None:
                 return
             try:
+                # Key must mirror wrapper() exactly: prefix + region_segment + hash of args[1:]
+                region_segment = getattr(args[0], "region_id", "default") if args else "default"
                 key_data = json.dumps(
-                    {"a": list(args), "k": kwargs}, sort_keys=True, default=str
+                    {"a": list(args[1:]), "k": kwargs}, sort_keys=True, default=str
                 )
                 # MD5 used for cache key sharding only, not for any security purpose
                 key_hash = hashlib.md5(key_data.encode(), usedforsecurity=False).hexdigest()  # nosec B324
-                client.delete(f"{prefix}:{key_hash}")
+                cache_key = f"{prefix}:{region_segment}:{key_hash}"
+                client.delete(cache_key)
             except Exception as exc:
-                logger.debug("Cache invalidation error for %s:%s: %s", prefix, key_hash, exc)
+                logger.debug("Cache invalidation error for %s: %s", prefix, exc)
 
         wrapper.invalidate = invalidate
         return wrapper

@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.12-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.13-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🔒 Security hardening — v1.93.13
+
+**[v1.93.13](CHANGELOG.md)** — Security fix release. **Cache invalidation bug:** The cache `invalidate()` helper was building a different key than `wrapper()` (missing `region_id` segment), making every invalidation call a silent no-op. Fixed to use the exact same key structure. **HTML injection in welcome email:** The inline fallback provisioning email template interpolated user-supplied values (`username`, `domain_name`, `project_name`, etc.) directly into HTML without escaping. All values now use `html.escape()`. **Backup path traversal protection:** Backup file deletion now validates the resolved absolute path is within `NFS_BACKUP_PATH` before calling `os.remove()`. **SSRF prevention in PSA webhooks:** Webhook URLs targeting private, loopback, link-local, or reserved IP ranges are now rejected at input validation time. 538 unit tests pass, 0 HIGH Bandit findings.
+
 ### 🩹 Storage % + Efficiency + Capacity Runway display fixes — v1.93.12
 
 **[v1.93.12](CHANGELOG.md)** — Bug-fix release. **Storage bar 100% for all VMs:** The DB allocation fallback set `storage_used_gb = flavor_disk_gb` and `storage_total_gb = flavor_disk_gb`, making the percentage always 100%. Fixed by setting `storage_used_gb = None` so no misleading bar is drawn — the allocated disk size in GB is still shown as a label. **Health Overview Efficiency=0:** The internal `client-health` API received the tenant's project UUID but `metering_efficiency` stores human-readable project names (e.g. `ORG1`); the UUID matched zero rows, returning `COALESCE(AVG, 0) = 0`. Fixed by resolving the UUID via the `projects` table before the query. **Capacity Runway red "0":** When quotas are not configured, `capacity_runway_days` is correctly `null` but the `HealthDials` component mapped `null → 0`, rendering a red ring with "no data". Now renders a neutral grey empty ring with "no quota configured" label. 538 unit tests pass, TypeScript clean.
@@ -873,4 +877,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.12 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.13 | **Last Updated**: April 2026

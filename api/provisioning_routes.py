@@ -1008,7 +1008,9 @@ def _render_welcome_email(username: str, password: str, login_url: str,
             tpl = env.get_template("customer_welcome.html")
             return tpl.render(**template_vars)
 
-    # Fallback inline template
+    # Fallback inline template — all user-supplied values HTML-escaped to prevent injection
+    from html import escape as _he
+    _login_url_safe = _he(login_url)
     return f"""
     <html>
     <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -1016,24 +1018,24 @@ def _render_welcome_email(username: str, password: str, login_url: str,
         <h1 style="margin: 0;">Welcome to Platform9</h1>
       </div>
       <div style="border: 1px solid #e2e8f0; padding: 20px; border-radius: 0 0 8px 8px;">
-        <p>Hello <strong>{username}</strong>,</p>
+        <p>Hello <strong>{_he(username)}</strong>,</p>
         <p>Your Platform9 account has been provisioned. Here are your login details:</p>
         <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
           <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold;">Login URL</td>
-              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;"><a href="{login_url}">{login_url}</a></td></tr>
+              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;"><a href="{_login_url_safe}">{_login_url_safe}</a></td></tr>
           <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold;">Username</td>
-              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{username}</td></tr>
+              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{_he(username)}</td></tr>
           <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold;">Temporary Password</td>
-              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;"><code>{password}</code></td></tr>
+              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;"><code>{_he(password)}</code></td></tr>
           <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold;">Domain</td>
-              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{domain_name}</td></tr>
+              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{_he(domain_name)}</td></tr>
           <tr><td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: bold;">Project</td>
-              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{project_name}</td></tr>
+              <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{_he(project_name)}</td></tr>
           <tr><td style="padding: 8px; font-weight: bold;">Role</td>
-              <td style="padding: 8px;">{user_role}</td></tr>
+              <td style="padding: 8px;">{_he(user_role)}</td></tr>
         </table>
         <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin: 16px 0; border-radius: 4px;">
-          <strong>⚠️ Important:</strong> You must change your password upon first login.
+          <strong>&#9888; Important:</strong> You must change your password upon first login.
         </div>
         <p>If you have any questions, please contact your Platform9 administrator.</p>
       </div>

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.13] - 2026-04-26
+
+### Security
+
+- **Cache invalidation silent no-op fixed** — The `invalidate()` closure in `api/cache.py` was building a cache key of `{prefix}:{hash}` while `wrapper()` writes `{prefix}:{region_id}:{hash}`. Every `.invalidate()` call was a no-op — the correct key was never deleted. Fixed to mirror the wrapper key exactly, including `region_id` segment.
+
+- **HTML injection in fallback provisioning welcome email fixed** — The inline fallback template in `api/provisioning_routes.py` interpolated `username`, `password`, `login_url`, `domain_name`, `project_name`, and `user_role` directly into HTML f-strings without escaping. All values are now wrapped with `html.escape()`. The Jinja2 template path was already safe (`autoescape=True`).
+
+- **Path traversal protection in backup file delete** — `api/backup_routes.py` now validates that the resolved absolute path of a backup file to be deleted lies within the configured `NFS_BACKUP_PATH` before calling `os.remove()`. Files outside the backup directory are rejected with an error log entry.
+
+- **SSRF protection for PSA outbound webhook URLs** — The `webhook_url` validator in `api/psa_routes.py` now rejects URLs whose hostname resolves to a private, loopback, link-local, or reserved IP address, preventing server-side request forgery to internal services.
+
+- 538 unit tests pass, 0 HIGH Bandit findings.
+
 ## [1.93.12] - 2026-04-24
 
 ### Fixed

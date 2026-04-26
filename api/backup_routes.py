@@ -434,14 +434,23 @@ async def delete_backup(
             if not row:
                 raise HTTPException(status_code=404, detail="Backup not found")
 
-            # Remove file from disk
+            # Remove file from disk — validate path stays within the allowed backup directory
+            # to prevent path traversal if the DB record were ever tampered with.
             fpath = row.get("file_path")
-            if fpath and os.path.isfile(fpath):
-                try:
-                    os.remove(fpath)
-                    logger.info("Deleted backup file %s", fpath)
-                except OSError as exc:
-                    logger.warning("Could not delete file %s: %s", fpath, exc)
+            if fpath:
+                _allowed_base = os.path.abspath(NFS_BACKUP_PATH)
+                _abs_fpath = os.path.abspath(fpath)
+                if not _abs_fpath.startswith(_allowed_base + os.sep) and _abs_fpath != _allowed_base:
+                    logger.error(
+                        "Refusing to delete file outside backup directory (allowed=%s, got=%s)",
+                        _allowed_base, _abs_fpath,
+                    )
+                elif os.path.isfile(_abs_fpath):
+                    try:
+                        os.remove(_abs_fpath)
+                        logger.info("Deleted backup file %s", _abs_fpath)
+                    except OSError as exc:
+                        logger.warning("Could not delete file %s: %s", _abs_fpath, exc)
 
             cur.execute("DELETE FROM backup_history WHERE id = %s", (backup_id,))
 
