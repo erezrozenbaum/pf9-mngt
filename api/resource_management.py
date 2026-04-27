@@ -1,4 +1,4 @@
-"""
+﻿"""
 Resource Management API Routes
 ===============================
 System provisioning resource tool for managing OpenStack resources.
@@ -283,7 +283,7 @@ async def list_users(
 
         return {"data": result, "count": len(result)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/users")
@@ -331,7 +331,7 @@ async def add_user(
         raise
     except Exception as e:
         logger.error("Add user failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/users/{user_id}")
@@ -387,7 +387,7 @@ async def remove_user(
         raise
     except Exception as e:
         logger.error("Remove user failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/users/assign-role")
@@ -422,7 +422,7 @@ async def assign_role(
         raise
     except Exception as e:
         logger.error("Assign role failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +471,7 @@ async def list_flavors(
 
         return {"data": result, "count": len(result)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/flavors")
@@ -509,7 +509,7 @@ async def create_flavor(
         raise
     except Exception as e:
         logger.error("Create flavor failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/flavors/{flavor_id}")
@@ -551,7 +551,7 @@ async def delete_flavor(
         raise
     except Exception as e:
         logger.error("Delete flavor failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -611,7 +611,7 @@ async def list_networks(
 
         return {"data": result, "count": len(result)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/networks")
@@ -675,7 +675,7 @@ async def create_network(
         raise
     except Exception as e:
         logger.error("Create network failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/networks/{network_id}")
@@ -757,7 +757,7 @@ async def list_routers(
 
         return {"data": result, "count": len(result)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/routers")
@@ -793,7 +793,7 @@ async def create_router(
         raise
     except Exception as e:
         logger.error("Create router failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/routers/{router_id}")
@@ -823,7 +823,7 @@ async def delete_router(
         raise
     except Exception as e:
         logger.error("Delete router failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/routers/{router_id}/add-interface")
@@ -857,7 +857,7 @@ async def add_router_interface(
         raise
     except Exception as e:
         logger.error("Add router interface failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/routers/{router_id}/remove-interface")
@@ -891,7 +891,7 @@ async def remove_router_interface(
         raise
     except Exception as e:
         logger.error("Remove router interface failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -927,7 +927,7 @@ async def list_floating_ips(
 
         return {"data": result, "count": len(result)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/floating-ips")
@@ -972,7 +972,7 @@ async def allocate_floating_ip(
         raise
     except Exception as e:
         logger.error("Allocate floating IP failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/floating-ips/{fip_id}")
@@ -1002,7 +1002,7 @@ async def release_floating_ip(
         raise
     except Exception as e:
         logger.error("Release floating IP failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1042,7 +1042,7 @@ async def list_volumes(
 
         return {"data": result, "count": len(result)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/volumes")
@@ -1090,7 +1090,7 @@ async def create_volume(
         raise
     except Exception as e:
         logger.error("Create volume failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/volumes/{volume_id}")
@@ -1138,7 +1138,7 @@ async def delete_volume(
         raise
     except Exception as e:
         logger.error("Delete volume failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1175,7 +1175,7 @@ async def list_security_groups(
 
         return {"data": result, "count": len(result)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/security-groups")
@@ -1210,7 +1210,7 @@ async def create_security_group(
         raise
     except Exception as e:
         logger.error("Create security group failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/security-groups/{sg_id}")
@@ -1240,7 +1240,7 @@ async def delete_security_group(
         raise
     except Exception as e:
         logger.error("Delete security group failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/security-groups/rules")
@@ -1282,7 +1282,7 @@ async def create_sg_rule(
         raise
     except Exception as e:
         logger.error("Create SG rule failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/security-groups/rules/{rule_id}")
@@ -1312,7 +1312,7 @@ async def delete_sg_rule(
         raise
     except Exception as e:
         logger.error("Delete SG rule failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1366,7 +1366,7 @@ async def list_images(
 
         return {"data": result, "count": len(result)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1393,7 +1393,7 @@ async def get_quotas(
             "storage": storage_q,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/quotas")
@@ -1462,7 +1462,7 @@ async def update_quotas(
         raise
     except Exception as e:
         logger.error("Update quotas failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1480,7 +1480,7 @@ async def context_domains(
         domains = client.list_domains()
         return {"data": [{"id": d["id"], "name": d.get("name", "")} for d in domains]}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/context/projects")
@@ -1506,7 +1506,7 @@ async def context_projects(
             ]
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/context/external-networks")
@@ -1525,4 +1525,4 @@ async def context_external_networks(
         ]
         return {"data": external}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

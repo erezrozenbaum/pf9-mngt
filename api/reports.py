@@ -1,4 +1,4 @@
-"""
+﻿"""
 Reports API Routes
 ==================
 Comprehensive reporting system for PF9 management platform.
@@ -438,7 +438,7 @@ async def report_tenant_quota_usage(
         raise
     except Exception as e:
         logger.error("Report tenant-quota-usage failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -634,7 +634,7 @@ async def report_domain_overview(
         raise
     except Exception as e:
         logger.error("Report domain-overview failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -755,7 +755,7 @@ async def report_snapshot_compliance(
         raise
     except Exception as e:
         logger.error("Report snapshot-compliance failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -857,7 +857,7 @@ async def report_flavor_usage(
         raise
     except Exception as e:
         logger.error("Report flavor-usage failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -951,7 +951,7 @@ async def report_metering_summary(
         raise
     except Exception as e:
         logger.error("Report metering-summary failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1021,7 +1021,7 @@ async def report_resource_inventory(
         raise
     except Exception as e:
         logger.error("Report resource-inventory failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1109,7 +1109,7 @@ async def report_user_role_audit(
         raise
     except Exception as e:
         logger.error("Report user-role-audit failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1195,7 +1195,7 @@ async def report_idle_resources(
         raise
     except Exception as e:
         logger.error("Report idle-resources failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1266,7 +1266,7 @@ async def report_security_group_audit(
         raise
     except Exception as e:
         logger.error("Report security-group-audit failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1401,7 +1401,7 @@ async def report_capacity_planning(
         raise
     except Exception as e:
         logger.error("Report capacity-planning failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1468,7 +1468,7 @@ async def report_backup_status(
         raise
     except Exception as e:
         logger.error("Report backup-status failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1513,7 +1513,7 @@ async def report_activity_log(
         raise
     except Exception as e:
         logger.error("Report activity-log failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1609,7 +1609,7 @@ async def report_network_topology(
         raise
     except Exception as e:
         logger.error("Report network-topology failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1719,7 +1719,7 @@ async def report_cost_allocation(
         raise
     except Exception as e:
         logger.error("Report cost-allocation failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1774,7 +1774,7 @@ async def report_drift_summary(
         raise
     except Exception as e:
         logger.error("Report drift-summary failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -1983,7 +1983,7 @@ async def report_vm_report(
         raise
     except Exception as e:
         logger.error("Report vm-report failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -2090,7 +2090,7 @@ async def report_image_usage(
         raise
     except Exception as e:
         logger.error("Report image-usage failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -2202,7 +2202,7 @@ async def report_flavor_by_tenant(
         raise
     except Exception as e:
         logger.error("Report flavor-by-tenant failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------

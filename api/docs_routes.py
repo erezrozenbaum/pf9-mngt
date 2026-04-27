@@ -39,7 +39,7 @@ router = APIRouter(prefix="/api/docs", tags=["docs"])
 _DOCS_DIR = Path(__file__).resolve().parent / "docs"
 
 # Regex for safe filename validation — prevents path traversal
-_SAFE_FILENAME_RE = re.compile(r"^[\w\-\.]+\.md$")
+_SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9_-]+\.md$")
 
 # ---------------------------------------------------------------------------
 # Category mapping based on filename prefix/keywords

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Notification management API endpoints.
 
 Provides CRUD for notification preferences, notification history,
@@ -209,7 +209,7 @@ async def get_preferences(current_user=Depends(get_current_user)):
                 prefs = cur.fetchall()
             return {"preferences": prefs, "available_event_types": VALID_EVENT_TYPES}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/preferences", dependencies=[Depends(require_permission("notifications", "write"))])
@@ -240,7 +240,7 @@ async def update_preferences(
                     ))
             return {"status": "ok", "updated": len(body.preferences)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/preferences/{event_type}", dependencies=[Depends(require_permission("notifications", "write"))])
@@ -261,7 +261,7 @@ async def delete_preference(event_type: str, current_user=Depends(get_current_us
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +316,7 @@ async def get_notification_history(
 
             return {"history": logs, "total": total, "limit": limit, "offset": offset}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +364,7 @@ async def get_notification_stats():
                 "subscribers": sub_stats,
             }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +571,7 @@ async def test_system_alert_email(body: AlertTestRequest):
     try:
         ok = smtp_send_email(body.to_email, "[TEST] PF9 RVTools Alert Notification", html, raise_on_error=True)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"SMTP error: {exc}") from exc
+        logger.error("SMTP test send failed: %s", exc)
+        raise HTTPException(status_code=502, detail="SMTP connection failed") from exc
     return {"status": "ok" if ok else "error"}
 

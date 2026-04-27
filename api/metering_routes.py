@@ -1730,7 +1730,8 @@ async def send_chargeback_email(
                     server.login(SMTP_USERNAME, SMTP_PASSWORD or "")
                 server.sendmail(SMTP_FROM_ADDRESS, [req.to_email], msg.as_string())
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to send email: {exc}")
+        logger.error("Failed to send metering report email: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to send email")
 
     return {"ok": True, "message": f"Report sent to {req.to_email}", "filename": filename}
 

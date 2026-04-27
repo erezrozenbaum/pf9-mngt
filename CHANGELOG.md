@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.30] - 2026-04-27
+
+### Security
+
+- **Internal server errors no longer expose exception strings** — All HTTP 500 responses across `dashboards`, `reports`, `resource_management`, `notification_routes`, `metering_routes`, `notification_routes`, `ldap_sync_routes`, `onboarding_routes`, and `cluster_routes` now return a generic `"Internal server error"` message. Full exception details are logged server-side only. This prevents database table names, file paths, connection strings, and other internal details from leaking to clients.
+- **SVG files rejected in branding logo upload** — The `POST /admin/settings/branding/logo` endpoint no longer accepts `image/svg+xml`. SVG files can contain embedded scripts that execute in the browser when loaded directly, enabling stored XSS by any admin who uploads a crafted logo. Accepted types are now PNG, JPEG, GIF, and WebP only.
+- **Docs filename validation tightened** — The filename regex used by the docs API was `[\w\-.]+` which permits dots in the stem (e.g. `../../etc/passwd.md` after URL-decoding edge cases). Changed to `[a-zA-Z0-9_-]+` — alphanumeric, underscore, and hyphen only, no dots in the stem.
+
+### Changed
+
+- Helm chart version bumped to 1.93.30.
+
+---
+
 ## [1.93.29] - 2026-04-28
 
 ### Added

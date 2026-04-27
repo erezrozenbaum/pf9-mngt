@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.29  
+**Version**: 1.93.30  
 **Last Updated**: April 27, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.30 — API error hardening, SVG upload restriction, docs validation (✅ Complete)
+
+- **Error responses no longer expose exception internals** — All HTTP 500 responses across dashboards, reports, resource management, notifications, metering, LDAP sync, onboarding, and cluster routes now return a generic message. Full exception details are written to the server log only. Prevents accidental disclosure of DB schema, file paths, or connection strings to clients.
+- **SVG rejected in branding logo upload** — The logo upload endpoint now accepts PNG, JPEG, GIF, and WebP only. SVG was removed because SVG is XML and can carry `<script>` tags that execute when the browser loads the file directly, enabling stored XSS.
+- **Docs filename validation tightened** — Filenames served by the docs API must now be strictly `[a-zA-Z0-9_-].md`. The previous pattern allowed dots in the stem, which is more permissive than necessary.
 
 ### v1.93.29 — Security hardening, image pinning, alerting & log aggregation (✅ Complete)
 

@@ -6265,11 +6265,11 @@ async def upload_branding_logo(
     request: Request,
     current_user: User = Depends(require_authentication),
 ):
-    """Upload a company logo image (PNG/JPEG/GIF/SVG/WebP, max 2MB)."""
+    """Upload a company logo image (PNG/JPEG/GIF/WebP, max 2MB)."""
     if current_user.role not in ("admin", "superadmin"):
         raise HTTPException(status_code=403, detail="Admin role required")
     content_type = request.headers.get("content-type", "")
-    ext_map = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/svg+xml": "svg", "image/webp": "webp"}
+    ext_map = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
     ext = ext_map.get(content_type.split(";")[0].strip().lower())
     if not ext:
         raise HTTPException(status_code=400, detail=f"Unsupported Content-Type: {content_type}")

@@ -1045,7 +1045,8 @@ def run_dry_run(batch_id: str, current_user: dict = Depends(require_permission("
                     "dry_run_result = %s::jsonb WHERE batch_id = %s",
                     (psycopg2.extras.Json({"error": str(exc), "items": []}), batch_id),
                 )
-        raise HTTPException(status_code=502, detail=f"PCD connection failed: {exc}")
+        logger.error("PCD dry-run connection failed: %s", exc)
+        raise HTTPException(status_code=502, detail="PCD connection failed")
 
     # Determine pass/fail
     has_conflicts = len(conflicts) > 0

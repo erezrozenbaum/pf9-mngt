@@ -509,7 +509,8 @@ async def test_control_plane(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(500, f"Could not read stored credential: {exc}") from exc
+        logger.error("Could not read stored credential for cluster: %s", exc)
+        raise HTTPException(500, "Could not read stored credential") from exc
 
     # Build a temporary client to test connectivity
     try:

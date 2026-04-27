@@ -752,9 +752,10 @@ async def preview_sync(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.error("LDAP connection failed: %s", exc)
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"LDAP connection failed: {exc}",
+            detail="LDAP connection failed",
         ) from exc
 
     seen_uids = set()

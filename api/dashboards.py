@@ -1,4 +1,4 @@
-
+﻿
 
 """
 Dashboard endpoints for operational intelligence.
@@ -650,7 +650,7 @@ async def get_health_summary(
             }
     except Exception as e:
         logger.error("Error in get_health_summary: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -801,7 +801,7 @@ async def get_snapshot_sla_compliance():
         
     except Exception as e:
         logger.error("Error in get_snapshot_sla_compliance: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -982,7 +982,7 @@ async def get_top_hosts_utilization(limit: int = Query(5, ge=1, le=20), sort: st
         
     except Exception as e:
         logger.error("Error in get_top_hosts_utilization: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1121,7 +1121,7 @@ async def get_recent_changes(hours: int = Query(24, ge=1, le=720)):
         
     except Exception as e:
         logger.error("Error in get_recent_changes: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1231,7 +1231,7 @@ async def get_coverage_risks():
             }
     except Exception as e:
         logger.error("Error in get_coverage_risks: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1298,7 +1298,7 @@ async def get_capacity_pressure():
             }
     except Exception as e:
         logger.error("Error in get_capacity_pressure: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1387,7 +1387,7 @@ async def get_vm_hotspots(limit: int = Query(5, ge=1, le=20), sort: str = Query(
         }
     except Exception as e:
         logger.error("Error in get_vm_hotspots: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1433,7 +1433,7 @@ async def get_change_compliance(hours: int = Query(24, ge=1, le=720)):
             }
     except Exception as e:
         logger.error("Error in get_change_compliance: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1449,7 +1449,7 @@ async def get_tenant_risk_scores():
         }
     except Exception as e:
         logger.error("Error in get_tenant_risk_scores: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1466,7 +1466,7 @@ async def get_tenant_risk_heatmap():
         }
     except Exception as e:
         logger.error("Error in get_tenant_risk_heatmap: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1557,7 +1557,7 @@ async def get_trendlines(days: int = Query(14, ge=7, le=90)):
             }
     except Exception as e:
         logger.error("Error in get_trendlines: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1615,7 +1615,7 @@ async def get_capacity_trends(days: int = Query(30, ge=7, le=180)):
             }
     except Exception as e:
         logger.error("Error in get_capacity_trends: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1683,7 +1683,7 @@ async def get_compliance_drift():
             }
     except Exception as e:
         logger.error("Error in get_compliance_drift: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
@@ -1748,7 +1748,7 @@ async def get_tenant_summary():
         
     except Exception as e:
         logger.error("Error in get_tenant_summary: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =========================================================================
