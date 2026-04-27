@@ -33,6 +33,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+            readOnlyRootFilesystem: true
           ports:
             - containerPort: 8000
               name: http
@@ -323,6 +324,8 @@ spec:
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             - name: app-logs
               mountPath: /app/logs
             - name: reports
@@ -330,6 +333,8 @@ spec:
             - name: branding-logos
               mountPath: /app/branding_logos
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: app-logs
           emptyDir: {}
         - name: reports

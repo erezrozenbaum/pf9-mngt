@@ -13,6 +13,7 @@ Runs as a long-lived container.  Responsibilities:
 import datetime
 import contextlib
 import glob
+import hashlib
 import logging
 import os
 import signal
@@ -174,6 +175,34 @@ def _get_conn():
     )
 
 
+# ---------------------------------------------------------------------------
+# Circuit breaker (H15) — prevents cascading failures during DB outages
+# ---------------------------------------------------------------------------
+_cb_failure_count = 0
+_cb_circuit_open_until = 0.0
+
+
+def _get_conn_with_cb():
+    """Wrap _get_conn() with a circuit breaker: after 3 consecutive failures,
+    back off 60 seconds to prevent log storms during prolonged DB outages."""
+    global _cb_failure_count, _cb_circuit_open_until
+    if time.time() < _cb_circuit_open_until:
+        raise RuntimeError("Circuit open -- DB unavailable, skipping job")
+    try:
+        conn = _get_conn()
+        _cb_failure_count = 0
+        return conn
+    except Exception:
+        _cb_failure_count += 1
+        if _cb_failure_count >= 3:
+            _cb_circuit_open_until = time.time() + 60  # back off 60s
+            log.warning(
+                "DB circuit breaker OPEN -- will retry in 60s (failure_count=%d)",
+                _cb_failure_count,
+            )
+        raise
+
+
 def _fetch_config(conn):
     """Return the single-row backup_config as a dict, or None."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -202,6 +231,7 @@ def _fetch_pending_ldap_jobs(conn):
 _ALLOWED_JOB_FIELDS = frozenset({
     "status", "started_at", "completed_at", "file_name", "file_path",
     "file_size_bytes", "duration_seconds", "error_message", "notes",
+    "integrity_hash",
 })
 
 def _update_job(conn, job_id, **fields):
@@ -296,6 +326,12 @@ def _run_backup(conn, job_id: int, backup_type: str = "manual", initiated_by: st
         )
         _update_config_last_backup(conn, "database")
         log.info("Backup job %s completed – %s bytes in %.1f s", job_id, size, duration)
+        # Compute SHA-256 integrity hash (H7)
+        sha256 = hashlib.sha256()
+        with open(filepath, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                sha256.update(chunk)
+        _update_job(conn, job_id, integrity_hash=sha256.hexdigest())
         # Validate backup integrity: gzip check + pg_dump header
         _validate_backup(conn, job_id, filepath)
         return True
@@ -750,7 +786,7 @@ def main():
                     time.sleep(1)
                 continue
 
-            conn = _get_conn()
+            conn = _get_conn_with_cb()
 
             # 1. Process any pending DATABASE manual / restore jobs
             pending = _fetch_pending_jobs(conn)

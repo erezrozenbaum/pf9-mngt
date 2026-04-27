@@ -101,6 +101,34 @@ def get_db_connection():
     )
 
 
+# ---------------------------------------------------------------------------
+# Circuit breaker (H15) — prevents cascading failures during DB outages
+# ---------------------------------------------------------------------------
+_cb_failure_count = 0
+_cb_circuit_open_until = 0.0
+
+
+def get_db_connection_with_cb():
+    """Wrap get_db_connection() with a circuit breaker: after 3 consecutive
+    failures, back off 60 seconds to prevent log storms during DB outages."""
+    global _cb_failure_count, _cb_circuit_open_until
+    if time.time() < _cb_circuit_open_until:
+        raise RuntimeError("Circuit open -- DB unavailable, skipping job")
+    try:
+        conn = get_db_connection()
+        _cb_failure_count = 0
+        return conn
+    except Exception:
+        _cb_failure_count += 1
+        if _cb_failure_count >= 3:
+            _cb_circuit_open_until = time.time() + 60  # back off 60s
+            logger.warning(
+                "DB circuit breaker OPEN -- will retry in 60s (failure_count=%d)",
+                _cb_failure_count,
+            )
+        raise
+
+
 def ensure_tables(conn):
     """Run the migration SQL if tables don't exist yet."""
     with conn.cursor() as cur:
@@ -602,7 +630,7 @@ def main():
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
             except Exception:
-                conn = get_db_connection()
+                conn = get_db_connection_with_cb()
 
             # Regular poll
             poll_cycle(conn)
@@ -620,7 +648,7 @@ def main():
         except Exception as e:
             logger.error(f"Poll cycle error: {e}")
             try:
-                conn = get_db_connection()
+                conn = get_db_connection_with_cb()
             except Exception:
                 pass
 

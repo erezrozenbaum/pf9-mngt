@@ -189,7 +189,9 @@ class LDAPAuthenticator:
             user_dn_cn = f"cn={_safe_un},{self.user_dn}"
             user_dn_uid = f"uid={_safe_un},{self.user_dn}"
             
-            # Try cn format first (our setup)
+            # Try cn format first (our setup) — guaranteed unbind via finally
+            conn = None
+            _cn_ok = False
             try:
                 logger.debug("[AUTH] Trying CN format: %s", user_dn_cn)
                 conn = ldap.initialize(self.server)
@@ -197,25 +199,41 @@ class LDAPAuthenticator:
                 conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
                 conn.set_option(ldap.OPT_REFERRALS, 0)
                 conn.simple_bind_s(user_dn_cn, password)
-                conn.unbind_s()
                 logger.debug("[AUTH] CN format successful for %s", username)
-                return True
+                _cn_ok = True
             except ldap.INVALID_CREDENTIALS as e:
                 logger.debug("[AUTH] CN format failed: %s", e)
-                # Try uid format as fallback with a fresh connection
-                try:
-                    logger.debug("[AUTH] Trying UID format: %s", user_dn_uid)
-                    conn = ldap.initialize(self.server)
-                    conn.protocol_version = ldap.VERSION3
-                    conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
-                    conn.set_option(ldap.OPT_REFERRALS, 0)
-                    conn.simple_bind_s(user_dn_uid, password)
-                    conn.unbind_s()
-                    logger.debug("[AUTH] UID format successful for %s", username)
-                    return True
-                except ldap.INVALID_CREDENTIALS as e2:
-                    logger.debug("[AUTH] UID format also failed: %s", e2)
-                    return False
+            finally:
+                if conn is not None:
+                    try:
+                        conn.unbind_s()
+                    except Exception:
+                        pass
+                    conn = None
+
+            if _cn_ok:
+                return True
+
+            # Try uid format as fallback — guaranteed unbind via finally
+            conn = None
+            try:
+                logger.debug("[AUTH] Trying UID format: %s", user_dn_uid)
+                conn = ldap.initialize(self.server)
+                conn.protocol_version = ldap.VERSION3
+                conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
+                conn.set_option(ldap.OPT_REFERRALS, 0)
+                conn.simple_bind_s(user_dn_uid, password)
+                logger.debug("[AUTH] UID format successful for %s", username)
+                return True
+            except ldap.INVALID_CREDENTIALS as e2:
+                logger.debug("[AUTH] UID format also failed: %s", e2)
+                return False
+            finally:
+                if conn is not None:
+                    try:
+                        conn.unbind_s()
+                    except Exception:
+                        pass
 
         except ldap.INVALID_CREDENTIALS:
             logger.warning("[AUTH] Invalid credentials for %s", username)
@@ -284,21 +302,32 @@ class LDAPAuthenticator:
             conn.set_option(ldap.OPT_REFERRALS, 0)
 
             if not cfg.get("verify_tls_cert", True):
+                logger.warning(
+                    "[AUTH] TLS certificate validation DISABLED for external LDAP host %s "
+                    "(config %s) -- connections are vulnerable to MITM attacks. "
+                    "Set verify_tls_cert=true in the LDAP sync config to enforce certificate validation.",
+                    cfg["host"], config_id,
+                )
                 conn.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
                 conn.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
             if cfg.get("use_starttls"):
                 conn.start_tls_s()
 
-            # Service-account bind to locate the user's full DN
-            conn.simple_bind_s(cfg["bind_dn"], svc_password)
+            # Service-account bind to locate the user's full DN — guaranteed unbind
+            try:
+                conn.simple_bind_s(cfg["bind_dn"], svc_password)
 
-            uid_attr = cfg.get("user_attr_uid", "sAMAccountName")
-            safe_uid = ldap.filter.escape_filter_chars(username)
-            results = conn.search_s(
-                cfg["base_dn"], ldap.SCOPE_SUBTREE,
-                f"({uid_attr}={safe_uid})", ["dn"],
-            )
-            conn.unbind_s()
+                uid_attr = cfg.get("user_attr_uid", "sAMAccountName")
+                safe_uid = ldap.filter.escape_filter_chars(username)
+                results = conn.search_s(
+                    cfg["base_dn"], ldap.SCOPE_SUBTREE,
+                    f"({uid_attr}={safe_uid})", ["dn"],
+                )
+            finally:
+                try:
+                    conn.unbind_s()
+                except Exception:
+                    pass
 
             if not results:
                 logger.warning("[AUTH] External LDAP: user '%s' not found in config %s", username, config_id)
@@ -312,15 +341,25 @@ class LDAPAuthenticator:
             user_conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
             user_conn.set_option(ldap.OPT_REFERRALS, 0)
             if not cfg.get("verify_tls_cert", True):
+                logger.warning(
+                    "[AUTH] TLS certificate validation DISABLED for end-user bind to external LDAP host %s "
+                    "(config %s) -- connections are vulnerable to MITM attacks.",
+                    cfg["host"], config_id,
+                )
                 user_conn.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
                 user_conn.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
             if cfg.get("use_starttls"):
                 user_conn.start_tls_s()
 
-            user_conn.simple_bind_s(user_dn, password)
-            user_conn.unbind_s()
-            logger.debug("[AUTH] External LDAP auth successful for %s (config %s)", username, config_id)
-            return True
+            try:
+                user_conn.simple_bind_s(user_dn, password)
+                logger.debug("[AUTH] External LDAP auth successful for %s (config %s)", username, config_id)
+                return True
+            finally:
+                try:
+                    user_conn.unbind_s()
+                except Exception:
+                    pass
 
         except ldap.INVALID_CREDENTIALS:
             logger.warning("[AUTH] External LDAP invalid credentials for %s (config %s)", username, config_id)

@@ -200,6 +200,34 @@ def _get_db() -> psycopg2.extensions.connection:
     )
 
 
+# ---------------------------------------------------------------------------
+# Circuit breaker (H15) — prevents cascading failures during DB outages
+# ---------------------------------------------------------------------------
+_cb_failure_count = 0
+_cb_circuit_open_until = 0.0
+
+
+def _get_db_with_cb() -> psycopg2.extensions.connection:
+    """Wrap _get_db() with a circuit breaker: after 3 consecutive failures,
+    back off 60 seconds to prevent log storms during prolonged DB outages."""
+    global _cb_failure_count, _cb_circuit_open_until
+    if time.time() < _cb_circuit_open_until:
+        raise RuntimeError("Circuit open -- DB unavailable, skipping job")
+    try:
+        conn = _get_db()
+        _cb_failure_count = 0
+        return conn
+    except Exception:
+        _cb_failure_count += 1
+        if _cb_failure_count >= 3:
+            _cb_circuit_open_until = time.time() + 60  # back off 60s
+            log.warning(
+                "DB circuit breaker OPEN -- will retry in 60s (failure_count=%d)",
+                _cb_failure_count,
+            )
+        raise
+
+
 def _fetch_enabled_configs(conn) -> List[dict]:
     with conn.cursor() as cur:
         cur.execute(
@@ -370,6 +398,12 @@ def _open_external_conn(cfg: dict) -> ldap.ldapobject.LDAPObject:
     conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
     conn.set_option(ldap.OPT_REFERRALS, 0)
     if not cfg.get("verify_tls_cert", True):
+        log.warning(
+            "TLS certificate validation DISABLED for external LDAP host %s -- "
+            "connections are vulnerable to MITM attacks. Set verify_tls_cert=true "
+            "in the LDAP sync config to enforce certificate validation.",
+            cfg["host"],
+        )
         conn.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
         conn.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
     if cfg.get("use_starttls"):
@@ -693,7 +727,7 @@ def main() -> None:
         _loop_start = time.time()
         _loop_error = False
         try:
-            conn = _get_db()
+            conn = _get_db_with_cb()
             configs = _fetch_enabled_configs(conn)
             for cfg in configs:
                 if not _running:

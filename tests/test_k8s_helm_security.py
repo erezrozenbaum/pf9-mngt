@@ -277,10 +277,6 @@ class TestSecurityContexts:
         assert not failures, "\n".join(failures)
 
     @skip_no_helm
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Phase 2: readOnlyRootFilesystem=true requires per-service emptyDir volumes — deferred to next release",
-    )
     def test_readonly_root_filesystem_with_emptydir_tmp(self, chart_default):
         """
         Phase 2: readOnlyRootFilesystem=true requires /tmp mounted as emptyDir

@@ -2259,6 +2259,8 @@ CREATE TABLE IF NOT EXISTS backup_history (
     integrity_status     TEXT CHECK (integrity_status IN ('pending', 'valid', 'invalid', 'skipped')),
     integrity_checked_at TIMESTAMPTZ,
     integrity_notes      TEXT,
+    -- H7: SHA-256 checksum computed at write time, verified before restore
+    integrity_hash       VARCHAR(64),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

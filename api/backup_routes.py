@@ -12,6 +12,7 @@ RBAC:
 from __future__ import annotations
 
 import logging
+import hashlib
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -390,6 +391,27 @@ async def trigger_restore(
                 raise HTTPException(
                     status_code=400, detail="Backup file path is missing"
                 )
+
+            # H7: verify SHA-256 integrity hash before allowing restore
+            stored_hash = source.get("integrity_hash")
+            if stored_hash:
+                if not os.path.isfile(source_path):
+                    raise HTTPException(
+                        status_code=400, detail="Backup file not found on disk"
+                    )
+                sha256 = hashlib.sha256()
+                with open(source_path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        sha256.update(chunk)
+                if sha256.hexdigest() != stored_hash:
+                    logger.warning(
+                        "Integrity check failed for backup %s: stored=%s computed=%s",
+                        backup_id, stored_hash, sha256.hexdigest(),
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Backup integrity check failed — file may be corrupt",
+                    )
 
             # Prevent overlapping restores
             cur.execute(

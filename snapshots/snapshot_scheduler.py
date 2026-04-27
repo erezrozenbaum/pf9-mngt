@@ -126,11 +126,39 @@ def _get_snap_db_conn():
     )
 
 
+# ---------------------------------------------------------------------------
+# Circuit breaker (H15) — prevents cascading failures during DB outages
+# ---------------------------------------------------------------------------
+_cb_failure_count = 0
+_cb_circuit_open_until = 0.0
+
+
+def _get_snap_db_conn_with_cb():
+    """Wrap _get_snap_db_conn() with a circuit breaker: after 3 consecutive
+    failures, back off 60 seconds to prevent log storms during DB outages."""
+    global _cb_failure_count, _cb_circuit_open_until
+    if time.time() < _cb_circuit_open_until:
+        raise RuntimeError("Circuit open -- DB unavailable, skipping job")
+    try:
+        conn = _get_snap_db_conn()
+        _cb_failure_count = 0
+        return conn
+    except Exception:
+        _cb_failure_count += 1
+        if _cb_failure_count >= 3:
+            _cb_circuit_open_until = time.time() + 60  # back off 60s
+            logger.warning(
+                "DB circuit breaker OPEN -- will retry in 60s (failure_count=%d)",
+                _cb_failure_count,
+            )
+        raise
+
+
 def load_enabled_regions() -> List[dict]:
     """Return enabled regions with decrypted credentials.
     Returns empty list (single-region env-var mode) on any error."""
     try:
-        conn = _get_snap_db_conn()
+        conn = _get_snap_db_conn_with_cb()
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT r.id, r.region_name,

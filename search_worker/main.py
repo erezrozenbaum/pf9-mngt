@@ -116,6 +116,34 @@ def get_conn():
     )
 
 
+# ---------------------------------------------------------------------------
+# Circuit breaker (H15) — prevents cascading failures during DB outages
+# ---------------------------------------------------------------------------
+_cb_failure_count = 0
+_cb_circuit_open_until = 0.0
+
+
+def get_conn_with_cb():
+    """Wrap get_conn() with a circuit breaker: after 3 consecutive failures,
+    back off 60 seconds to prevent log storms during prolonged DB outages."""
+    global _cb_failure_count, _cb_circuit_open_until
+    if time.time() < _cb_circuit_open_until:
+        raise RuntimeError("Circuit open -- DB unavailable, skipping job")
+    try:
+        conn = get_conn()
+        _cb_failure_count = 0
+        return conn
+    except Exception:
+        _cb_failure_count += 1
+        if _cb_failure_count >= 3:
+            _cb_circuit_open_until = time.time() + 60  # back off 60s
+            log.warning(
+                "DB circuit breaker OPEN -- will retry in 60s (failure_count=%d)",
+                _cb_failure_count,
+            )
+        raise
+
+
 # ── Document builder helpers ────────────────────────────────
 
 def _json_extract(raw_json: Optional[str], *keys) -> str:
@@ -1324,7 +1352,7 @@ def run_indexing_cycle():
     total_indexed = 0
 
     try:
-        conn = get_conn()
+        conn = get_conn_with_cb()
         indexers = _build_indexers()
 
         for doc_type, query, row_to_doc in indexers:

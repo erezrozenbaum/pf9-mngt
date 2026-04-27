@@ -33,6 +33,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+            readOnlyRootFilesystem: true
           env:
             - name: PF9_DB_HOST
               value: {{ .Values.db.host | quote }}
@@ -98,8 +99,12 @@ spec:
           resources:
             {{- toYaml .Values.workers.notificationWorker.resources | nindent 12 }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             - name: app-logs
               mountPath: /app/logs
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: app-logs
           emptyDir: {}

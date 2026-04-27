@@ -33,6 +33,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+            readOnlyRootFilesystem: true
           env:
             - name: DB_HOST
               value: {{ .Values.db.host | quote }}
@@ -67,3 +68,9 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.workers.searchWorker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

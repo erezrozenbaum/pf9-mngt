@@ -33,6 +33,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+            readOnlyRootFilesystem: true
           env:
             - name: PF9_AUTH_URL
               value: {{ .Values.pf9.authUrl | quote }}
@@ -114,6 +115,8 @@ spec:
           resources:
             {{- toYaml .Values.workers.schedulerWorker.resources | nindent 12 }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             - name: metrics-cache
               mountPath: /tmp/cache
             - name: reports
@@ -123,6 +126,8 @@ spec:
             - name: monitoring-cache
               mountPath: /app/monitoring
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: metrics-cache
           emptyDir: {}
         - name: reports

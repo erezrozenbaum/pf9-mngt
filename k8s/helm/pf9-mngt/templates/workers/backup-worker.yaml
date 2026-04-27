@@ -34,6 +34,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+            readOnlyRootFilesystem: true
           env:
             - name: DB_HOST
               value: {{ .Values.db.host | quote }}
@@ -86,9 +87,13 @@ spec:
           resources:
             {{- toYaml .Values.workers.backupWorker.resources | nindent 12 }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             - name: backups
               mountPath: {{ .Values.workers.backupWorker.backupPath }}
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: backups
           persistentVolumeClaim:
             claimName: pf9-backups

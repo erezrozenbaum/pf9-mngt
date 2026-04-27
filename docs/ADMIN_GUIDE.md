@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.20  
-**Last Updated**: April 26, 2026  
+**Version**: 1.93.21  
+**Last Updated**: May 3, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.21 — Security hardening: TLS warnings, backup checksums, readOnlyRootFilesystem, LDAP conn leaks, circuit breakers (✅ Complete)
+
+- **H4: TLS bypass warning logs** — `ldap_sync_worker` and `api/auth.py` emit `WARNING`-level messages whenever `verify_tls_cert=False` is active, ensuring insecure LDAP connections are visible in logs without blocking operation.
+- **H7: Backup integrity checksums** — The backup worker computes and stores a SHA-256 checksum (`backup_history.integrity_hash`) for every `.sql.gz` backup file. The restore endpoint verifies the file against the stored hash before queuing a restore, rejecting corrupted or tampered files with HTTP 409.
+- **H8: `readOnlyRootFilesystem: true`** — All 15 Kubernetes Deployment templates now set `readOnlyRootFilesystem: true`. Required writable paths (`/tmp`, log dirs, nginx caches) are mounted as `emptyDir` volumes.
+- **H10: LDAP connection leak fixes** — `api/auth.py` authentication and external LDAP bind paths now use `try/finally` to guarantee `unbind_s()` is called on all LDAP connections, preventing resource leaks under error conditions.
+- **H15: Database circuit breaker** — All nine background workers have a circuit-breaker wrapper that opens after 3 consecutive DB connection failures and backs off for 60 seconds, preventing log storms during DB outages.
+- 582+ unit tests pass, 33 skipped, 0 xfailed; 0 HIGH Bandit findings.
 
 ### v1.93.20 — Tooling fixes: check_cluster.py Unicode, 401 check, version header (✅ Complete)
 

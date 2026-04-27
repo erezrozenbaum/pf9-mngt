@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.20-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.21-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,7 +637,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### � Hotfix: K8s JWT TTL + metrics key — v1.93.19
+### 🔒 Security hardening: TLS warnings, backup checksums, readOnlyRootFilesystem, LDAP conn leaks, circuit breakers — v1.93.21
+
+**[v1.93.21](CHANGELOG.md)** — Security hardening release. **H4 TLS bypass warnings:** `ldap_sync_worker` and `api/auth.py` now log a `WARNING` whenever `verify_tls_cert=False`, making insecure LDAP connections visible without blocking operation. **H7 Backup integrity checksums:** The backup worker computes a SHA-256 checksum of every `.sql.gz` file immediately after writing it and stores the hex digest in `backup_history.integrity_hash`; the restore endpoint verifies the on-disk file before queuing a restore (HTTP 409 on mismatch). New migration: `db/migrate_v1_93_21.sql`. **H8 readOnlyRootFilesystem:** All 15 Kubernetes Deployment templates now set `readOnlyRootFilesystem: true`; each service has `/tmp` (and nginx cache paths) mounted as `emptyDir`. **H10 LDAP connection leaks:** `api/auth.py` authentication and external LDAP bind paths now guarantee `unbind_s()` via `try/finally`. **H15 Database circuit breaker:** All 9 background workers have a circuit-breaker wrapper that opens after 3 consecutive DB failures and backs off 60 s. 582+ unit tests pass, 0 HIGH Bandit findings.
+
+### 🩹 Hotfix: K8s JWT TTL + metrics key — v1.93.19
 
 **[v1.93.19](CHANGELOG.md)** — Kubernetes config hotfix. **JWT TTL corrected:** `values.yaml` had `accessTokenExpireMinutes: 480`; reduced to `60` to match the Docker Compose default from v1.93.18. **Metrics endpoint protection wired into K8s:** `METRICS_API_KEY` is now injected from `pf9-metrics-secret` K8s Secret into the API pod; sealed secret committed to the private deploy repo. **Cluster check bug fixed:** `check_cluster.py` was false-PASSing the `METRICS_API_KEY` check when the key was absent (`"CONFIGURED" in "NOT_CONFIGURED"` matched). 568 unit tests pass, 0 HIGH Bandit findings.
 
@@ -901,4 +905,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.20 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.21 | **Last Updated**: May 2026

@@ -33,6 +33,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+            readOnlyRootFilesystem: true
           ports:
             - containerPort: 8010
               name: http
@@ -134,3 +135,9 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.tenantPortal.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

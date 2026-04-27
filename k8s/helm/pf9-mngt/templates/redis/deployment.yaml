@@ -33,6 +33,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+            readOnlyRootFilesystem: true
           env:
             - name: REDIS_PASSWORD
               valueFrom:
@@ -68,3 +69,9 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.redisService.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -33,6 +33,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+            readOnlyRootFilesystem: true
           env:
             - name: PF9_AUTH_URL
               value: {{ .Values.pf9.authUrl | quote }}
@@ -130,11 +131,15 @@ spec:
           resources:
             {{- toYaml .Values.workers.snapshotWorker.resources | nindent 12 }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             - name: reports
               mountPath: /mnt/reports
             - name: app-logs
               mountPath: /app/logs
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: reports
           emptyDir: {}
         - name: app-logs

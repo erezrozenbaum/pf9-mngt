@@ -379,6 +379,55 @@ CREATE TABLE inventory_runs (
 
 ## Operational Features
 
+### Backup Config
+Database backup schedule and retention policy.
+
+```sql
+CREATE TABLE backup_config (
+    id                   SERIAL PRIMARY KEY,
+    enabled              BOOLEAN NOT NULL DEFAULT false,
+    nfs_path             TEXT NOT NULL DEFAULT '/backups',
+    schedule_type        TEXT NOT NULL DEFAULT 'daily'
+                         CHECK (schedule_type IN ('daily', 'weekly')),
+    schedule_time_utc    TEXT NOT NULL DEFAULT '02:00',
+    schedule_day_of_week INTEGER NOT NULL DEFAULT 0,
+    retention_count      INTEGER NOT NULL DEFAULT 7,
+    retention_days       INTEGER NOT NULL DEFAULT 30,
+    last_backup_at       TIMESTAMPTZ,
+    last_ldap_backup_at  TIMESTAMPTZ,
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### Backup History
+Individual database backup and restore job records. Added in v1.74.5; integrity columns added v1.93.11; `integrity_hash` added v1.93.21.
+
+```sql
+CREATE TABLE backup_history (
+    id               SERIAL PRIMARY KEY,
+    status           TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending', 'running', 'completed', 'failed', 'deleted')),
+    backup_type      TEXT NOT NULL DEFAULT 'manual'
+                     CHECK (backup_type IN ('manual', 'scheduled', 'restore')),
+    backup_target    TEXT NOT NULL DEFAULT 'database'
+                     CHECK (backup_target IN ('database', 'ldap')),
+    file_name        TEXT,
+    file_path        TEXT,
+    file_size_bytes  BIGINT,
+    duration_seconds FLOAT,
+    initiated_by     TEXT,
+    error_message    TEXT,
+    started_at       TIMESTAMPTZ,
+    completed_at     TIMESTAMPTZ,
+    -- Integrity validation
+    integrity_status     TEXT CHECK (integrity_status IN ('pending', 'valid', 'invalid', 'skipped')),
+    integrity_checked_at TIMESTAMPTZ,
+    integrity_notes      TEXT,
+    integrity_hash       VARCHAR(64),  -- SHA-256 hex digest (H7, v1.93.21)
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
 ### Snapshot Policies
 Automated backup policy definitions.
 

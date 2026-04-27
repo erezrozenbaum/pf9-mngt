@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.21] - 2026-05-03
+
+### Security
+
+- **H4: TLS bypass warning logs** — `ldap_sync_worker` and `api/auth.py` now emit `WARNING`-level log messages whenever `verify_tls_cert=False` is in use, making insecure LDAP connections visible in observability tooling without blocking existing behaviour.
+- **H7: Backup file integrity checksums** — The backup worker computes a SHA-256 checksum of every `.sql.gz` file immediately after writing it and stores the hex digest in `backup_history.integrity_hash`. The restore endpoint verifies the on-disk file against the stored hash before queuing a restore job, rejecting corrupted or tampered backups with HTTP 409. New DB migration: `db/migrate_v1_93_21.sql`.
+- **H8: `readOnlyRootFilesystem: true` for all app containers** — All 15 Kubernetes Deployment templates now set `readOnlyRootFilesystem: true` in the container `securityContext`. Each service that writes to the filesystem (workers writing `/tmp/alive`, nginx caches, log dirs) has corresponding `emptyDir` volumes mounted at the required paths.
+- **H10: LDAP connection leak fixes** — `api/auth.py` `authenticate()` and `_bind_external_ldap()` now use `conn = None` / `try` / `finally: conn.unbind_s()` patterns to guarantee that all LDAP connections are released, even when exceptions occur mid-authentication.
+- **H15: Database circuit breaker for all workers** — All nine background workers (`backup_worker`, `intelligence_worker`, `ldap_sync_worker`, `metering_worker`, `scheduler_worker`, `search_worker`, `sla_worker`, `notifications`, `snapshots`) now have a circuit-breaker wrapper around their DB connection function. After 3 consecutive connection failures the circuit opens and the worker backs off for 60 seconds, preventing log storms and resource exhaustion during prolonged DB outages.
+
+### Changed
+
+- Helm chart version bumped to 1.93.21.
+- 582+ unit tests pass; `test_readonly_root_filesystem_with_emptydir_tmp` is now a regular passing test (xfail removed).
+
+---
+
 ## [1.93.20] - 2026-04-26
 
 ### Fixed
