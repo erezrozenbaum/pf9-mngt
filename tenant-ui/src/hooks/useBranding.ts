@@ -14,6 +14,23 @@ const DEFAULTS: Branding = {
 };
 
 /**
+ * Allow only relative paths and http/https URLs.
+ * Blocks data:, javascript:, and any other scheme that could be used for
+ * tracking pixels or script injection via <img src=...>.
+ */
+function sanitizeUrl(url: string | null): string | null {
+  if (!url) return null;
+  if (url.startsWith("/")) return url;
+  try {
+    const { protocol } = new URL(url);
+    if (protocol === "https:" || protocol === "http:") return url;
+  } catch {
+    // not a valid absolute URL — reject
+  }
+  return null;
+}
+
+/**
  * Fetches branding from the tenant portal backend.
  *
  * @param projectId  Optional Keystone project UUID.  When supplied (after
@@ -27,8 +44,13 @@ export function useBranding(projectId?: string): Branding {
   useEffect(() => {
     apiBranding(projectId)
       .then((b) => {
-        setBranding(b);
-        applyBrandingToDom(b);
+        const safe: Branding = {
+          ...b,
+          logo_url: sanitizeUrl(b.logo_url),
+          favicon_url: sanitizeUrl(b.favicon_url),
+        };
+        setBranding(safe);
+        applyBrandingToDom(safe);
       })
       .catch(() => {
         // Use defaults on error — the portal still loads

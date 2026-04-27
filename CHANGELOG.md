@@ -5,24 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.29] - 2026-04-28
+
+### Added
+
+- **Prometheus alerting rules** — The Helm chart now deploys a `PrometheusRule` CRD into the `pf9-mngt` namespace. Rules fire on pod crash-looping (> 3 restarts/hour), deployment unavailability (0 replicas for > 2 min), API p99 latency above 2 s, database connection pool above 80 % / fully exhausted, and worker containers not ready for 10 min. Gated by `alerting.enabled: true` in `values.yaml` (default: on).
+- **Loki + Promtail log aggregation** — `k8s/monitoring/loki-values.yaml` configures Loki (10 Gi persistent volume, 15-day log retention) and Promtail (DaemonSet shipping all pod logs tagged with namespace, pod and container labels). See [KUBERNETES_GUIDE.md](docs/KUBERNETES_GUIDE.md) §11.7 for installation and alert-rule reference.
+- **Optional pre-migration database backup** — `run_migration.py` now accepts `PRE_MIGRATION_BACKUP=true`. When set, it runs `pg_dump | gzip` before applying pending migrations and saves the file to `PF9_BACKUP_PATH` (default `/mnt/backups`). Backup file is owner-readable only (chmod 0600). A backup failure emits a warning and allows migration to continue.
+- **Migration rollback guidance** — [DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) now documents the policy for `migrate_*_down.sql` scripts and the manual steps to reverse a migration.
+
+### Fixed
+
+- **Branding URL scheme restriction** — The tenant UI now validates `logo_url` and `favicon_url` before applying them. Only `http:`, `https:`, and relative paths starting with `/` are accepted. `data:` and `javascript:` scheme URLs are silently rejected, preventing content-injection from a tampered branding configuration.
+
+### Changed
+
+- **Password field autocomplete attributes** — All username and password inputs in the management UI and tenant portal now carry `autocomplete="username"`, `autocomplete="current-password"`, or `autocomplete="new-password"` as appropriate. Improves password-manager compatibility and removes browser security warnings.
+- **Docker base images pinned to exact patch versions** — All 15 `Dockerfile` files now reference exact image tags: `python:3.11.12-slim`, `postgres:16.8-alpine`, `node:20.19.1-alpine`, `node:22.14.0-alpine`, `nginx:1.27.5-alpine`. Floating minor tags (`python:3.11-slim`, `node:20-alpine`, etc.) are removed to prevent silent upstream changes between builds.
+- Helm chart version bumped to 1.93.29.
+
+---
+
 ## [1.93.28] - 2026-04-27
 
 ### Fixed
 
-- **Hotfix: DB migration Job blocked by ResourceQuota** — The `pf9-mngt-quota` ResourceQuota introduced in v1.93.27 requires all pods to declare CPU/memory requests and limits. The `db-migrate` Helm hook Job (`wait-for-db` init container + `db-migrate` container) had no resources defined, causing `FailedCreate` errors and blocking ArgoCD sync. Added explicit resource requests/limits to both containers in `k8s/helm/pf9-mngt/templates/jobs/db-migrate.yaml`.
-
-- **M10: Configurable process timeouts** — Previously hardcoded values in `backup_worker/main.py` and `scheduler_worker/main.py` now read from env vars. New vars (defaults maintain existing behaviour):
-  - `PF9_BACKUP_DUMP_TIMEOUT_SEC` (default 3600) — pg\_dump → gzip pipeline
-  - `PF9_RESTORE_TIMEOUT_SEC` (default 7200) — gunzip → psql restore
-  - `PF9_BACKUP_VALIDATE_TIMEOUT_SEC` (default 300) — gunzip -t integrity check
-  - `PF9_LDAP_EXPORT_TIMEOUT_SEC` (default 600) — ldapsearch → gzip
-  - `PF9_LDAP_RESTORE_TIMEOUT_SEC` (default 600) — gunzip → ldapadd
-  - `PF9_RVTOOLS_TIMEOUT_SEC` (default 7200) — RVTools script execution
-- **M17: Backup files chmod 0600** — `os.chmod(filepath, 0o600)` applied immediately after each backup write (DB and LDAP) in `backup_worker/main.py`. Prevents world-readable backups when process umask is permissive.
-- **L1: SHA256 cache keys** — `api/cache.py` replaces MD5 with `hashlib.sha256(...).hexdigest()[:32]` for cache key hashing. No functional change; eliminates Bandit B324 flags cleanly without `# nosec` suppressions.
-- **L6: Jinja2 template dir validated at startup** — `notifications/main.py` raises `RuntimeError("Template directory missing: ...")` immediately on startup if the templates directory does not exist. Previously failed silently until the first email was sent.
-- **L8: Expired password reset token cleanup** — `scheduler_worker/main.py` calls `_cleanup_expired_tokens()` on each RVTools maintenance cycle, purging rows from `password_reset_tokens` where `expires_at < NOW()`. Prevents unbounded table growth.
-- **L10: Dev nginx rate limiting** — `nginx/nginx.conf` (dev) adds `limit_req_zone` zones and `limit_req` on `/api/` (20 r/s, burst 40) and `/auth/` (5 r/m, burst 10). Dev and prod now share the same rate-limiting behaviour.
+- **Kubernetes deployment unblocked after resource quota enforcement** — The resource quota added in v1.93.27 requires every pod to declare CPU/memory requests and limits. The database migration hook Job did not declare them, so the pod was rejected and ArgoCD sync hung indefinitely. Added explicit resource requests and limits to both the init and main containers of the migration job.
+- **Configurable worker process timeouts** — All previously hardcoded subprocess timeout values in the backup and scheduler workers now read from environment variables (`PF9_BACKUP_DUMP_TIMEOUT_SEC`, `PF9_RESTORE_TIMEOUT_SEC`, `PF9_BACKUP_VALIDATE_TIMEOUT_SEC`, `PF9_LDAP_EXPORT_TIMEOUT_SEC`, `PF9_LDAP_RESTORE_TIMEOUT_SEC`, `PF9_RVTOOLS_TIMEOUT_SEC`). Defaults are unchanged; operators can now tune them without rebuilding images.
+- **Backup file permissions restricted to owner-only** — Each backup file (database dump and LDAP export) is now explicitly chmod 0600 immediately after write. Prevents world-readable backup files when the container's umask is permissive.
+- **Stronger cache key hashing** — `api/cache.py` now uses SHA-256 (truncated to 32 hex chars) instead of MD5 for cache key generation. No functional change to cache behaviour.
+- **Notification worker fails fast on missing template directory** — `notifications/main.py` now raises a `RuntimeError` at startup if the Jinja2 template directory does not exist, rather than failing silently on the first email send attempt.
+- **Expired password reset tokens purged automatically** — The scheduler worker now deletes expired rows from the `password_reset_tokens` table on each maintenance cycle, preventing unbounded table growth.
+- **Rate limiting added to development nginx** — The development nginx configuration now includes the same `limit_req_zone` zones and `limit_req` directives as production: 20 req/s on `/api/` and 5 req/min on `/auth/`.
 
 ### Changed
 
@@ -34,13 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **M9: K8s ResourceQuota** — `templates/resource-quota.yaml` creates a `pf9-mngt-quota` quota in the namespace (gated by `resourceQuota.enabled: true`). Caps: `requests.cpu=3000m`, `requests.memory=6Gi`, `limits.cpu=20000m`, `limits.memory=20Gi`, `pods=40`. Prevents a runaway pod from exhausting all cluster resources.
-- **M11: PodDisruptionBudgets** — `templates/pod-disruption-budgets.yaml` adds PDBs for `pf9-api`, `pf9-tenant-portal`, and `pf9-monitoring` (`minAvailable: 1`). Gated by `podDisruptionBudget.enabled: true`. Prevents Kubernetes node-drain from taking down all replicas of critical services simultaneously.
-- **M12: HorizontalPodAutoscaler** — `templates/api/hpa.yaml` adds an HPA for the API deployment targeting 80% CPU/memory (`minReplicas: 1`, `maxReplicas: 5`). Gated by `hpa.enabled: false` by default — enable after confirming `metrics-server` is deployed on the cluster.
+- **Kubernetes namespace resource quota** — Added a `ResourceQuota` to the `pf9-mngt` namespace to prevent a runaway pod from consuming all available cluster CPU, memory, or pod slots. Caps: `requests.cpu=3000m`, `requests.memory=6Gi`, `limits.cpu=20000m`, `limits.memory=20Gi`, `pods=40`. Gated by `resourceQuota.enabled: true` in `values.yaml`.
+- **Pod disruption budgets for critical services** — Added `PodDisruptionBudget` resources for the API, tenant portal, and monitoring deployments (`minAvailable: 1`). Kubernetes node drain operations can no longer take down all replicas of these services simultaneously.
+- **Horizontal pod autoscaler scaffold** — Added an HPA template for the API deployment targeting 80% CPU and memory utilisation (`minReplicas: 1`, `maxReplicas: 5`). Disabled by default (`hpa.enabled: false`) — enable after confirming `metrics-server` is available on the cluster.
 
 ### Fixed
 
-- **L9: imagePullPolicy: Always** — `global.imagePullPolicy` changed from `IfNotPresent` to `Always` in `values.yaml`. Ensures updated images (including security patches) are always pulled on pod restart rather than serving a stale cached layer.
+- **Image pull policy changed to Always** — `global.imagePullPolicy` changed from `IfNotPresent` to `Always` in `values.yaml`. Ensures security-patched images are always pulled on pod restart rather than serving a stale cached layer.
 
 ### Changed
 

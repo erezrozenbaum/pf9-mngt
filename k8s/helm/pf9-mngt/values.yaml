@@ -327,7 +327,7 @@ redisService:
     port: 6379
 
 # ---------------------------------------------------------------------------
-# M9: ResourceQuota — cap total CPU/memory/pods in the namespace
+# ResourceQuota — cap total CPU/memory/pods in the namespace
 # ---------------------------------------------------------------------------
 resourceQuota:
   enabled: true
@@ -340,13 +340,13 @@ resourceQuota:
   maxPods: "40"        # current baseline is 17; 40 gives room for scale-out
 
 # ---------------------------------------------------------------------------
-# M11: PodDisruptionBudgets — keep at least 1 replica available during drains
+# PodDisruptionBudgets — keep at least 1 replica available during drains
 # ---------------------------------------------------------------------------
 podDisruptionBudget:
   enabled: true        # Requires Kubernetes 1.21+ (policy/v1 PDB API)
 
 # ---------------------------------------------------------------------------
-# M12: HorizontalPodAutoscaler — auto-scale API on CPU/memory
+# HorizontalPodAutoscaler — auto-scale API on CPU/memory
 # NOTE: Requires metrics-server deployed on the cluster.
 # ---------------------------------------------------------------------------
 hpa:
@@ -355,6 +355,13 @@ hpa:
   maxReplicas: 5
   targetCPUUtilizationPercentage: 80
   targetMemoryUtilizationPercentage: 80
+
+# ---------------------------------------------------------------------------
+# Prometheus alerting rules (PrometheusRule CRD)
+# Requires kube-prometheus-stack (or any Prometheus Operator) in the cluster.
+# ---------------------------------------------------------------------------
+alerting:
+  enabled: true
 
 # ---------------------------------------------------------------------------
 # OpenLDAP (StatefulSet)

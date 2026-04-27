@@ -1,6 +1,6 @@
 {{- if .Values.resourceQuota.enabled }}
 # ---------------------------------------------------------------------------
-# M9: ResourceQuota — prevents a runaway pod from exhausting cluster resources
+# ResourceQuota — prevents a runaway pod from exhausting cluster resources
 # Gate: resourceQuota.enabled (default: true)
 # ---------------------------------------------------------------------------
 apiVersion: v1

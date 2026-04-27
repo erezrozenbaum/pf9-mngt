@@ -780,7 +780,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
                   Username
                 </label>
                 <input
-                  type="text" name="username" required autoFocus
+                  type="text" name="username" required autoFocus autoComplete="username"
                   placeholder="user@example.com"
                   style={{
                     width: '100%', padding: '0.7rem 0.85rem', fontSize: '0.95rem',
@@ -801,6 +801,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
                 </label>
                 <input
                   type="password" name="password" required
+                  autoComplete="current-password"
                   placeholder="••••••"
                   style={{
                     width: '100%', padding: '0.7rem 0.85rem', fontSize: '0.95rem',
@@ -5104,6 +5105,7 @@ const App: React.FC = () => {
                             <strong style={{ fontSize: 13 }}>Reset password for {user.name}:</strong>
                             <input
                               type="password"
+                              autoComplete="new-password"
                               value={userResetPwValue}
                               onChange={e => setUserResetPwValue(e.target.value)}
                               placeholder="New password (min 8 chars)"
@@ -5155,6 +5157,7 @@ const App: React.FC = () => {
                       </label>
                       <label className="pf9-form-label">Password *
                         <input className="pf9-form-input" type="password" value={userModalFields.password}
+                          autoComplete="new-password"
                           onChange={e => setUserModalFields(f => ({ ...f, password: e.target.value }))}
                           placeholder="Minimum 8 characters" />
                       </label>

@@ -91,6 +91,7 @@ export function Login({ branding, loading, error, onLogin }: Props) {
               id="password"
               className="input"
               type="password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               disabled={isDisabled}

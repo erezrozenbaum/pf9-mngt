@@ -1831,6 +1831,40 @@ docker compose ps
 
 > **Important:** After rollback, database migrations from the failed upgrade will be present in the schema. They are additive and idempotent, so this is safe — the old code will ignore unknown columns. If this causes issues, restore the database from the pre-upgrade backup (Step 2).
 
+#### Pre-migration backup (automatic)
+
+When `PRE_MIGRATION_BACKUP=true` is set in the environment, `run_migration.py` automatically takes a `pg_dump` snapshot before applying any pending migrations and saves it to `PF9_BACKUP_PATH` (default `/mnt/backups`) as `pre_migration_<timestamp>.sql.gz`. Enable this in production to have a guaranteed restore point before every schema change.
+
+```bash
+# Kubernetes: set in values.yaml or values.prod.yaml
+# env:
+#   - name: PRE_MIGRATION_BACKUP
+#     value: "true"
+
+# Docker Compose: add to .env
+PRE_MIGRATION_BACKUP=true
+```
+
+#### Writing rollback scripts for new migrations
+
+Every new migration file (`db/migrate_*.sql`) must have a corresponding rollback script (`db/migrate_*_down.sql`) that reverses the change. Example:
+
+```sql
+-- db/migrate_example_down.sql
+-- Reverses db/migrate_example.sql
+ALTER TABLE my_table DROP COLUMN IF EXISTS new_column;
+DROP TABLE IF EXISTS new_table;
+```
+
+To manually apply a rollback script:
+```bash
+# Docker
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_example_down.sql
+# Then remove it from the tracking table so the runner will re-apply the up migration if needed:
+docker exec pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
+  -c "DELETE FROM schema_migrations WHERE filename = 'migrate_example.sql';"
+```
+
 ---
 
 ## Ops Copilot Setup

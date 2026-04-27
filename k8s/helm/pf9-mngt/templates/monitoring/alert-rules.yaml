@@ -1,0 +1,123 @@
+{{- if .Values.alerting.enabled }}
+# ---------------------------------------------------------------------------
+# PrometheusRule — pf9-mngt application alert rules
+# Requires kube-prometheus-stack (or any Prometheus Operator) in the cluster.
+# Gate: alerting.enabled (default: true)
+# ---------------------------------------------------------------------------
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pf9-mngt-alerts
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    # kube-prometheus-stack discovers rules with this label
+    release: kube-prometheus-stack
+spec:
+  groups:
+    # -----------------------------------------------------------------------
+    # Pod availability
+    # -----------------------------------------------------------------------
+    - name: pf9-mngt.pods
+      interval: 60s
+      rules:
+        - alert: PodCrashLooping
+          expr: |
+            rate(kube_pod_container_status_restarts_total{namespace="{{ include "pf9mngt.namespace" . }}"}[1h]) * 3600 > 3
+          for: 5m
+          labels:
+            severity: critical
+            namespace: {{ include "pf9mngt.namespace" . }}
+          annotations:
+            summary: "Pod {{ "{{" }} $labels.pod {{ "}}" }} is crash-looping"
+            description: "Container {{ "{{" }} $labels.container {{ "}}" }} in pod {{ "{{" }} $labels.pod {{ "}}" }} has restarted more than 3 times in the last hour."
+
+        - alert: DeploymentUnavailable
+          expr: |
+            kube_deployment_status_replicas_available{namespace="{{ include "pf9mngt.namespace" . }}"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            namespace: {{ include "pf9mngt.namespace" . }}
+          annotations:
+            summary: "Deployment {{ "{{" }} $labels.deployment {{ "}}" }} has 0 available replicas"
+            description: "All pods for deployment {{ "{{" }} $labels.deployment {{ "}}" }} are unavailable."
+
+    # -----------------------------------------------------------------------
+    # API latency
+    # -----------------------------------------------------------------------
+    - name: pf9-mngt.api
+      interval: 60s
+      rules:
+        - alert: APIHighLatency
+          expr: |
+            histogram_quantile(0.99,
+              rate(http_request_duration_seconds_bucket{
+                namespace="{{ include "pf9mngt.namespace" . }}",
+                job="pf9-api"
+              }[5m])
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+            namespace: {{ include "pf9mngt.namespace" . }}
+          annotations:
+            summary: "API p99 latency is above 2 s"
+            description: "The 99th-percentile API response time has been above 2 seconds for 5 minutes."
+
+    # -----------------------------------------------------------------------
+    # Database connection pool
+    # -----------------------------------------------------------------------
+    - name: pf9-mngt.db
+      interval: 60s
+      rules:
+        - alert: DBConnectionPoolNearExhaustion
+          expr: |
+            (
+              pf9_db_pool_checked_out{namespace="{{ include "pf9mngt.namespace" . }}"}
+              /
+              pf9_db_pool_size{namespace="{{ include "pf9mngt.namespace" . }}"}
+            ) > 0.8
+          for: 5m
+          labels:
+            severity: warning
+            namespace: {{ include "pf9mngt.namespace" . }}
+          annotations:
+            summary: "DB connection pool is over 80 % utilised"
+            description: "More than 80 % of DB connections are in use. Consider increasing the pool size or reducing query latency."
+
+        - alert: DBConnectionPoolExhausted
+          expr: |
+            (
+              pf9_db_pool_checked_out{namespace="{{ include "pf9mngt.namespace" . }}"}
+              /
+              pf9_db_pool_size{namespace="{{ include "pf9mngt.namespace" . }}"}
+            ) >= 1
+          for: 2m
+          labels:
+            severity: critical
+            namespace: {{ include "pf9mngt.namespace" . }}
+          annotations:
+            summary: "DB connection pool exhausted"
+            description: "All DB connections are in use. New requests are being queued or rejected."
+
+    # -----------------------------------------------------------------------
+    # Worker health (heartbeat via /tmp/alive mtime)
+    # -----------------------------------------------------------------------
+    - name: pf9-mngt.workers
+      interval: 120s
+      rules:
+        - alert: WorkerNotHeartbeating
+          expr: |
+            kube_pod_container_status_ready{
+              namespace="{{ include "pf9mngt.namespace" . }}",
+              container=~"backup-worker|scheduler-worker|metering-worker|sla-worker|search-worker|intelligence-worker|ldap-sync-worker|notification-worker|snapshot-worker"
+            } == 0
+          for: 10m
+          labels:
+            severity: critical
+            namespace: {{ include "pf9mngt.namespace" . }}
+          annotations:
+            summary: "Worker {{ "{{" }} $labels.container {{ "}}" }} is not ready"
+            description: "Worker pod {{ "{{" }} $labels.pod {{ "}}" }} has not been ready for 10 minutes."
+{{- end }}

@@ -10,18 +10,82 @@ PL/pgSQL blocks, and any SQL syntax that plain Python string-splitting cannot.
 Compatible with:
   - Docker Compose  (docker exec pf9_api python run_migration.py)
   - Kubernetes      (db-migrate Job using the API image)
+
+Pre-migration backup
+--------------------
+When PRE_MIGRATION_BACKUP=true (default: false) and there are pending
+migrations, a pg_dump snapshot is written to the directory defined by
+PF9_BACKUP_PATH (default: /mnt/backups) before any migration runs.  The
+filename is ``pre_migration_<timestamp>.sql.gz``.  A backup failure emits a
+warning and allows migrations to proceed — it never blocks deployment.
 """
 import glob
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 import psycopg2
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-# ── DB helpers (psycopg2 — only for the tracking table) ──────────────────────
+# ── Pre-migration backup ──────────────────────────────────────────────────────
+
+def _pre_migration_backup() -> None:
+    """Take a pg_dump snapshot before applying pending migrations.
+
+    Gated by PRE_MIGRATION_BACKUP=true.  Failure warns and continues.
+    """
+    if os.getenv("PRE_MIGRATION_BACKUP", "false").lower() != "true":
+        return
+
+    backup_dir = os.getenv("PF9_BACKUP_PATH", "/mnt/backups")
+    os.makedirs(backup_dir, exist_ok=True)
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filepath = os.path.join(backup_dir, f"pre_migration_{ts}.sql.gz")
+
+    env = os.environ.copy()
+    env["PGPASSWORD"] = os.environ["PF9_DB_PASSWORD"]
+
+    try:
+        pg_dump = subprocess.Popen(
+            [
+                "pg_dump",
+                "-h", os.environ["PF9_DB_HOST"],
+                "-p", os.environ.get("PF9_DB_PORT", "5432"),
+                "-U", os.environ["PF9_DB_USER"],
+                "-d", os.environ["PF9_DB_NAME"],
+                "--no-password",
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        gzip_proc = subprocess.Popen(
+            ["gzip", "-c"],
+            stdin=pg_dump.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        pg_dump.stdout.close()
+        gz_out, gz_err = gzip_proc.communicate(timeout=300)
+        pg_dump.wait(timeout=10)
+
+        if pg_dump.returncode != 0 or gzip_proc.returncode != 0:
+            print(f"WARNING: pre-migration backup failed (pg_dump rc={pg_dump.returncode})")
+            return
+
+        with open(filepath, "wb") as fh:
+            fh.write(gz_out)
+        os.chmod(filepath, 0o600)
+        print(f"Pre-migration backup written: {filepath}")
+    except Exception as exc:
+        print(f"WARNING: pre-migration backup skipped: {exc}")
+
+
+
 
 def _connect():
     return psycopg2.connect(
@@ -102,6 +166,10 @@ def main():
         print("No migration files found — nothing to do.")
         conn.close()
         sys.exit(0)
+
+    pending = [f for f in files if not _is_applied(conn, os.path.basename(f))]
+    if pending:
+        _pre_migration_backup()
 
     total = applied = skipped = failed = 0
     for filepath in files:

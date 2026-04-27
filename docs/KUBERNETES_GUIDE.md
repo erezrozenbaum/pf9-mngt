@@ -771,6 +771,21 @@ No new DNS record is needed.
 If Loki shows an error, check the URL in the datasource config matches
 `http://loki.monitoring.svc.cluster.local:3100`.
 
+### 11.7 Application alert rules
+
+The Helm chart deploys a `PrometheusRule` resource (`pf9-mngt-alerts`) into the `pf9-mngt` namespace. It is gated by `alerting.enabled: true` (the default). The rules cover:
+
+| Alert | Severity | Condition |
+|-------|----------|-----------|
+| `PodCrashLooping` | critical | Pod restarts > 3 in 1 hour |
+| `DeploymentUnavailable` | critical | A deployment has 0 available replicas for > 2 min |
+| `APIHighLatency` | warning | p99 API response time > 2 s for 5 min |
+| `DBConnectionPoolNearExhaustion` | warning | > 80 % of DB connections in use for 5 min |
+| `DBConnectionPoolExhausted` | critical | 100 % of DB connections in use for 2 min |
+| `WorkerNotHeartbeating` | critical | A worker container not ready for 10 min |
+
+To disable alert rules: set `alerting.enabled: false` in `values.prod.yaml`.
+
 ### 11.6 Upgrading the monitoring stack
 
 ```bash

@@ -1,5 +1,5 @@
 # ---------- build stage ----------
-FROM node:22-alpine AS build
+FROM node:22.14.0-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
@@ -10,7 +10,7 @@ COPY . .
 RUN npm run build
 
 # ---------- production stage ----------
-FROM nginx:1.27-alpine AS prod
+FROM nginx:1.27.5-alpine AS prod
 
 # Configure nginx for non-root (uid 101 / nginx user) operation.
 #

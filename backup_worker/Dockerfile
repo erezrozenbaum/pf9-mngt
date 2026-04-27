@@ -1,4 +1,4 @@
-FROM postgres:16
+FROM postgres:16.8-alpine
 
 # Install Python + pip + LDAP client tools inside the postgres image
 RUN apt-get update && \
