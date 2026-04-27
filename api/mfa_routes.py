@@ -129,6 +129,59 @@ def _get_mfa_record(username: str) -> Optional[dict]:
             return cur.fetchone()
 
 
+# ---------------------------------------------------------------------------
+# TOTP failure tracking / account lockout (M3)
+# ---------------------------------------------------------------------------
+_TOTP_MAX_FAILURES = 10       # consecutive failures before lockout
+_TOTP_LOCKOUT_SECONDS = 900   # 15 minutes
+
+
+def _check_totp_lockout(username: str) -> None:
+    """Raise HTTP 429 if the account is currently locked out."""
+    from auth import _get_revocation_client
+    rc = _get_revocation_client()
+    if rc:
+        try:
+            if rc.exists(f"pf9:totp_lock:{username}"):
+                raise HTTPException(
+                    status_code=429,
+                    detail="Account temporarily locked due to too many failed MFA attempts. "
+                           "Try again in 15 minutes.",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # Redis unavailable — allow request
+
+
+def _record_totp_failure(username: str) -> None:
+    """Increment the TOTP failure counter; lock the account after the threshold."""
+    from auth import _get_revocation_client
+    rc = _get_revocation_client()
+    if rc:
+        try:
+            fail_key = f"pf9:totp_fail:{username}"
+            count = rc.incr(fail_key)
+            if count == 1:
+                rc.expire(fail_key, _TOTP_LOCKOUT_SECONDS)
+            if count >= _TOTP_MAX_FAILURES:
+                rc.setex(f"pf9:totp_lock:{username}", _TOTP_LOCKOUT_SECONDS, "1")
+                logger.warning("TOTP account locked for %s after %d failures", username, count)
+        except Exception:
+            pass
+
+
+def _clear_totp_failures(username: str) -> None:
+    """Reset TOTP failure counter on successful verification."""
+    from auth import _get_revocation_client
+    rc = _get_revocation_client()
+    if rc:
+        try:
+            rc.delete(f"pf9:totp_fail:{username}", f"pf9:totp_lock:{username}")
+        except Exception:
+            pass
+
+
 def _generate_qr_base64(otpauth_url: str) -> str:
     """Generate a QR code PNG as a base64-encoded data URI."""
     img = qrcode.make(otpauth_url, box_size=6, border=2)
@@ -184,7 +237,7 @@ async def mfa_setup(current_user: User = Depends(require_authentication)):
 # POST /auth/mfa/verify-setup – Confirm enrollment with first TOTP code
 # ---------------------------------------------------------------------------
 @router.post("/verify-setup", response_model=MFABackupCodesResponse)
-@limiter.limit("5/minute")
+@limiter.limit("3/minute")
 async def mfa_verify_setup(
     request: Request,
     body: MFAVerifyRequest,
@@ -226,6 +279,7 @@ async def mfa_verify_setup(
 # POST /auth/mfa/verify – Verify TOTP code during login (called with mfa_token)
 # ---------------------------------------------------------------------------
 @router.post("/verify")
+@limiter.limit("3/minute")
 async def mfa_verify_login(
     request: Request,
     body: MFAVerifyRequest,
@@ -238,6 +292,7 @@ async def mfa_verify_login(
     from jose import jwt as jose_jwt
 
     username = current_user.username
+    _check_totp_lockout(username)
     record = _get_mfa_record(username)
 
     if not record or not record["is_enabled"]:
@@ -268,8 +323,10 @@ async def mfa_verify_login(
 
     if not verified:
         log_auth_event(username, "mfa_failed", False)
+        _record_totp_failure(username)
         raise HTTPException(status_code=401, detail="Invalid MFA code")
 
+    _clear_totp_failures(username)
     # Issue real JWT
     from auth import get_user_role, JWT_ACCESS_TOKEN_EXPIRE_MINUTES
     role = get_user_role(username)
@@ -308,7 +365,9 @@ async def mfa_verify_login(
 # POST /auth/mfa/disable – Disable MFA for current user
 # ---------------------------------------------------------------------------
 @router.post("/disable")
+@limiter.limit("3/minute")
 async def mfa_disable(
+    request: Request,
     body: MFADisableRequest,
     current_user: User = Depends(require_authentication),
 ):

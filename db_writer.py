@@ -4,6 +4,7 @@ Handles all database operations for storing inventory data
 """
 
 import os
+import html
 import json
 import hashlib
 import logging
@@ -113,20 +114,25 @@ def _send_alert_email(smtp_cfg: dict, to_addrs: list, subject: str, html_body: s
 
 
 def _build_failure_html(consec: int, run_id: int) -> str:
+    # html.escape() is applied defensively — values are ints now but this
+    # ensures safety if the signature ever widens to include string fields.
+    _consec = html.escape(str(consec))
+    _run_id = html.escape(str(run_id))
+    _time = html.escape(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
     return f"""
 <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto">
 <div style="background:#d32f2f;color:#fff;padding:16px 20px;border-radius:6px 6px 0 0">
   <h2 style="margin:0">&#x26A0; RVTools Inventory Sync Alert</h2>
 </div>
 <div style="background:#fafafa;padding:20px;border:1px solid #ddd;border-radius:0 0 6px 6px">
-  <p>The RVTools inventory sync has <strong>failed {consec} consecutive time{"s" if consec != 1 else ""}</strong>.</p>
+  <p>The RVTools inventory sync has <strong>failed {_consec} consecutive time{"s" if consec != 1 else ""}</strong>.</p>
   <table style="border-collapse:collapse;width:100%">
     <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;width:160px">Last Run ID</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #eee">#{run_id}</td></tr>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee">#{_run_id}</td></tr>
     <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold">Consecutive Failures</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #eee">{consec}</td></tr>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee">{_consec}</td></tr>
     <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold">Time (UTC)</td>
-        <td style="padding:6px 10px">{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</td></tr>
+        <td style="padding:6px 10px">{_time} UTC</td></tr>
   </table>
   <p style="margin-top:16px">Please check the scheduler worker logs and verify connectivity to the OpenStack environment.</p>
   <p style="color:#888;font-size:12px;margin-top:24px">This alert was sent by Platform9 Management &mdash; RVTools monitor.</p>
@@ -135,6 +141,10 @@ def _build_failure_html(consec: int, run_id: int) -> str:
 
 
 def _build_recovery_html(run_id: int) -> str:
+    # html.escape() is applied defensively — values are ints now but this
+    # ensures safety if the signature ever widens to include string fields.
+    _run_id = html.escape(str(run_id))
+    _time = html.escape(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
     return f"""
 <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto">
 <div style="background:#388e3c;color:#fff;padding:16px 20px;border-radius:6px 6px 0 0">
@@ -144,9 +154,9 @@ def _build_recovery_html(run_id: int) -> str:
   <p>The RVTools inventory sync has <strong>completed successfully</strong> and is no longer in a failed state.</p>
   <table style="border-collapse:collapse;width:100%">
     <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;width:160px">Run ID</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #eee">#{run_id}</td></tr>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee">#{_run_id}</td></tr>
     <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold">Time (UTC)</td>
-        <td style="padding:6px 10px">{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")} UTC</td></tr>
+        <td style="padding:6px 10px">{_time} UTC</td></tr>
   </table>
   <p style="color:#888;font-size:12px;margin-top:24px">This alert was sent by Platform9 Management &mdash; RVTools monitor.</p>
 </div>

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.24] - 2026-04-27
+
+### Fixed
+
+- **M2: Login error enumeration** — The tenant-ui login form previously returned different error messages for HTTP 401 ("Invalid credentials") vs HTTP 403 ("Access denied"), allowing an attacker to distinguish between unknown usernames and known-but-blocked accounts. Both 401 and 403 now display the same generic message: "Authentication failed. Please check your credentials."
+- **M3: TOTP brute-force rate limit** — The `/auth/mfa/verify` endpoint had no rate limit, enabling unlimited TOTP guesses per second. All three MFA endpoints (`/verify`, `/verify-setup`, `/disable`) are now limited to `3/minute`. A Redis-based account lockout is also applied to `/verify`: after 10 consecutive failed TOTP attempts, the account is locked for 15 minutes (`pf9:totp_lock:{username}` key in Redis). The failure counter is automatically cleared on successful verification.
+- **M7: Alert email HTML injection prevention** — `db_writer.py` alert email builders (`_build_failure_html`, `_build_recovery_html`) now apply `html.escape()` to all interpolated values before inserting them into the HTML body. Current parameters are integers (inherently safe), but the escaping is applied defensively to prevent XSS if future string fields (e.g., dynamic error messages) are added.
+
+### Changed
+
+- Helm chart version bumped to 1.93.24.
+
+---
+
 ## [1.93.23] - 2026-04-27
 
 ### Fixed

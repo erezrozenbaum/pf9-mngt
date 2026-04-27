@@ -115,9 +115,8 @@ export function Login({ branding, loading, error, onLogin }: Props) {
           {error && (
             <div className="error-banner" role="alert" style={{ marginBottom: "1rem" }}>
               {error === "invalid_credentials" || error === "HTTP 401"
-                ? "Invalid credentials. Please try again."
-                : error === "portal_access_denied" || error === "HTTP 403"
-                ? "Access denied. Contact your administrator."
+                || error === "portal_access_denied" || error === "HTTP 403"
+                ? "Authentication failed. Please check your credentials."
                 : error === "rate_limit_exceeded" || error === "HTTP 429"
                 ? "Too many login attempts. Please wait and try again."
                 : error.startsWith("HTTP 5") || error === "keystone_unreachable"

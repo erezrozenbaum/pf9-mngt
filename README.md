@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.23-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.24-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🔒 Security fixes: login enumeration, TOTP rate limit, HTML escape — v1.93.24
+
+**[v1.93.24](CHANGELOG.md)** — Three medium-severity security fixes. M2: tenant-ui login form now returns the same generic message for HTTP 401 and 403, preventing username enumeration. M3: all MFA endpoints (`/verify`, `/verify-setup`, `/disable`) limited to `3/minute`; `/verify` adds Redis-based account lockout after 10 consecutive failures for 15 minutes. M7: `db_writer.py` alert email builders apply `html.escape()` defensively to all interpolated values.
+
 ### 🩹 Hotfix: tenant-ui CMD reads from wrong template path — v1.93.23
 
 **[v1.93.23](CHANGELOG.md)** — Hotfix for v1.93.22 regression. The `COPY` destination was fixed to `/etc/nginx/templates/` but the `CMD` still read from `/etc/nginx/conf.d/tenant-ui.conf.template`, causing `no such file` at startup. Fix: `CMD` now reads from `/etc/nginx/templates/tenant-ui.conf.template` and writes the rendered config to `/etc/nginx/conf.d/tenant-ui.conf` (the writable `emptyDir`).
@@ -913,4 +917,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.23 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.24 | **Last Updated**: April 2026

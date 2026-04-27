@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.23  
+**Version**: 1.93.24  
 **Last Updated**: April 27, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.24 — Security fixes: login enumeration, TOTP rate limit, HTML escape (✅ Complete)
+
+- **M2: Login error enumeration fix** — `tenant-ui/src/components/Login.tsx` now returns the same error message ("Authentication failed. Please check your credentials.") for both HTTP 401 and HTTP 403, preventing username enumeration via differing error text.
+- **M3: TOTP brute-force rate limit** — All MFA endpoints (`/verify`, `/verify-setup`, `/disable`) are now rate-limited to `3/minute`. `/verify` additionally applies a Redis-based account lockout: 10 consecutive TOTP failures lock the account for 15 minutes (`pf9:totp_lock:{username}`). Failure counter clears on success.
+- **M7: Alert email HTML injection prevention** — `db_writer.py` `_build_failure_html` and `_build_recovery_html` now apply `html.escape()` to all interpolated values as a defensive measure. Current parameters are integers but the pattern ensures safety if string fields are added in the future.
 
 ### v1.93.23 — Hotfix: tenant-ui CMD reads from wrong template path (✅ Complete)
 
