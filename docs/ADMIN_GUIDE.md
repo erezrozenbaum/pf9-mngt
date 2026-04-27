@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.22  
+**Version**: 1.93.23  
 **Last Updated**: April 27, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.23 — Hotfix: tenant-ui CMD reads from wrong template path (✅ Complete)
+
+- **Bug fix: nginx CMD path mismatch** — v1.93.22 moved the template `COPY` destination to `/etc/nginx/templates/` but did not update the `CMD`'s input path, so the container crashed with `/etc/nginx/conf.d/tenant-ui.conf.template: no such file`. Fix: `CMD` now reads from `/etc/nginx/templates/tenant-ui.conf.template` and writes to `/etc/nginx/conf.d/tenant-ui.conf` (the writable `emptyDir`).
 
 ### v1.93.22 — Hotfix: tenant-ui CrashLoopBackOff with readOnlyRootFilesystem (✅ Complete)
 

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.23] - 2026-04-27
+
+### Fixed
+
+- **tenant-ui `CrashLoopBackOff` v2** — v1.93.22 moved the nginx config template to `/etc/nginx/templates/` but the `CMD` in the Dockerfile still read from the old path `/etc/nginx/conf.d/tenant-ui.conf.template`, causing `no such file` at startup. Fix: update `CMD` to read from `/etc/nginx/templates/tenant-ui.conf.template` (the actual template location) and write the rendered config to `/etc/nginx/conf.d/tenant-ui.conf` (the writable `emptyDir`).
+
+### Changed
+
+- Helm chart version bumped to 1.93.23.
+
+---
+
 ## [1.93.22] - 2026-04-27
 
 ### Fixed

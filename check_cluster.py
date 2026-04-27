@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live cluster verification for v1.93.22 -- run on Windows with kubectl configured."""
+"""Live cluster verification for v1.93.23 -- run on Windows with kubectl configured."""
 import json
 import subprocess
 import sys
@@ -77,10 +77,10 @@ wrong_ver = []
 for p in pods:
     for c in p["spec"]["containers"]:
         img = c["image"]
-        if "ghcr.io" in img and ":v1.93.22" not in img:
+        if "ghcr.io" in img and ":v1.93.23" not in img:
             wrong_ver.append(f"{p['metadata']['name']}: {img}")
 if not wrong_ver:
-    ok("all app images tagged v1.93.22")
+    ok("all app images tagged v1.93.23")
 else:
     fail(f"unexpected image versions: {wrong_ver}")
 
@@ -479,7 +479,7 @@ print(f"  FAIL         : {FAIL_COUNT}")
 print(f"  SKIP         : {SKIP_COUNT}")
 print()
 if FAIL_COUNT == 0:
-    print("ALL CHECKS PASSED -- v1.93.22 cluster state is healthy")
+    print("ALL CHECKS PASSED -- v1.93.23 cluster state is healthy")
     sys.exit(0)
 else:
     print(f"{FAIL_COUNT} CHECKS FAILED -- review output above")

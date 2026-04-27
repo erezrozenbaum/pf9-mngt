@@ -53,4 +53,4 @@ EXPOSE 8080
 # Default value is "tenant_portal:8010" (Docker Compose) so no env var
 # is needed in docker-compose; Kubernetes deployments set it to
 # "pf9-tenant-portal:8010" via the Helm template.
-CMD ["/bin/sh", "-c", "TENANT_PORTAL_UPSTREAM=${TENANT_PORTAL_UPSTREAM:-tenant_portal:8010} envsubst '${TENANT_PORTAL_UPSTREAM}' < /etc/nginx/conf.d/tenant-ui.conf.template > /etc/nginx/conf.d/tenant-ui.conf && nginx -g 'daemon off;'"]
+CMD ["/bin/sh", "-c", "TENANT_PORTAL_UPSTREAM=${TENANT_PORTAL_UPSTREAM:-tenant_portal:8010} envsubst '${TENANT_PORTAL_UPSTREAM}' < /etc/nginx/templates/tenant-ui.conf.template > /etc/nginx/conf.d/tenant-ui.conf && nginx -g 'daemon off;'"]
