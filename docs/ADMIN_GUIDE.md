@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.21  
-**Last Updated**: May 3, 2026  
+**Version**: 1.93.22  
+**Last Updated**: April 27, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.22 — Hotfix: tenant-ui CrashLoopBackOff with readOnlyRootFilesystem (✅ Complete)
+
+- **Bug fix: tenant-ui nginx crash** — The nginx entrypoint `envsubst` script writes `/etc/nginx/conf.d/tenant-ui.conf` at startup. With `readOnlyRootFilesystem: true` (added in v1.93.21), that directory was read-only, causing immediate `CrashLoopBackOff`. Fix: template moved from `conf.d/` to `nginx/templates/` in the Dockerfile, and a new `nginx-conf` `emptyDir` volume added at `/etc/nginx/conf.d` in the K8s Deployment.
 
 ### v1.93.21 — Security hardening: TLS warnings, backup checksums, readOnlyRootFilesystem, LDAP conn leaks, circuit breakers (✅ Complete)
 

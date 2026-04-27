@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🩹 Hotfix: tenant-ui CrashLoopBackOff with readOnlyRootFilesystem — v1.93.22
+
+**[v1.93.22](CHANGELOG.md)** — Hotfix for v1.93.21 regression. The nginx entrypoint `envsubst` script writes a processed config to `/etc/nginx/conf.d/` at startup; with `readOnlyRootFilesystem: true` this caused an immediate crash. Fix: template moved from `conf.d/` to `nginx/templates/` in the `tenant-ui` Dockerfile, and a new `nginx-conf` `emptyDir` volume added at `/etc/nginx/conf.d` in the K8s Deployment.
+
 ### 🔒 Security hardening: TLS warnings, backup checksums, readOnlyRootFilesystem, LDAP conn leaks, circuit breakers — v1.93.21
 
 **[v1.93.21](CHANGELOG.md)** — Security hardening release. **H4 TLS bypass warnings:** `ldap_sync_worker` and `api/auth.py` now log a `WARNING` whenever `verify_tls_cert=False`, making insecure LDAP connections visible without blocking operation. **H7 Backup integrity checksums:** The backup worker computes a SHA-256 checksum of every `.sql.gz` file immediately after writing it and stores the hex digest in `backup_history.integrity_hash`; the restore endpoint verifies the on-disk file before queuing a restore (HTTP 409 on mismatch). New migration: `db/migrate_v1_93_21.sql`. **H8 readOnlyRootFilesystem:** All 15 Kubernetes Deployment templates now set `readOnlyRootFilesystem: true`; each service has `/tmp` (and nginx cache paths) mounted as `emptyDir`. **H10 LDAP connection leaks:** `api/auth.py` authentication and external LDAP bind paths now guarantee `unbind_s()` via `try/finally`. **H15 Database circuit breaker:** All 9 background workers have a circuit-breaker wrapper that opens after 3 consecutive DB failures and backs off 60 s. 582+ unit tests pass, 0 HIGH Bandit findings.

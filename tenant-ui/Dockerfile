@@ -44,7 +44,7 @@ RUN rm /etc/nginx/conf.d/default.conf \
 # nginx.conf uses TENANT_PORTAL_UPSTREAM placeholder which is substituted
 # at container startup via envsubst so the same image works in both
 # Docker Compose (tenant_portal:8010) and Kubernetes (pf9-tenant-portal:8010).
-COPY nginx.conf /etc/nginx/conf.d/tenant-ui.conf.template
+COPY nginx.conf /etc/nginx/templates/tenant-ui.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
 USER nginx

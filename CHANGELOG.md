@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.22] - 2026-04-27
+
+### Fixed
+
+- **tenant-ui `CrashLoopBackOff` with `readOnlyRootFilesystem: true`** — The nginx entrypoint `envsubst` script writes the processed config to `/etc/nginx/conf.d/tenant-ui.conf` at startup. With `readOnlyRootFilesystem: true` that directory was on the read-only root FS, causing an immediate crash. Fix: move the config template in `tenant-ui/Dockerfile` from `/etc/nginx/conf.d/tenant-ui.conf.template` to `/etc/nginx/templates/tenant-ui.conf.template` (nginx's designated template source dir), and add a new `nginx-conf` `emptyDir` volume mounted at `/etc/nginx/conf.d` in the K8s Deployment so the entrypoint can write the output config file.
+
+### Changed
+
+- Helm chart version bumped to 1.93.22.
+
+---
+
 ## [1.93.21] - 2026-05-03
 
 ### Security
