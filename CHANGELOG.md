@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.31] - 2026-04-28
+
+### Fixed
+
+- **rvtools runs no longer recorded as failures** — Every rvtools run since the introduction of project-quota collection was being recorded as `status=failure` with the note "current transaction is aborted". Root cause: `upsert_project_quotas` could produce a duplicate-key violation (concurrent runs racing on the same `(project_id, service, resource)` PK) which left the PostgreSQL connection in `INERROR` state. Because the surrounding `except Exception: pass` swallowed the Python exception without calling `conn.rollback()`, every subsequent DB statement in the same transaction failed silently, and `finish_inventory_run(status="success")` also failed — triggering the outer `except` branch that recorded the run as a failure.  Fixed by wrapping the INSERT loop in `upsert_project_quotas` with a savepoint/rollback-to-savepoint so a duplicate-key or any other DB error is isolated and does not abort the outer transaction.
+- **Metadata DB errors no longer poison the main transaction** — The `except Exception` handlers for keypairs, server groups, aggregates, and volume-type writes in the rvtools DB section now check `conn.info.transaction_status` and call `conn.rollback()` if the connection is in `INERROR` state, preventing a silent DB error from those writes from cascading to `finish_inventory_run`.
+- **History table schema gaps fixed** — Five `*_history` tables were missing columns that exist in their corresponding main tables, causing `_upsert_with_history` savepoints to roll back on every run and silently skipping all history and drift tracking: `hypervisors_history` was missing `running_vms`, `volumes_history` was missing `server_id`, `networks_history` was missing `status` and `admin_state_up`, `subnets_history` was missing `enable_dhcp` and `ip_version`, `ports_history` was missing `status`. Migration `db/migrate_v1_93_31.sql` adds all missing columns; `db/init.sql` updated to match.
+
+### Changed
+
+- Helm chart version bumped to 1.93.31.
+
+---
+
 ## [1.93.30] - 2026-04-27
 
 ### Security

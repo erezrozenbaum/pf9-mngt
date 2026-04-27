@@ -1657,6 +1657,8 @@ def upsert_project_quotas(conn, project_id: str, service: str, quota_data: Dict[
     """
     Upsert project quotas for a specific service (nova/cinder/neutron).
     quota_data is the raw quota_set dict from the API.
+    Uses a savepoint so that any DB error (e.g. concurrent duplicate key) does not
+    abort the outer transaction.
     """
     if not quota_data:
         return 0
@@ -1665,32 +1667,42 @@ def upsert_project_quotas(conn, project_id: str, service: str, quota_data: Dict[
     skip_keys = {'id', 'project_id'}
 
     with conn.cursor() as cur:
+        cur.execute("SAVEPOINT before_project_quotas")
         count = 0
-        for resource, value in quota_data.items():
-            if resource in skip_keys:
-                continue
+        try:
+            for resource, value in quota_data.items():
+                if resource in skip_keys:
+                    continue
 
-            # Value can be an int (simple) or a dict with limit/in_use/reserved (detail)
-            if isinstance(value, dict):
-                quota_limit = value.get('limit')
-                in_use = value.get('in_use', 0)
-                reserved = value.get('reserved', 0)
-            elif isinstance(value, int):
-                quota_limit = value
-                in_use = None
-                reserved = None
-            else:
-                continue
+                # Value can be an int (simple) or a dict with limit/in_use/reserved (detail)
+                if isinstance(value, dict):
+                    quota_limit = value.get('limit')
+                    in_use = value.get('in_use', 0)
+                    reserved = value.get('reserved', 0)
+                elif isinstance(value, int):
+                    quota_limit = value
+                    in_use = None
+                    reserved = None
+                else:
+                    continue
 
-            cur.execute("""
-                INSERT INTO project_quotas (project_id, service, resource, quota_limit, in_use, reserved, last_seen_at)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (project_id, service, resource) DO UPDATE SET
-                    quota_limit = EXCLUDED.quota_limit,
-                    in_use = EXCLUDED.in_use,
-                    reserved = EXCLUDED.reserved,
-                    last_seen_at = NOW()
-            """, (project_id, service, resource, quota_limit, in_use, reserved))
-            count += 1
+                cur.execute("""
+                    INSERT INTO project_quotas (project_id, service, resource, quota_limit, in_use, reserved, last_seen_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (project_id, service, resource) DO UPDATE SET
+                        quota_limit = EXCLUDED.quota_limit,
+                        in_use = EXCLUDED.in_use,
+                        reserved = EXCLUDED.reserved,
+                        last_seen_at = NOW()
+                """, (project_id, service, resource, quota_limit, in_use, reserved))
+                count += 1
+            cur.execute("RELEASE SAVEPOINT before_project_quotas")
+        except Exception as e:
+            logging.warning(
+                f"project_quotas write skipped for {project_id}/{service}: {e}. "
+                "Run the corresponding migration against the database to fix this."
+            )
+            cur.execute("ROLLBACK TO SAVEPOINT before_project_quotas")
+            return 0
 
     return count

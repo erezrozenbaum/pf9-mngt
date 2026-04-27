@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.30-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.31-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -636,6 +636,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+
+### rvtools runs always success, history table schema fixed — v1.93.31
+
+**[v1.93.31](CHANGELOG.md)** — rvtools no longer recorded as failure on every run; duplicate-key race in project-quota upsert isolated with a savepoint; missing columns added to five `*_history` tables to restore drift/history tracking.
 
 ### API error hardening, SVG upload restriction, docs validation — v1.93.30
 

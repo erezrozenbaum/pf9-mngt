@@ -863,18 +863,30 @@ def main():
             try:
                 n_keypairs = upsert_keypairs(conn, keypairs)
             except Exception as e:
+                if conn.info.transaction_status == 3:  # INERROR — must rollback before continuing
+                    try: conn.rollback()
+                    except Exception: pass
                 print(f"    [WARN] Keypairs DB write failed: {e}")
             try:
                 n_sgroups = upsert_server_groups(conn, server_groups)
             except Exception as e:
+                if conn.info.transaction_status == 3:
+                    try: conn.rollback()
+                    except Exception: pass
                 print(f"    [WARN] Server groups DB write failed: {e}")
             try:
                 n_aggs = upsert_host_aggregates(conn, aggregates)
             except Exception as e:
+                if conn.info.transaction_status == 3:
+                    try: conn.rollback()
+                    except Exception: pass
                 print(f"    [WARN] Aggregates DB write failed: {e}")
             try:
                 n_vtypes = upsert_volume_types(conn, volume_types)
             except Exception as e:
+                if conn.info.transaction_status == 3:
+                    try: conn.rollback()
+                    except Exception: pass
                 print(f"    [WARN] Volume types DB write failed: {e}")
 
             # Project quotas (iterate projects)

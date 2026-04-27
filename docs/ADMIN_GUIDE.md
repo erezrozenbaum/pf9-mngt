@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.30  
+**Version**: 1.93.31  
 **Last Updated**: April 27, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.31 — rvtools reliability: quota savepoint, history schema fix (✅ Complete)
+
+- **rvtools runs no longer recorded as failures** — Every rvtools run was being recorded as `status=failure`. Root cause: a duplicate-key violation in `upsert_project_quotas` (concurrent runs racing on the same primary key) left the PostgreSQL connection in INERROR state, causing `finish_inventory_run(status="success")` to fail. Fixed with a savepoint so any quota DB error is isolated and does not abort the outer transaction.
+- **Metadata DB error isolation** — The keypairs, server groups, aggregates, and volume-type write handlers now check `conn.info.transaction_status` and call `conn.rollback()` if the connection is in INERROR state, preventing silent failures from cascading.
+- **History table schema gaps fixed** — Five `*_history` tables were missing columns present in the main tables (`hypervisors_history.running_vms`, `volumes_history.server_id`, `networks_history.status/admin_state_up`, `subnets_history.enable_dhcp/ip_version`, `ports_history.status`), causing history and drift tracking to silently skip on every run. Migration `db/migrate_v1_93_31.sql` adds all missing columns.
 
 ### v1.93.30 — API error hardening, SVG upload restriction, docs validation (✅ Complete)
 

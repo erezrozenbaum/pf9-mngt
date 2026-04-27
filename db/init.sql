@@ -294,6 +294,7 @@ CREATE TABLE IF NOT EXISTS hypervisors_history (
     local_gb           INTEGER,
     state              TEXT,
     status             TEXT,
+    running_vms        INTEGER,
     recorded_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     change_hash        TEXT NOT NULL,
     raw_json           JSONB
@@ -334,6 +335,7 @@ CREATE TABLE IF NOT EXISTS volumes_history (
     size_gb      INTEGER,
     status       TEXT,
     volume_type  TEXT,
+    server_id    TEXT,
     bootable     BOOLEAN,
     created_at   TIMESTAMPTZ,
     last_seen_at TIMESTAMPTZ,
@@ -373,15 +375,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshots_history_change_hash ON snapshots
 
 -- Networks history
 CREATE TABLE IF NOT EXISTS networks_history (
-    id           BIGSERIAL PRIMARY KEY,
-    network_id   TEXT NOT NULL,
-    name         TEXT,
-    project_id   TEXT,
-    is_shared    BOOLEAN,
-    is_external  BOOLEAN,
-    recorded_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    change_hash  TEXT NOT NULL,
-    raw_json     JSONB
+    id             BIGSERIAL PRIMARY KEY,
+    network_id     TEXT NOT NULL,
+    name           TEXT,
+    project_id     TEXT,
+    status         TEXT,
+    admin_state_up BOOLEAN,
+    is_shared      BOOLEAN,
+    is_external    BOOLEAN,
+    recorded_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    change_hash    TEXT NOT NULL,
+    raw_json       JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_networks_history_network_id ON networks_history(network_id);
 CREATE INDEX IF NOT EXISTS idx_networks_history_recorded_at ON networks_history(recorded_at);
@@ -395,6 +399,8 @@ CREATE TABLE IF NOT EXISTS subnets_history (
     network_id   TEXT,
     cidr         TEXT,
     gateway_ip   TEXT,
+    enable_dhcp  BOOLEAN,
+    ip_version   INTEGER,
     recorded_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     change_hash  TEXT NOT NULL,
     raw_json     JSONB
@@ -428,6 +434,7 @@ CREATE TABLE IF NOT EXISTS ports_history (
     device_id     TEXT,
     device_owner  TEXT,
     mac_address   TEXT,
+    status        TEXT,
     ip_addresses  JSONB,
     recorded_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     change_hash   TEXT NOT NULL,
