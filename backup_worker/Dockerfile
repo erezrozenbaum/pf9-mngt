@@ -1,15 +1,13 @@
 FROM postgres:16.8-alpine
 
-# Install Python + pip + LDAP client tools inside the postgres image
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 python3-pip python3-venv ldap-utils && \
-    rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
+# Install Python + pip + LDAP client tools (Alpine package manager)
+RUN apk add --no-cache python3 py3-pip openldap-clients && \
+    python3 -m venv /app/venv
+
 COPY requirements.txt .
-RUN python3 -m venv /app/venv && \
-    /app/venv/bin/pip install --no-cache-dir -r requirements.txt
+RUN /app/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 
