@@ -1,0 +1,20 @@
+{{- if .Values.resourceQuota.enabled }}
+# ---------------------------------------------------------------------------
+# M9: ResourceQuota — prevents a runaway pod from exhausting cluster resources
+# Gate: resourceQuota.enabled (default: true)
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: pf9-mngt-quota
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+spec:
+  hard:
+    requests.cpu: {{ .Values.resourceQuota.requests.cpu | quote }}
+    requests.memory: {{ .Values.resourceQuota.requests.memory | quote }}
+    limits.cpu: {{ .Values.resourceQuota.limits.cpu | quote }}
+    limits.memory: {{ .Values.resourceQuota.limits.memory | quote }}
+    pods: {{ .Values.resourceQuota.maxPods | quote }}
+{{- end }}

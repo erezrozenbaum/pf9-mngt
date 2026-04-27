@@ -15,7 +15,7 @@ global:
   imageRepo: ghcr.io/erezrozenbaum
   # Default tag — overridden per service in values.prod.yaml by CI.
   imageTag: latest
-  imagePullPolicy: IfNotPresent
+  imagePullPolicy: Always
 
 nameOverride: ""
 fullnameOverride: ""
@@ -325,6 +325,36 @@ redisService:
       memory: "32Mi"
   service:
     port: 6379
+
+# ---------------------------------------------------------------------------
+# M9: ResourceQuota — cap total CPU/memory/pods in the namespace
+# ---------------------------------------------------------------------------
+resourceQuota:
+  enabled: true
+  requests:
+    cpu: "3000m"       # sum of all pod requests.cpu (~2.5 with headroom)
+    memory: "6Gi"      # sum of all pod requests.memory (~5Gi with headroom)
+  limits:
+    cpu: "20000m"      # generous ceiling (20 cores) — prevents starvation
+    memory: "20Gi"     # generous ceiling
+  maxPods: "40"        # current baseline is 17; 40 gives room for scale-out
+
+# ---------------------------------------------------------------------------
+# M11: PodDisruptionBudgets — keep at least 1 replica available during drains
+# ---------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: true        # Requires Kubernetes 1.21+ (policy/v1 PDB API)
+
+# ---------------------------------------------------------------------------
+# M12: HorizontalPodAutoscaler — auto-scale API on CPU/memory
+# NOTE: Requires metrics-server deployed on the cluster.
+# ---------------------------------------------------------------------------
+hpa:
+  enabled: false       # Set to true after confirming metrics-server is installed
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
 
 # ---------------------------------------------------------------------------
 # OpenLDAP (StatefulSet)

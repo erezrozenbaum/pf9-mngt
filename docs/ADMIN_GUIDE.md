@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.26  
+**Version**: 1.93.27  
 **Last Updated**: April 27, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.27 — K8s hardening: ResourceQuota, PDB, HPA, imagePullPolicy (✅ Complete)
+
+- **M9: ResourceQuota** — `pf9-mngt-quota` created in namespace: `requests.cpu=3000m`, `requests.memory=6Gi`, `limits.cpu=20`, `limits.memory=20Gi`, `pods=40`. Gated by `resourceQuota.enabled`.
+- **M11: PodDisruptionBudgets** — PDBs added for `pf9-api`, `pf9-tenant-portal`, `pf9-monitoring` (`minAvailable: 1`). Prevents complete service outage during node drains. Gated by `podDisruptionBudget.enabled`.
+- **M12: HPA** — HorizontalPodAutoscaler scaffold for API (CPU/memory 80% target, max 5 replicas). Disabled by default; enable by setting `hpa.enabled: true` after verifying `metrics-server` is installed.
+- **L9: imagePullPolicy: Always** — Ensures all app pods always pull the latest image on restart. Changed from `IfNotPresent`.
 
 ### v1.93.26 — K8s image pinning: Postgres + Redis (✅ Complete)
 

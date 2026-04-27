@@ -1,0 +1,52 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+# ---------------------------------------------------------------------------
+# M11: PodDisruptionBudgets — prevents simultaneous eviction during node drain
+# Gate: podDisruptionBudget.enabled (default: true)
+# Covers: api, tenant-portal, monitoring (user-facing / critical services)
+# ---------------------------------------------------------------------------
+
+# --- API ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pf9-api-pdb
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+---
+# --- Tenant Portal ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pf9-tenant-portal-pdb
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: tenant-portal
+---
+# --- Monitoring ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pf9-monitoring-pdb
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: monitoring
+{{- end }}

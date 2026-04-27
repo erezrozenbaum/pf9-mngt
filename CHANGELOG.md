@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.27] - 2026-04-27
+
+### Added
+
+- **M9: K8s ResourceQuota** — `templates/resource-quota.yaml` creates a `pf9-mngt-quota` quota in the namespace (gated by `resourceQuota.enabled: true`). Caps: `requests.cpu=3000m`, `requests.memory=6Gi`, `limits.cpu=20000m`, `limits.memory=20Gi`, `pods=40`. Prevents a runaway pod from exhausting all cluster resources.
+- **M11: PodDisruptionBudgets** — `templates/pod-disruption-budgets.yaml` adds PDBs for `pf9-api`, `pf9-tenant-portal`, and `pf9-monitoring` (`minAvailable: 1`). Gated by `podDisruptionBudget.enabled: true`. Prevents Kubernetes node-drain from taking down all replicas of critical services simultaneously.
+- **M12: HorizontalPodAutoscaler** — `templates/api/hpa.yaml` adds an HPA for the API deployment targeting 80% CPU/memory (`minReplicas: 1`, `maxReplicas: 5`). Gated by `hpa.enabled: false` by default — enable after confirming `metrics-server` is deployed on the cluster.
+
+### Fixed
+
+- **L9: imagePullPolicy: Always** — `global.imagePullPolicy` changed from `IfNotPresent` to `Always` in `values.yaml`. Ensures updated images (including security patches) are always pulled on pod restart rather than serving a stale cached layer.
+
+### Changed
+
+- Helm chart version bumped to 1.93.27.
+
+---
+
 ## [1.93.26] - 2026-04-27
 
 ### Fixed

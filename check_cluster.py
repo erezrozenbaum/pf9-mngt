@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live cluster verification for v1.93.26 -- run on Windows with kubectl configured."""
+"""Live cluster verification for v1.93.27 -- run on Windows with kubectl configured."""
 import json
 import subprocess
 import sys
@@ -77,10 +77,10 @@ wrong_ver = []
 for p in pods:
     for c in p["spec"]["containers"]:
         img = c["image"]
-        if "ghcr.io" in img and ":v1.93.26" not in img:
+        if "ghcr.io" in img and ":v1.93.27" not in img:
             wrong_ver.append(f"{p['metadata']['name']}: {img}")
 if not wrong_ver:
-    ok("all app images tagged v1.93.26")
+    ok("all app images tagged v1.93.27")
 else:
     fail(f"unexpected image versions: {wrong_ver}")
 
@@ -468,6 +468,63 @@ if api_pod:
         ok("Redis jti revocation store: setex/get/delete round-trip OK (pf9:revoked: prefix)")
     else:
         fail(f"Redis jti revocation store FAILED: {stderr or stdout}")
+
+# ---------------------------------------------------------------------------
+# M9: ResourceQuota present
+# ---------------------------------------------------------------------------
+header("M9: ResourceQuota in namespace")
+
+rq_out, _, rq_rc = kubectl("get", "resourcequota", "-o", "json")
+if rq_rc == 0:
+    rqs = json.loads(rq_out)["items"]
+    pf9_rq = next((r for r in rqs if r["metadata"]["name"] == "pf9-mngt-quota"), None)
+    if pf9_rq:
+        hard = pf9_rq["spec"].get("hard", {})
+        ok(f"pf9-mngt-quota present: pods<={hard.get('pods','?')}, "
+           f"requests.cpu={hard.get('requests.cpu','?')}, limits.cpu={hard.get('limits.cpu','?')}")
+    else:
+        fail("pf9-mngt-quota ResourceQuota not found -- namespace is uncapped")
+else:
+    fail(f"kubectl get resourcequota failed: check RBAC or namespace")
+
+# ---------------------------------------------------------------------------
+# M11: PodDisruptionBudgets for critical services
+# ---------------------------------------------------------------------------
+header("M11: PodDisruptionBudgets for critical services")
+
+EXPECTED_PDBS = {"pf9-api-pdb", "pf9-tenant-portal-pdb", "pf9-monitoring-pdb"}
+pdb_out, _, pdb_rc = kubectl("get", "poddisruptionbudgets", "-o", "json")
+if pdb_rc == 0:
+    pdbs = json.loads(pdb_out)["items"]
+    pdb_names = {p["metadata"]["name"] for p in pdbs}
+    for expected in sorted(EXPECTED_PDBS):
+        if expected in pdb_names:
+            pdb = next(p for p in pdbs if p["metadata"]["name"] == expected)
+            min_avail = pdb["spec"].get("minAvailable", "?")
+            ok(f"{expected}: minAvailable={min_avail}")
+        else:
+            fail(f"{expected} PodDisruptionBudget missing")
+else:
+    fail("kubectl get poddisruptionbudgets failed")
+
+# ---------------------------------------------------------------------------
+# L9: imagePullPolicy: Always for app images
+# ---------------------------------------------------------------------------
+header("L9: imagePullPolicy: Always for app images")
+
+wrong_pull = []
+for p in pods:
+    if is_third_party(p["metadata"]["name"]):
+        continue
+    for ctr in p["spec"].get("containers", []):
+        img = ctr.get("image", "")
+        policy = ctr.get("imagePullPolicy", "IfNotPresent")
+        if "ghcr.io" in img and policy != "Always":
+            wrong_pull.append(f"{p['metadata']['name']}/{ctr['name']}: {policy}")
+if not wrong_pull:
+    ok("all app container imagePullPolicy=Always")
+else:
+    fail(f"containers with non-Always imagePullPolicy: {wrong_pull}")
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
@@ -479,7 +536,7 @@ print(f"  FAIL         : {FAIL_COUNT}")
 print(f"  SKIP         : {SKIP_COUNT}")
 print()
 if FAIL_COUNT == 0:
-    print("ALL CHECKS PASSED -- v1.93.26 cluster state is healthy")
+    print("ALL CHECKS PASSED -- v1.93.27 cluster state is healthy")
     sys.exit(0)
 else:
     print(f"{FAIL_COUNT} CHECKS FAILED -- review output above")

@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.26-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.27-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🔒 K8s hardening: ResourceQuota, PDB, HPA, imagePullPolicy — v1.93.27
+
+**[v1.93.27](CHANGELOG.md)** — M9/M11/M12/L9: ResourceQuota caps namespace resources; PodDisruptionBudgets protect API/portal/monitoring during node drains; HPA scaffolding for auto-scaling (disabled until metrics-server confirmed); `imagePullPolicy: Always` ensures security patches are always fetched.
+
 ### 🔒 K8s image pinning: Postgres + Redis — v1.93.26
 
 **[v1.93.26](CHANGELOG.md)** — Completes M4 for Kubernetes: `values.yaml` Postgres and Redis tags pinned to `postgres:16.8-alpine` and `redis:7.4.3-alpine`. No data loss — Postgres data persists in a PVC; Redis is in-memory only.
@@ -925,4 +929,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.26 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.27 | **Last Updated**: April 2026
