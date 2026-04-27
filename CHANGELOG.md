@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.25] - 2026-04-27
+
+### Fixed
+
+- **M1: Console log leaks in production** — All `console.log`, `console.warn`, `console.error`, and `debugger` statements are now stripped from production builds of `pf9-ui` via Vite's `esbuild.drop` option (`mode === 'production'`). Internal API URLs, error details, and session events no longer appear in browser devtools for end users.
+- **M4: Pinned third-party Docker image tags** — `docker-compose.yml` previously used floating tags (`postgres:16`, `redis:7-alpine`, `osixia/phpldapadmin:latest`), risking non-reproducible deployments and surprise breaking changes. Tags pinned to: `postgres:16.8-alpine`, `redis:7.4.3-alpine`, `osixia/phpldapadmin:0.9.0`.
+- **M5: CSP and Permissions-Policy headers in dev nginx** — `nginx/nginx.conf` (dev) was missing `Content-Security-Policy` and `Permissions-Policy` headers that exist in `nginx.prod.conf`, meaning CSP violations would not be caught in development. Both headers now match the production config.
+- **M6: Explicit CSRF protection on mutating requests** — Both `pf9-ui/src/lib/api.ts` and `tenant-ui/src/lib/api.ts` now append `X-Requested-With: XMLHttpRequest` to all non-GET requests. This header defeats simple form-based CSRF attacks regardless of `SameSite` cookie behaviour.
+- **M8: Removed `unsafe-inline` from production nginx CSP** — `nginx/nginx.prod.conf` previously allowed `style-src 'unsafe-inline'`, enabling style-based XSS. The CSP `style-src` directive now only permits `'self'`.
+
+### Changed
+
+- Helm chart version bumped to 1.93.25.
+
+---
+
 ## [1.93.24] - 2026-04-27
 
 ### Fixed

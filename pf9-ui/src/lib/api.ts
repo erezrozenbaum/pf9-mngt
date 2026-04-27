@@ -86,13 +86,15 @@ const _RETRY_DELAYS = [1_000, 2_000, 4_000];
 export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const token = getToken();
   const callerHeaders = (opts?.headers ?? {}) as Record<string, string>;
+  const isGet = !opts?.method || opts.method.toUpperCase() === 'GET';
   const headers: Record<string, string> = {
     ...(opts?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    // X-Requested-With defeats simple form-based CSRF for all mutating requests (M6).
+    ...(!isGet ? { 'X-Requested-With': 'XMLHttpRequest' } : {}),
     ...callerHeaders,
   };
 
-  const isGet = !opts?.method || opts.method.toUpperCase() === 'GET';
   const maxAttempts = isGet ? _RETRY_DELAYS.length + 1 : 1;
 
   let lastError: Error = new Error('Unknown error');

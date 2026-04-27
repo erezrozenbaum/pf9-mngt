@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.24-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.25-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🔒 Security fixes: console leaks, image pinning, CSP, CSRF — v1.93.25
+
+**[v1.93.25](CHANGELOG.md)** — Five medium-severity security fixes. M1: all `console.*` calls stripped from `pf9-ui` production builds via Vite esbuild drop. M4: third-party Docker images pinned to exact versions (`postgres:16.8-alpine`, `redis:7.4.3-alpine`, `osixia/phpldapadmin:0.9.0`). M5: `Content-Security-Policy` and `Permissions-Policy` headers added to dev nginx config, matching prod. M6: `X-Requested-With: XMLHttpRequest` added to all mutating API requests in both frontends, defeating simple form-based CSRF. M8: `unsafe-inline` removed from `style-src` in prod nginx CSP.
+
 ### 🔒 Security fixes: login enumeration, TOTP rate limit, HTML escape — v1.93.24
 
 **[v1.93.24](CHANGELOG.md)** — Three medium-severity security fixes. M2: tenant-ui login form now returns the same generic message for HTTP 401 and 403, preventing username enumeration. M3: all MFA endpoints (`/verify`, `/verify-setup`, `/disable`) limited to `3/minute`; `/verify` adds Redis-based account lockout after 10 consecutive failures for 15 minutes. M7: `db_writer.py` alert email builders apply `html.escape()` defensively to all interpolated values.
@@ -917,4 +921,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.24 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.25 | **Last Updated**: April 2026

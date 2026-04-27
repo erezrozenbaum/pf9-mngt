@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16
+    image: postgres:16.8-alpine
     container_name: pf9_db
     command: >
       postgres
@@ -535,7 +535,7 @@ services:
 
   # LDAP Administration Interface (dev only)
   phpldapadmin:
-    image: osixia/phpldapadmin:latest
+    image: osixia/phpldapadmin:0.9.0
     container_name: pf9_ldap_admin
     profiles: ["dev"]   # C6: only starts with: docker compose --profile dev up
     environment:
@@ -632,7 +632,7 @@ services:
   # C9: Redis — inventory/quota cache (60 s TTL by default)
   # Set REDIS_PASSWORD in .env to enable requirepass. Leave empty for dev.
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.3-alpine
     container_name: pf9_redis
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"

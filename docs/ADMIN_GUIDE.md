@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.24  
+**Version**: 1.93.25  
 **Last Updated**: April 27, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.25 — Security fixes: console leaks, image pinning, CSP, CSRF (✅ Complete)
+
+- **M1: Production console log stripping** — Vite `esbuild.drop: ['console', 'debugger']` added for production mode in `pf9-ui/vite.config.ts`. All `console.log/warn/error` calls are eliminated from the production bundle, preventing internal API URLs and error details from appearing in browser devtools.
+- **M4: Docker image tags pinned** — `docker-compose.yml` third-party images pinned: `postgres:16.8-alpine`, `redis:7.4.3-alpine`, `osixia/phpldapadmin:0.9.0`. Prevents non-reproducible deployments from floating tags.
+- **M5: CSP headers in dev nginx** — `nginx/nginx.conf` now includes `Content-Security-Policy` and `Permissions-Policy` headers matching `nginx.prod.conf`, so CSP violations are caught during development.
+- **M6: X-Requested-With CSRF protection** — Both `pf9-ui/src/lib/api.ts` and `tenant-ui/src/lib/api.ts` inject `X-Requested-With: XMLHttpRequest` on all non-GET requests, defeating simple form-based CSRF.
+- **M8: Removed `unsafe-inline` from prod CSP** — `nginx/nginx.prod.conf` `style-src` directive no longer includes `'unsafe-inline'`, closing a style-based XSS vector.
 
 ### v1.93.24 — Security fixes: login enumeration, TOTP rate limit, HTML escape (✅ Complete)
 

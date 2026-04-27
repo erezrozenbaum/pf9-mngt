@@ -51,8 +51,11 @@ export async function tenantFetch<T>(
   opts: RequestInit = {},
 ): Promise<T> {
   const token = getToken();
+  const isGet = !opts.method || opts.method.toUpperCase() === 'GET';
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    // X-Requested-With defeats simple form-based CSRF for all mutating requests (M6).
+    ...(!isGet ? { 'X-Requested-With': 'XMLHttpRequest' } : {}),
     ...(opts.headers as Record<string, string> | undefined),
   };
   if (token) {

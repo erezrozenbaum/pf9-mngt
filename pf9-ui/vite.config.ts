@@ -69,11 +69,15 @@ for (const prefix of apiPrefixes) {
   proxyEntries[prefix] = { target: apiTarget, changeOrigin: false };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  // Drop all console.* calls and debugger statements in production builds (M1).
+  // This prevents internal API URLs, error details, and session events from
+  // leaking into browser devtools for end users.
+  esbuild: mode === "production" ? { drop: ["console", "debugger"] } : {},
   server: {
     host: "0.0.0.0",
     port: 5173,
     proxy: proxyEntries,
   },
-});
+}));
