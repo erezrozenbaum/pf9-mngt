@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.27  
+**Version**: 1.93.28  
 **Last Updated**: April 27, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.28 — Code hardening: timeouts, chmod, SHA256, template validation, token cleanup, nginx rate limit (✅ Complete)
+
+- **M10: Configurable process timeouts** — Previously hardcoded values (`3600`, `7200`, `300`, `600`) in `backup_worker/main.py` and `scheduler_worker/main.py` now load from env vars: `PF9_BACKUP_DUMP_TIMEOUT_SEC`, `PF9_RESTORE_TIMEOUT_SEC`, `PF9_BACKUP_VALIDATE_TIMEOUT_SEC`, `PF9_LDAP_EXPORT_TIMEOUT_SEC`, `PF9_LDAP_RESTORE_TIMEOUT_SEC`, `PF9_RVTOOLS_TIMEOUT_SEC`.
+- **M17: Backup files chmod 0600** — `os.chmod(filepath, 0o600)` called immediately after each DB and LDAP backup write in `backup_worker/main.py`. Prevents world-readable backups if process umask is permissive.
+- **L1: SHA256 in cache keys** — `api/cache.py` now uses `hashlib.sha256(...).hexdigest()[:32]` instead of MD5. No functional change; eliminates Bandit B324 warnings.
+- **L6: Template dir validated at startup** — `notifications/main.py` raises `RuntimeError` immediately if the Jinja2 template directory is missing, rather than failing on first email send.
+- **L8: Expired reset token cleanup** — `scheduler_worker/main.py` purges expired rows from `password_reset_tokens` on each RVTools maintenance cycle via `_cleanup_expired_tokens()`.
+- **L10: Dev nginx rate limiting** — `nginx/nginx.conf` (dev) now has `limit_req_zone` zones and `limit_req` on `/api/` (20 r/s, burst 40) and `/auth/` (5 r/m, burst 10) — matching prod behaviour and catching rate-limit issues in development.
 
 ### v1.93.27 — K8s hardening: ResourceQuota, PDB, HPA, imagePullPolicy (✅ Complete)
 

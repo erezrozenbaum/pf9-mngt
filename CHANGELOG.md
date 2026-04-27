@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.28] - 2026-04-27
+
+### Fixed
+
+- **Hotfix: DB migration Job blocked by ResourceQuota** — The `pf9-mngt-quota` ResourceQuota introduced in v1.93.27 requires all pods to declare CPU/memory requests and limits. The `db-migrate` Helm hook Job (`wait-for-db` init container + `db-migrate` container) had no resources defined, causing `FailedCreate` errors and blocking ArgoCD sync. Added explicit resource requests/limits to both containers in `k8s/helm/pf9-mngt/templates/jobs/db-migrate.yaml`.
+
+- **M10: Configurable process timeouts** — Previously hardcoded values in `backup_worker/main.py` and `scheduler_worker/main.py` now read from env vars. New vars (defaults maintain existing behaviour):
+  - `PF9_BACKUP_DUMP_TIMEOUT_SEC` (default 3600) — pg\_dump → gzip pipeline
+  - `PF9_RESTORE_TIMEOUT_SEC` (default 7200) — gunzip → psql restore
+  - `PF9_BACKUP_VALIDATE_TIMEOUT_SEC` (default 300) — gunzip -t integrity check
+  - `PF9_LDAP_EXPORT_TIMEOUT_SEC` (default 600) — ldapsearch → gzip
+  - `PF9_LDAP_RESTORE_TIMEOUT_SEC` (default 600) — gunzip → ldapadd
+  - `PF9_RVTOOLS_TIMEOUT_SEC` (default 7200) — RVTools script execution
+- **M17: Backup files chmod 0600** — `os.chmod(filepath, 0o600)` applied immediately after each backup write (DB and LDAP) in `backup_worker/main.py`. Prevents world-readable backups when process umask is permissive.
+- **L1: SHA256 cache keys** — `api/cache.py` replaces MD5 with `hashlib.sha256(...).hexdigest()[:32]` for cache key hashing. No functional change; eliminates Bandit B324 flags cleanly without `# nosec` suppressions.
+- **L6: Jinja2 template dir validated at startup** — `notifications/main.py` raises `RuntimeError("Template directory missing: ...")` immediately on startup if the templates directory does not exist. Previously failed silently until the first email was sent.
+- **L8: Expired password reset token cleanup** — `scheduler_worker/main.py` calls `_cleanup_expired_tokens()` on each RVTools maintenance cycle, purging rows from `password_reset_tokens` where `expires_at < NOW()`. Prevents unbounded table growth.
+- **L10: Dev nginx rate limiting** — `nginx/nginx.conf` (dev) adds `limit_req_zone` zones and `limit_req` on `/api/` (20 r/s, burst 40) and `/auth/` (5 r/m, burst 10). Dev and prod now share the same rate-limiting behaviour.
+
+### Changed
+
+- Helm chart version bumped to 1.93.28.
+
+---
+
 ## [1.93.27] - 2026-04-27
 
 ### Added

@@ -174,6 +174,8 @@ def already_sent(conn, key: str) -> bool:
 
 # Jinja2 templates
 template_dir = os.path.join(os.path.dirname(__file__), "templates")
+if not os.path.isdir(template_dir):  # L6: fail fast at startup, not on first render
+    raise RuntimeError(f"Template directory missing: {template_dir}")
 jinja_env = Environment(loader=FileSystemLoader(template_dir), autoescape=True)
 
 def render_template(template_name: str, context: Dict[str, Any]) -> str:

@@ -48,6 +48,13 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
       containers:
         - name: db-migrate
           image: {{ include "pf9mngt.appImage" (dict "repo" .Values.api.image.repository "svcTag" .Values.api.image.tag "global" .Values.global) }}
@@ -67,3 +74,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.dbCredentials }}
                   key: password
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"

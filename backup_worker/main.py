@@ -85,6 +85,13 @@ BACKUP_PATH = os.getenv("BACKUP_PATH", "/backups")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3600"))      # schedule check interval
 JOB_POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "30"))  # pending job check interval
 
+# M10: Configurable process timeouts (previously hardcoded)
+BACKUP_DUMP_TIMEOUT_SEC    = int(os.getenv("PF9_BACKUP_DUMP_TIMEOUT_SEC",    "3600"))  # pg_dump → gzip
+RESTORE_TIMEOUT_SEC        = int(os.getenv("PF9_RESTORE_TIMEOUT_SEC",        "7200"))  # gunzip → psql
+BACKUP_VALIDATE_TIMEOUT_SEC = int(os.getenv("PF9_BACKUP_VALIDATE_TIMEOUT_SEC", "300"))  # gunzip -t integrity check
+LDAP_EXPORT_TIMEOUT_SEC    = int(os.getenv("PF9_LDAP_EXPORT_TIMEOUT_SEC",    "600"))   # ldapsearch → gzip
+LDAP_RESTORE_TIMEOUT_SEC   = int(os.getenv("PF9_LDAP_RESTORE_TIMEOUT_SEC",   "600"))   # gunzip → ldapadd
+
 # Stable advisory lock ID for coordinating scheduled backups across replicas
 _BACKUP_SCHED_LOCK_ID = 9876543
 
@@ -298,8 +305,10 @@ def _run_backup(conn, job_id: int, backup_type: str = "manual", initiated_by: st
             dump = subprocess.Popen(dump_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
             gzip = subprocess.Popen(["gzip"], stdin=dump.stdout, stdout=outf, stderr=subprocess.PIPE)
             dump.stdout.close()
-            _, gzip_err = gzip.communicate(timeout=3600)
+            _, gzip_err = gzip.communicate(timeout=BACKUP_DUMP_TIMEOUT_SEC)
             dump.wait(timeout=10)
+
+        os.chmod(filepath, 0o600)  # M17: restrict backup file permissions
 
         if dump.returncode != 0 or gzip.returncode != 0:
             raise RuntimeError(
@@ -372,7 +381,7 @@ def _validate_backup(conn, job_id: int, filepath: str) -> None:
         r = subprocess.run(
             ["gunzip", "-t", filepath],
             capture_output=True,
-            timeout=300,
+            timeout=BACKUP_VALIDATE_TIMEOUT_SEC,
         )
         if r.returncode != 0:
             raise RuntimeError(
@@ -444,7 +453,7 @@ def _run_restore(conn, job_id: int, source_path: str):
             stdin=gunzip.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
         )
         gunzip.stdout.close()
-        psql_out, psql_err = psql.communicate(timeout=7200)
+        psql_out, psql_err = psql.communicate(timeout=RESTORE_TIMEOUT_SEC)
         gunzip.wait(timeout=10)
 
         duration = time.time() - start
@@ -583,8 +592,10 @@ def _run_ldap_backup(conn, job_id: int, backup_type: str = "manual", initiated_b
                 search = subprocess.Popen(search_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 gzip_proc = subprocess.Popen(["gzip"], stdin=search.stdout, stdout=outf, stderr=subprocess.PIPE)
                 search.stdout.close()
-                _, gzip_err = gzip_proc.communicate(timeout=600)
+                _, gzip_err = gzip_proc.communicate(timeout=LDAP_EXPORT_TIMEOUT_SEC)
                 search.wait(timeout=10)
+
+            os.chmod(filepath, 0o600)  # M17: restrict LDAP backup file permissions
 
         if search.returncode != 0:
             stderr_out = search.stderr.read().decode("utf-8", "replace")[:500] if search.stderr else ""
@@ -656,7 +667,7 @@ def _run_ldap_restore(conn, job_id: int, source_path: str):
                 stdin=gunzip.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
             gunzip.stdout.close()
-            add_out, add_err = ldapadd.communicate(timeout=600)
+            add_out, add_err = ldapadd.communicate(timeout=LDAP_RESTORE_TIMEOUT_SEC)
             gunzip.wait(timeout=10)
 
         duration = time.time() - start

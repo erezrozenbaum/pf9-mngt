@@ -83,6 +83,7 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in ("true", "1", "yes")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 MAX_PARALLEL_REGIONS = int(os.getenv("MAX_PARALLEL_REGIONS", "3"))
 REGION_REQUEST_TIMEOUT_SEC = int(os.getenv("REGION_REQUEST_TIMEOUT_SEC", "30"))
+RVTOOLS_TIMEOUT_SEC = int(os.getenv("PF9_RVTOOLS_TIMEOUT_SEC", "7200"))  # M10: configurable RVTools script timeout
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -395,7 +396,7 @@ def _run_rvtools_sync(region: dict | None = None) -> None:
         lf.write("\n")
         result = subprocess.run(
             [sys.executable, script],
-            timeout=7200,  # 2-hour hard limit
+            timeout=RVTOOLS_TIMEOUT_SEC,  # configurable via PF9_RVTOOLS_TIMEOUT_SEC (default 7200s)
             stdout=lf,
             stderr=subprocess.STDOUT,
             env=env,
@@ -493,6 +494,27 @@ def _cleanup_old_reports() -> None:
             log.warning("RVTools: could not remove %s: %s", fname, exc)
 
 
+def _cleanup_expired_tokens() -> None:
+    """L8: Purge expired password reset tokens from the DB.
+
+    Runs once per RVTools cycle (~daily or per RVTOOLS_INTERVAL_MINUTES).
+    Safe to skip on DB outage — old tokens just remain until next run.
+    """
+    try:
+        conn = _get_db_conn_with_cb()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM password_reset_tokens WHERE expires_at < NOW()")
+                deleted = cur.rowcount
+            conn.commit()
+            if deleted:
+                log.info("Maintenance: purged %d expired password reset token(s)", deleted)
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.warning("Maintenance: failed to purge expired tokens: %s", exc)
+
+
 async def _run_rvtools_for_all_regions(
     executor: ThreadPoolExecutor,
     loop: asyncio.AbstractEventLoop,
@@ -523,6 +545,8 @@ async def _run_rvtools_for_all_regions(
 
     # Purge xlsx files that exceed the retention window
     await loop.run_in_executor(executor, _cleanup_old_reports)
+    # L8: Purge expired password reset tokens
+    await loop.run_in_executor(executor, _cleanup_expired_tokens)
 
 
 # ---------------------------------------------------------------------------

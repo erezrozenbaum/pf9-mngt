@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.27-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.28-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,7 +637,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🔒 K8s hardening: ResourceQuota, PDB, HPA, imagePullPolicy — v1.93.27
+### � Code hardening: timeouts, chmod, SHA256, template validation, token cleanup, nginx rate limit — v1.93.28
+
+**[v1.93.28](CHANGELOG.md)** — M10/M17/L1/L6/L8/L10: worker timeouts configurable via env vars; backup files chmod 0600; MD5 replaced with SHA256 in cache keys; Jinja2 template dir validated at startup; expired password reset tokens purged nightly; dev nginx rate-limited.
+
+### �🔒 K8s hardening: ResourceQuota, PDB, HPA, imagePullPolicy — v1.93.27
 
 **[v1.93.27](CHANGELOG.md)** — M9/M11/M12/L9: ResourceQuota caps namespace resources; PodDisruptionBudgets protect API/portal/monitoring during node drains; HPA scaffolding for auto-scaling (disabled until metrics-server confirmed); `imagePullPolicy: Always` ensures security patches are always fetched.
 
@@ -929,4 +933,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.27 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.28 | **Last Updated**: April 2026
