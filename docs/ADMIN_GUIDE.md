@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.25  
+**Version**: 1.93.26  
 **Last Updated**: April 27, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.26 — K8s image pinning: Postgres + Redis (✅ Complete)
+
+- **M4 (K8s): Pinned Postgres and Redis image tags** — `k8s/helm/pf9-mngt/values.yaml` `postgresql.image.tag` changed from `"16"` to `"16.8-alpine"` and `redisService.image.tag` from `"7-alpine"` to `"7.4.3-alpine"`. Postgres data is in a PVC and is unaffected by the image bump. Redis is in-memory only (no persistence configured) — a pod restart will clear ephemeral keys (JTI revocations, TOTP lockout counters), all of which have short TTLs.
 
 ### v1.93.25 — Security fixes: console leaks, image pinning, CSP, CSRF (✅ Complete)
 

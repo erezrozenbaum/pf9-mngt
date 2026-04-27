@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.26] - 2026-04-27
+
+### Fixed
+
+- **M4 (K8s): Pin Postgres and Redis image tags in Helm chart** — `k8s/helm/pf9-mngt/values.yaml` previously used floating tags (`postgres:16`, `redis:7-alpine`) for the in-cluster database and cache, matching the unresolved issue from v1.93.25 which only pinned the Docker Compose equivalents. Tags pinned to: `postgres:16.8-alpine`, `redis:7.4.3-alpine`. Data is unaffected — Postgres data lives in a PVC (`nfs-pf9`, 20Gi); Redis is in-memory only and has no persistence configured.
+
+### Changed
+
+- Helm chart version bumped to 1.93.26.
+
+---
+
 ## [1.93.25] - 2026-04-27
 
 ### Fixed

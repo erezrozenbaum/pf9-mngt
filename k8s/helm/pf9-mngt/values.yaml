@@ -290,7 +290,7 @@ tenantPortal:
 postgresql:
   image:
     repository: postgres
-    tag: "16"
+    tag: "16.8-alpine"
     pullPolicy: IfNotPresent
   persistence:
     size: 20Gi
@@ -313,7 +313,7 @@ postgresql:
 redisService:
   image:
     repository: redis
-    tag: "7-alpine"
+    tag: "7.4.3-alpine"
     pullPolicy: IfNotPresent
   maxmemory: 128mb
   resources:
