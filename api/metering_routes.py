@@ -206,12 +206,25 @@ async def get_resource_metering(
             where.append("region_id = %s")
             params.append(effective_region)
 
-        # Return only the LATEST record per VM to avoid duplication
+        # Return only the LATEST record per VM, enriched with live DB metadata
+        # when the stored domain/project/vm_ip fields are stale or missing.
         sql = f"""
-            SELECT DISTINCT ON (vm_id) *
-            FROM metering_resources
+            SELECT DISTINCT ON (mr.vm_id) mr.*,
+                COALESCE(NULLIF(mr.domain, 'Unknown'), d.name)         AS domain_enriched,
+                COALESCE(NULLIF(mr.project_name, 'Unknown'), p.name)   AS project_name_enriched,
+                COALESCE(
+                    NULLIF(mr.vm_ip, 'Unknown'),
+                    (SELECT fi->>'addr'
+                     FROM jsonb_each(s.raw_json->'addresses') AS net,
+                          jsonb_array_elements(net.value) AS fi
+                     LIMIT 1)
+                ) AS vm_ip_enriched
+            FROM metering_resources mr
+            LEFT JOIN servers s ON s.id = mr.vm_id
+            LEFT JOIN projects p ON p.id = s.project_id
+            LEFT JOIN domains d ON d.id = p.domain_id
             WHERE {' AND '.join(where)}
-            ORDER BY vm_id, collected_at DESC
+            ORDER BY mr.vm_id, mr.collected_at DESC
             LIMIT %s
         """
         params.append(limit)
@@ -219,6 +232,17 @@ async def get_resource_metering(
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
+            # Apply enriched values over the originals
+            for r in rows:
+                enriched_domain   = r.pop("domain_enriched", None)
+                enriched_project  = r.pop("project_name_enriched", None)
+                enriched_ip       = r.pop("vm_ip_enriched", None)
+                if enriched_domain:
+                    r["domain"] = enriched_domain
+                if enriched_project:
+                    r["project_name"] = enriched_project
+                if enriched_ip:
+                    r["vm_ip"] = enriched_ip
 
         # Serialize
         for r in rows:

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.37] - 2026-04-29
+
+### Fixed
+- **Flavors — "VMs Using" column now shows correct count**: The count was always 0 because it filtered `servers[]` from the paginated current page. The `/flavors` SQL now includes a `vms_using` subquery (`COUNT(servers WHERE flavor_id = f.id AND status NOT IN ('DELETED','SOFT_DELETED')`) so the count reflects all VMs across all pages. Flavor Usage Analytics in the overview panel updated to match.
+- **Change Management — browser no longer hangs**: The `loadRecentChanges` effect was re-running every time any inventory state changed (`networks`, `servers`, `volumes`, `tenants`, `domains` in the dependency array). With 1000 records loaded and complex in-memory filtering this caused cascading re-renders that froze the UI. Removed the large array deps — only `activeTab`, `changeTimeframe`, and `selectedDomain` now trigger a reload.
+- **Metering tab — vm_ip, domain, project_name now correctly populated**: The `/api/metering/resources` endpoint now JOINs with `servers`, `projects`, and `domains` to enrich stale / `Unknown` values stored in `metering_resources` by the metering worker.
+- **Tenant portal chargeback — project, flavor, vCPU, RAM no longer show as "unknown" / 0**: The chargeback query now JOINs `servers` → `flavors` → `projects` to backfill any null or stale allocation columns (`vcpus_allocated`, `ram_allocated_mb`, `flavor`, `project_name`) so cost estimates are always correct.
+- **Insights / SLA tabs — 403 for users with `technical` role**: The v1.85 migrations seeded `sla:read` and `intelligence:read` permissions for `viewer`, `operator`, `admin`, `superadmin` but omitted the `technical` role added in v1.17.1. New migration `migrate_v1_93_37.sql` adds the missing grants.
+- **VM inventory — per-VM CPU/RAM/disk now served from Prometheus cache**: Monitoring metrics (`cpu_usage_percent`, `memory_usage_percent`, `storage_usage_percent`) are now shown per VM from the live Prometheus data instead of aggregated host-level hypervisor stats.
+
+### Changed
+- Helm chart version bumped to 1.93.37.
+
+---
+
 ## [1.93.36] - 2026-04-28
 
 ### Fixed

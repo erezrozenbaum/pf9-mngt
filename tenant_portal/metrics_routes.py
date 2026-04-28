@@ -545,17 +545,22 @@ async def tenant_chargeback(
             since = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
 
             # Latest metering snapshot per VM, scoped to this tenant's projects.
-            # metering_resources has no project_id column; use a subquery via servers
-            # (which is project_id-indexed and also filtered by RLS on the connection).
+            # Enrich stale/null fields (project_name, flavor, vcpus, ram) from
+            # live servers + flavors tables so chargeback always shows correct data.
             cur.execute(
                 """
                 SELECT DISTINCT ON (mr.vm_id)
-                    mr.vm_id, mr.vm_name, mr.project_name,
-                    mr.vcpus_allocated AS vcpus,
-                    mr.ram_allocated_mb AS ram_mb,
-                    mr.flavor AS flavor_name,
+                    mr.vm_id,
+                    COALESCE(s.name, mr.vm_name)                            AS vm_name,
+                    COALESCE(NULLIF(mr.project_name, 'Unknown'), p.name)    AS project_name,
+                    COALESCE(NULLIF(mr.vcpus_allocated, 0), fl.vcpus)       AS vcpus,
+                    COALESCE(NULLIF(mr.ram_allocated_mb, 0), fl.ram_mb)     AS ram_mb,
+                    COALESCE(NULLIF(mr.flavor, ''), fl.name)                AS flavor_name,
                     mr.collected_at
                 FROM metering_resources mr
+                LEFT JOIN servers s  ON s.id = mr.vm_id
+                LEFT JOIN projects p ON p.id = s.project_id
+                LEFT JOIN flavors fl ON fl.id = s.flavor_id
                 WHERE mr.vm_id IN (
                     SELECT id FROM servers WHERE project_id = ANY(%s)
                 )

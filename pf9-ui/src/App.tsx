@@ -163,6 +163,7 @@ type Flavor = {
   ephemeral_gb: number;
   is_public: boolean;
   last_seen_at: string | null;
+  vms_using?: number;
 };
 
 type Image = {
@@ -1593,6 +1594,16 @@ const App: React.FC = () => {
   const [isRefreshingInventory, setIsRefreshingInventory] = useState(false);
   const [inventoryRefreshKey, setInventoryRefreshKey] = useState(0);
 
+  // Per-VM metrics lookup (keyed by vm_name and vm_id) for use in inventory tables
+  const vmMetricsMap = useMemo(() => {
+    const m = new Map<string, VMMetrics>();
+    vmMetrics.forEach(vm => {
+      if (vm.vm_name) m.set(vm.vm_name, vm);
+      if (vm.vm_id)   m.set(vm.vm_id, vm);
+    });
+    return m;
+  }, [vmMetrics]);
+
   // New metadata resource tabs
   const [keypairsData, setKeypairsData] = useState<any[]>([]);
   const [_keypairsTotal, setKeypairsTotal] = useState(0);
@@ -2510,7 +2521,7 @@ const App: React.FC = () => {
       }
     }
     loadRecentChanges();
-  }, [activeTab, changeTimeframe, selectedDomain, networks, servers, volumes, tenants, domains]);
+  }, [activeTab, changeTimeframe, selectedDomain]);
 
   // Load daily change summary
   useEffect(() => {
@@ -3910,9 +3921,9 @@ const App: React.FC = () => {
                   <th>vCPUs</th>
                   <th>RAM (MB)</th>
                   <th>Disk (GB)</th>
-                  <th>Host CPU</th>
-                  <th>Host RAM</th>
-                  <th>Host Disk</th>
+                  <th>VM CPU</th>
+                  <th>VM RAM</th>
+                  <th>VM Disk</th>
                   <th>IPs</th>
                   <th>Image</th>
                   <th>OS</th>
@@ -3927,9 +3938,26 @@ const App: React.FC = () => {
                   </tr>
                 ) : (
                   servers.map((s) => {
-                    const cpuPct = s.host_vcpus_total ? Math.round((s.host_vcpus_used || 0) / s.host_vcpus_total * 100) : null;
-                    const ramPct = s.host_ram_total_mb ? Math.round((s.host_ram_used_mb || 0) / s.host_ram_total_mb * 100) : null;
-                    const diskPct = s.host_disk_total_gb ? Math.round((s.host_disk_used_gb || 0) / s.host_disk_total_gb * 100) : null;
+                    const vmM = vmMetricsMap.get(s.vm_name) || vmMetricsMap.get(s.vm_id);
+                    // Prefer live per-VM metrics from monitoring; fall back to host allocation bars
+                    const cpuPct = vmM?.cpu_usage_percent != null
+                      ? vmM.cpu_usage_percent
+                      : (s.host_vcpus_total ? Math.round((s.host_vcpus_used || 0) / s.host_vcpus_total * 100) : null);
+                    const ramPct = vmM?.memory_usage_percent != null
+                      ? vmM.memory_usage_percent
+                      : (s.host_ram_total_mb ? Math.round((s.host_ram_used_mb || 0) / s.host_ram_total_mb * 100) : null);
+                    const diskPct = vmM?.storage_usage_percent != null
+                      ? vmM.storage_usage_percent
+                      : (s.host_disk_total_gb ? Math.round((s.host_disk_used_gb || 0) / s.host_disk_total_gb * 100) : null);
+                    const cpuTitle = vmM?.cpu_usage_percent != null
+                      ? `VM CPU: ${vmM.cpu_usage_percent}% (live)`
+                      : (s.host_vcpus_total ? `Host: ${s.host_vcpus_used}/${s.host_vcpus_total} vCPUs on ${s.hypervisor_hostname}` : '');
+                    const ramTitle = vmM?.memory_usage_percent != null
+                      ? `VM RAM: ${vmM.memory_usage_percent}% — ${vmM.memory_used_mb != null ? (vmM.memory_used_mb/1024).toFixed(1) : '?'}GB / ${vmM.memory_total_mb != null ? (vmM.memory_total_mb/1024).toFixed(1) : '?'}GB (live)`
+                      : (s.host_ram_total_mb ? `Host: ${((s.host_ram_used_mb||0)/1024).toFixed(0)}/${(s.host_ram_total_mb/1024).toFixed(0)} GB on ${s.hypervisor_hostname}` : '');
+                    const diskTitle = vmM?.storage_usage_percent != null
+                      ? `VM Disk: ${vmM.storage_usage_percent}% — ${vmM.storage_used_gb != null ? vmM.storage_used_gb.toFixed(1) : '?'}GB / ${vmM.storage_total_gb != null ? vmM.storage_total_gb.toFixed(1) : '?'}GB (live)`
+                      : (s.host_disk_total_gb ? `Host: ${s.host_disk_used_gb}/${s.host_disk_total_gb} GB on ${s.hypervisor_hostname}` : '');
                     const pctColor = (pct: number | null) => !pct ? 'var(--color-text-secondary)' : pct > 85 ? '#ef4444' : pct > 65 ? '#f59e0b' : '#22c55e';
                     return (
                     <tr
@@ -3955,7 +3983,7 @@ const App: React.FC = () => {
                       <td className="pf9-cell-number">{s.vcpus || 0}</td>
                       <td className="pf9-cell-number">{s.ram_mb || 0}</td>
                       <td className="pf9-cell-number">{s.disk_gb || 0}</td>
-                      <td className="pf9-cell-number" title={s.host_vcpus_total ? `${s.host_vcpus_used}/${s.host_vcpus_total} vCPUs allocated on ${s.hypervisor_hostname}` : ''}>
+                      <td className="pf9-cell-number" title={cpuTitle}>
                         {cpuPct !== null ? (
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
                             <div style={{width:36,height:6,background:'var(--color-border)',borderRadius:3,overflow:'hidden'}}>
@@ -3965,7 +3993,7 @@ const App: React.FC = () => {
                           </div>
                         ) : '—'}
                       </td>
-                      <td className="pf9-cell-number" title={s.host_ram_total_mb ? `${((s.host_ram_used_mb||0)/1024).toFixed(0)}/${(s.host_ram_total_mb/1024).toFixed(0)} GB used on ${s.hypervisor_hostname}` : ''}>
+                      <td className="pf9-cell-number" title={ramTitle}>
                         {ramPct !== null ? (
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
                             <div style={{width:36,height:6,background:'var(--color-border)',borderRadius:3,overflow:'hidden'}}>
@@ -3975,7 +4003,7 @@ const App: React.FC = () => {
                           </div>
                         ) : '—'}
                       </td>
-                      <td className="pf9-cell-number" title={s.host_disk_total_gb ? `${s.host_disk_used_gb}/${s.host_disk_total_gb} GB used on ${s.hypervisor_hostname}` : ''}>
+                      <td className="pf9-cell-number" title={diskTitle}>
                         {diskPct !== null ? (
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
                             <div style={{width:36,height:6,background:'var(--color-border)',borderRadius:3,overflow:'hidden'}}>
@@ -4329,7 +4357,7 @@ const App: React.FC = () => {
                   </tr>
                 ) : (
                   flavors.map((f) => {
-                    const vmCount = servers.filter(s => s.flavor_name === f.flavor_name).length;
+                    const vmCount = f.vms_using ?? 0;
                     return (
                       <tr
                         key={f.flavor_id}
@@ -5741,18 +5769,16 @@ const App: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {flavors.filter(flavor => {
-                        const vmsUsingFlavor = servers.filter(s => s.flavor_name === flavor.flavor_name);
-                        return vmsUsingFlavor.length > 0;
-                      }).map(flavor => {
-                        const vmsUsingFlavor = servers.filter(s => s.flavor_name === flavor.flavor_name);
-                        const totalVCpus = vmsUsingFlavor.length * (flavor.vcpus || 0);
-                        const totalRAM = vmsUsingFlavor.length * (flavor.ram_mb || 0) / 1024;
-                        const utilizationPct = servers.length > 0 ? (vmsUsingFlavor.length / servers.length * 100) : 0;
+                      {flavors.filter(flavor => (flavor.vms_using ?? 0) > 0).map(flavor => {
+                        const vmsCount = flavor.vms_using ?? 0;
+                        const totalVCpus = vmsCount * (flavor.vcpus || 0);
+                        const totalRAM = vmsCount * (flavor.ram_mb || 0) / 1024;
+                        const totalVMs = flavors.reduce((acc, f) => acc + (f.vms_using ?? 0), 0);
+                        const utilizationPct = totalVMs > 0 ? (vmsCount / totalVMs * 100) : 0;
                         return (
                           <tr key={flavor.flavor_id}>
                             <td>{flavor.flavor_name}</td>
-                            <td><strong>{vmsUsingFlavor.length}</strong></td>
+                            <td><strong>{vmsCount}</strong></td>
                             <td>{totalVCpus}</td>
                             <td>{totalRAM.toFixed(1)}</td>
                             <td>{utilizationPct.toFixed(1)}%</td>

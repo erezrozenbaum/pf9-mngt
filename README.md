@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### Admin UI fixes — v1.93.37
+
+**[v1.93.37](CHANGELOG.md)** — Fixes five admin UI regressions: (1) Flavors "VMs Using" now counts all VMs via a server-side SQL subquery instead of filtering the paginated page. (2) Change Management browser hang fixed by removing large inventory arrays from the `loadRecentChanges` effect dependency list. (3) Metering tab now enriches stale `vm_ip`/`domain`/`project_name` fields from live DB JOIN. (4) Tenant portal chargeback no longer shows "unknown" project/flavor by joining `servers → flavors → projects`. (5) `technical` role can now access Insights and SLA tabs (`sla:read` and `intelligence:read` grants added via migration). Also includes VM-level Prometheus metrics in the inventory table.
+
 ### Monitoring live metrics now working (NetworkPolicy fix) — v1.93.36
 
 **[v1.93.36](CHANGELOG.md)** — The `pf9-monitoring` Kubernetes NetworkPolicy was missing egress rules for ports 9177 (libvirt-exporter) and 9388 (node-exporter), so every Prometheus scrape against the PF9 compute nodes (172.17.95.x) silently timed out. The monitoring service was permanently stuck serving DB allocation estimates. Added egress rules for TCP 9177 and 9388 so the monitoring pod can now collect real CPU/memory/storage metrics from the hypervisor exporters. Also fixed the tenant portal bypassing Gnocchi (Platform9 native telemetry) when the monitoring cache contained allocation data.
@@ -965,4 +969,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.36 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.37 | **Last Updated**: April 2026

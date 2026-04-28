@@ -259,6 +259,10 @@ class PrometheusClient:
                 'vm_name': vm_name,
                 'host': host,
                 'timestamp': now,
+                # OpenStack metadata extracted from libvirt exporter labels
+                'project_name': project_name if project_name != 'Unknown' else None,
+                'user_name': user_name if user_name != 'Unknown' else None,
+                'domain': domain_name if domain_name != 'Unknown' else None,
                 # raw accumulators (stripped before VMMetrics construction)
                 '_vcpu_time': 0.0,
                 '_vcpu_count': 1,

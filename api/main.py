@@ -3968,7 +3968,10 @@ def flavors(
         f.swap_mb,
         f.ephemeral_gb,
         f.is_public,
-        f.last_seen_at
+        f.last_seen_at,
+        (SELECT COUNT(*) FROM servers s
+         WHERE s.flavor_id = f.id
+           AND s.status NOT IN ('DELETED', 'SOFT_DELETED')) AS vms_using
       FROM flavors f
       {where_sql}
     )
@@ -4697,9 +4700,18 @@ def monitoring_host_metrics():
 
 @app.get("/monitoring/vm-metrics")
 def monitoring_vm_metrics():
-    """Return per-VM resource allocation from servers + flavors + hypervisors (DB fallback)."""
-    sql = """
-    SELECT 
+    """Return per-VM resource metrics.
+
+    Data priority:
+    1. Monitoring service Prometheus cache (real CPU/RAM/storage/network).
+    2. DB inventory (vm_ip, domain, project_name, flavor) — merged onto live data.
+    3. DB allocation estimates (fallback when monitoring unreachable).
+    """
+    import httpx as _httpx
+
+    # ── Step 1: fetch DB metadata (always needed for enrichment) ──────────────
+    meta_sql = """
+    SELECT
         s.id AS vm_id,
         COALESCE(s.name, s.id) AS vm_name,
         s.raw_json->'addresses' AS _addresses_json,
@@ -4707,7 +4719,6 @@ def monitoring_vm_metrics():
         d.name AS domain,
         p.name AS project_name,
         fl.name AS flavor,
-        NOW()::text AS timestamp,
         COALESCE(fl.vcpus, 0) AS cpu_total,
         COALESCE(fl.ram_mb, 0) AS memory_total_mb,
         COALESCE(fl.ram_mb, 0) AS memory_allocated_mb,
@@ -4717,17 +4728,14 @@ def monitoring_vm_metrics():
                AND EXISTS (SELECT 1 FROM jsonb_array_elements(vol.raw_json->'attachments') att
                            WHERE att->>'server_id' = s.id))
         ) AS storage_allocated_gb,
-        -- Per-VM CPU/RAM usage cannot be determined from DB alone;
-        -- use VM vCPU/RAM share of host capacity as a best-effort allocation estimate.
-        -- (Real usage requires Prometheus node exporters — see monitoring service.)
         CASE WHEN h.vcpus > 0 AND fl.vcpus > 0
             THEN ROUND(fl.vcpus::numeric / h.vcpus * 100, 1)
             ELSE 0
-        END AS cpu_usage_percent,
+        END AS cpu_usage_percent_alloc,
         CASE WHEN h.memory_mb > 0 AND fl.ram_mb > 0
             THEN ROUND(fl.ram_mb::numeric / h.memory_mb * 100, 1)
             ELSE 0
-        END AS memory_usage_percent
+        END AS memory_usage_percent_alloc
     FROM servers s
     LEFT JOIN projects p ON p.id = s.project_id
     LEFT JOIN domains d ON d.id = p.domain_id
@@ -4736,37 +4744,113 @@ def monitoring_vm_metrics():
     WHERE s.status NOT IN ('DELETED', 'SOFT_DELETED')
     ORDER BY s.name;
     """
-    rows = run_query(sql)
+    db_rows = run_query(meta_sql)
 
-    # Post-process: extract VM IP from OpenStack addresses JSON and map storage fields
-    for row in rows:
-        # Extract first IP from addresses structure: {"net": [{"addr": "x.x.x.x", ...}]}
-        vm_ip = "Unknown"
+    # Build a lookup by vm_name (monitoring cache uses instance_name from libvirt)
+    def _extract_ip(row):
         addresses = row.pop("_addresses_json", None)
         if addresses:
             if isinstance(addresses, str):
                 try:
                     addresses = json.loads(addresses)
                 except Exception:
-                    addresses = None
+                    pass
             if isinstance(addresses, dict):
-                for net_name, addrs in addresses.items():
-                    if isinstance(addrs, list):
-                        for entry in addrs:
-                            if isinstance(entry, dict) and "addr" in entry:
-                                vm_ip = entry["addr"]
-                                break
-                    if vm_ip != "Unknown":
-                        break
-        row["vm_ip"] = vm_ip
+                for addrs in addresses.values():
+                    for entry in (addrs if isinstance(addrs, list) else []):
+                        if isinstance(entry, dict) and "addr" in entry:
+                            return entry["addr"]
+        return None
 
-        # Map storage_allocated_gb → storage_total_gb for UI compatibility
+    db_meta: dict = {}
+    for row in db_rows:
+        ip = _extract_ip(row)
         alloc = row.get("storage_allocated_gb", 0) or 0
+        row["vm_ip"] = ip
         row["storage_total_gb"] = alloc if alloc > 0 else None
-        row["storage_used_gb"] = None  # actual usage unknown — requires live Prometheus monitoring
-        row["storage_usage_percent"] = None  # N/A — requires live monitoring for actual utilisation
+        db_meta[row["vm_id"]] = row
+        db_meta[row["vm_name"]] = row  # secondary lookup by name
 
-    return {"data": rows, "timestamp": str(datetime.now()), "source": "database"}
+    # ── Step 2: try Prometheus cache ──────────────────────────────────────────
+    _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9_monitoring:8001")
+    _cache_paths = [
+        "/app/monitoring/cache/metrics_cache.json",
+        "/tmp/cache/metrics_cache.json",  # nosec B108
+    ]
+    live_vms = None
+
+    # 2a. shared file (Docker Compose)
+    for _p in _cache_paths:
+        if os.path.exists(_p):
+            try:
+                with open(_p) as _f:
+                    _cache = json.load(_f)
+                if _cache.get("source") == "monitoring" and _cache.get("vms"):
+                    live_vms = _cache["vms"]
+                    break
+            except Exception:
+                pass
+
+    # 2b. monitoring HTTP API (K8s)
+    if live_vms is None:
+        try:
+            with _httpx.Client(timeout=4.0) as _c:
+                _r = _c.get(f"{_monitoring_url}/metrics/vms")
+                _r.raise_for_status()
+                _data = _r.json()
+                if _data.get("source") == "monitoring":
+                    _vms = _data.get("data", _data.get("vms", []))
+                    if _vms:
+                        live_vms = _vms
+        except Exception:
+            pass
+
+    # ── Step 3: build response ────────────────────────────────────────────────
+    if live_vms:
+        # Merge Prometheus live metrics with DB metadata
+        rows = []
+        for vm in live_vms:
+            # Try to find matching DB row by vm_id (OpenStack UUID) then vm_name
+            meta = db_meta.get(vm.get("vm_id")) or db_meta.get(vm.get("vm_name")) or {}
+            rows.append({
+                "vm_id":   vm.get("vm_id"),
+                "vm_name": vm.get("vm_name"),
+                "timestamp": vm.get("timestamp", str(datetime.now())),
+                # Metadata from DB (authoritative for IP/domain/project/flavor)
+                "vm_ip":        meta.get("vm_ip") or vm.get("vm_ip"),
+                "host":         meta.get("host") or vm.get("host"),
+                "domain":       meta.get("domain") or vm.get("domain"),
+                "project_name": meta.get("project_name") or vm.get("project_name"),
+                "flavor":       meta.get("flavor") or vm.get("flavor"),
+                "user_name":    vm.get("user_name"),
+                # Resource metrics from Prometheus (real values)
+                "cpu_total":             vm.get("cpu_total"),
+                "cpu_usage_percent":     vm.get("cpu_usage_percent"),
+                "memory_total_mb":       vm.get("memory_total_mb"),
+                "memory_allocated_mb":   vm.get("memory_allocated_mb") or meta.get("memory_allocated_mb"),
+                "memory_used_mb":        vm.get("memory_used_mb"),
+                "memory_usage_percent":  vm.get("memory_usage_percent"),
+                "storage_total_gb":      vm.get("storage_total_gb") or meta.get("storage_total_gb"),
+                "storage_allocated_gb":  vm.get("storage_allocated_gb") or meta.get("storage_allocated_gb"),
+                "storage_used_gb":       vm.get("storage_used_gb"),
+                "storage_usage_percent": vm.get("storage_usage_percent"),
+                "network_rx_bytes":      vm.get("network_rx_bytes"),
+                "network_tx_bytes":      vm.get("network_tx_bytes"),
+            })
+        return {"data": rows, "timestamp": str(datetime.now()), "source": "monitoring"}
+
+    # ── Step 4: DB allocation fallback ───────────────────────────────────────
+    for row in db_rows:
+        if "_addresses_json" in row:
+            row.pop("_addresses_json", None)
+        alloc = row.pop("storage_allocated_gb", 0) or 0
+        row["storage_total_gb"] = alloc if alloc > 0 else None
+        row["storage_used_gb"] = None
+        row["storage_usage_percent"] = None
+        row["cpu_usage_percent"] = row.pop("cpu_usage_percent_alloc", 0)
+        row["memory_usage_percent"] = row.pop("memory_usage_percent_alloc", 0)
+        row["timestamp"] = str(datetime.now())
+    return {"data": db_rows, "timestamp": str(datetime.now()), "source": "database"}
 
 
 # Internal variant — authenticated via X-Internal-Secret (validated by rbac_middleware for
@@ -4780,7 +4864,40 @@ def internal_monitoring_vm_metrics():
 
 @app.get("/monitoring/summary")
 def monitoring_summary():
-    """Return monitoring summary from DB (fallback when monitoring service has no data)."""
+    """Return monitoring summary — prefers live Prometheus cache, falls back to DB."""
+    import httpx as _httpx
+
+    _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9_monitoring:8001")
+    _cache_paths = [
+        "/app/monitoring/cache/metrics_cache.json",
+        "/tmp/cache/metrics_cache.json",  # nosec B108
+    ]
+
+    # Try live monitoring cache first
+    for _p in _cache_paths:
+        if os.path.exists(_p):
+            try:
+                with open(_p) as _f:
+                    _cache = json.load(_f)
+                if _cache.get("source") == "monitoring" and (
+                    _cache.get("summary", {}).get("total_vms", 0) > 0
+                    or _cache.get("summary", {}).get("total_hosts", 0) > 0
+                ):
+                    return _cache["summary"]
+            except Exception:
+                pass
+
+    try:
+        with _httpx.Client(timeout=4.0) as _c:
+            _r = _c.get(f"{_monitoring_url}/metrics/summary")
+            _r.raise_for_status()
+            _s = _r.json()
+            if _s.get("total_vms", 0) > 0 or _s.get("total_hosts", 0) > 0:
+                return _s
+    except Exception:
+        pass
+
+    # DB fallback
     hosts_sql = """
     SELECT 
         COUNT(*) AS total_hosts,

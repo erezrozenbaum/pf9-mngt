@@ -11,7 +11,14 @@ class VMMetrics(BaseModel):
     vm_name: str
     host: str
     timestamp: datetime
-    
+
+    # Metadata (enriched from OpenStack inventory / libvirt labels)
+    vm_ip: Optional[str] = Field(None, description="Primary VM IP address")
+    domain: Optional[str] = Field(None, description="OpenStack domain (org) name")
+    project_name: Optional[str] = Field(None, description="OpenStack project / tenant name")
+    user_name: Optional[str] = Field(None, description="Owner username")
+    flavor: Optional[str] = Field(None, description="Flavor name")
+
     # CPU metrics
     cpu_total: Optional[float] = Field(None, description="Total CPU cores")
     cpu_usage_percent: Optional[float] = Field(None, description="CPU usage percentage")
@@ -37,14 +44,14 @@ class VMMetrics(BaseModel):
     def storage_usage_percent(self) -> Optional[float]:
         """Calculate storage usage percentage"""
         if self.storage_total_gb and self.storage_used_gb:
-            return (self.storage_used_gb / self.storage_total_gb) * 100
+            return round((self.storage_used_gb / self.storage_total_gb) * 100, 1)
         return None
     
     @property
     def memory_allocation_percent(self) -> Optional[float]:
         """Calculate memory allocation percentage"""
         if self.memory_total_mb and self.memory_allocated_mb:
-            return (self.memory_allocated_mb / self.memory_total_mb) * 100
+            return round((self.memory_allocated_mb / self.memory_total_mb) * 100, 1)
         return None
 
 
@@ -73,14 +80,14 @@ class HostMetrics(BaseModel):
     def memory_usage_percent(self) -> Optional[float]:
         """Calculate memory usage percentage"""
         if self.memory_total_mb and self.memory_used_mb:
-            return (self.memory_used_mb / self.memory_total_mb) * 100
+            return round((self.memory_used_mb / self.memory_total_mb) * 100, 1)
         return None
     
     @property
     def storage_usage_percent(self) -> Optional[float]:
         """Calculate storage usage percentage"""
         if self.storage_total_gb and self.storage_used_gb:
-            return (self.storage_used_gb / self.storage_total_gb) * 100
+            return round((self.storage_used_gb / self.storage_total_gb) * 100, 1)
         return None
     
     @property
