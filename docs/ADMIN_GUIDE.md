@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.33  
+**Version**: 1.93.34  
 **Last Updated**: April 28, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.34 — Capacity Runway false notice fix (✅ Complete)
+
+- Fixed `quota_configured` derivation in `/internal/client-health` — now queries `project_quotas` (OpenStack quota ceilings) instead of `metering_quotas` (whose quota columns are NULL). Eliminates the false "no resource quotas configured" notice for tenants that have quotas.
 
 ### v1.93.33 — Monitoring 401 fix, capacity runway notice, test resilience (✅ Complete)
 

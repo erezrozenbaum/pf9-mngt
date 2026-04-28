@@ -1156,6 +1156,23 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
                 )
                 q_rows = cur.fetchall() or []
 
+                # quota_configured = True when project_quotas has at least one nova compute
+                # resource (cores/ram/instances) with a positive limit for this project.
+                # We use project_quotas (not metering_quotas) because metering_quota columns
+                # are often NULL even when quotas ARE configured in OpenStack.
+                cur.execute(
+                    """
+                    SELECT 1 FROM project_quotas
+                    WHERE project_id = %s
+                      AND service = 'nova'
+                      AND resource IN ('cores', 'ram', 'instances')
+                      AND quota_limit > 0
+                    LIMIT 1
+                    """,
+                    (tenant_id,),
+                )
+                quota_configured: bool = cur.fetchone() is not None
+
         # Compute runway using the same helper as the public endpoint
         _QUOTA_RESOURCES = [
             ("vcpus",      "vcpus_used",      "vcpus_quota"),
@@ -1165,16 +1182,6 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
         ]
         min_runway: Optional[int] = None
         min_runway_resource: Optional[str] = None
-
-        # quota_configured = True when at least one metering_quotas row has a non-zero
-        # quota ceiling.  null capacity_runway_days + quota_configured=True means usage
-        # is flat/declining (no risk), NOT "no quotas set".
-        _quota_cols = ["vcpus_quota", "ram_quota_mb", "storage_quota_gb", "instances_quota"]
-        quota_configured: bool = any(
-            float(r.get(col) or 0) > 0
-            for r in q_rows
-            for col in _quota_cols
-        )
 
         if q_rows:
             from collections import defaultdict

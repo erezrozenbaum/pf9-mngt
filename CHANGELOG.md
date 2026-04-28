@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.34] - 2026-04-28
+
+### Fixed
+- Capacity Runway dial no longer shows "no quotas configured" notice for tenants with quotas configured in OpenStack. `quota_configured` is now derived from `project_quotas` (which stores the actual OpenStack quota ceilings) instead of `metering_quotas` (whose quota columns are often NULL because the metering collector does not populate them).
+
+---
+
 ## [1.93.33] - 2026-04-28
 
 ### Fixed
