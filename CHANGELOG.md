@@ -5,16 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.93.32] - 2026-04-28
+---
+
+## [1.93.33] - 2026-04-28
 
 ### Fixed
 
-- **Health dials now explain what they mean** — The Efficiency, Stability, and Capacity Runway dials in the tenant portal Overview screen previously showed raw numbers with no context. Each dial now has a hover tooltip explaining what the score measures. A contextual notice panel appears below the dials when Efficiency is below 40 (advising on VM right-sizing) or Capacity Runway is under 14 days (advising quota increase), giving tenants actionable guidance instead of a confusing number.
-- **Tenant portal Monitoring "Current Usage" now shows live metrics instead of allocation estimates** — The monitoring worker stores per-VM CPU%, memory%, and storage data keyed by the libvirt domain name (e.g. `instance-00000001`), not the OpenStack UUID. When `metrics_routes.py` filtered the cache by tenant ownership it compared libvirt names against OpenStack UUIDs — they never matched, so every request fell through to the DB allocation fallback (`monitoring_source: "allocation"`, showing vCPU/RAM share of hypervisor capacity). Fixed by extending `_get_tenant_vm_info` to also fetch `raw_json->>'OS-EXT-SRV-ATTR:instance_name'` and build a `libvirt_name → uuid` map; the cache-filtering loop now resolves libvirt domain names to OpenStack UUIDs before comparing. When live data is served from the monitoring cache the response now carries `monitoring_source: "monitoring"` and the UI shows a ✅ "live metrics" banner instead of the allocation notice.
+- **Monitoring bootstrap 401 — allocation-based metrics now populate correctly in K8s** — The monitoring worker's `_bootstrap_cache_from_api()` was calling `GET /monitoring/vm-metrics` without authentication. The admin API's RBAC middleware requires a valid JWT or Internal-Secret for that endpoint, so every bootstrap attempt returned 401, leaving the cache empty and forcing the tenant portal to show allocation estimates. Fixed by adding `GET /internal/monitoring/vm-metrics` (authenticated via `X-Internal-Secret` like all `/internal/*` routes) and updating the monitoring worker and tenant portal metrics proxy to use the internal endpoint.
+- **Capacity Runway dial shows wrong notice when quotas are configured** — When `capacity_runway_days` is `null` but quotas ARE configured, it means usage is flat or declining (good), not that quotas are absent. The `HealthDials` component was showing the "No resource quotas are configured" notice whenever `capacity_runway_days === null`, regardless. Fixed by adding `quota_configured: bool` to the `/internal/client-health` response (derived from whether any `*_quota` column in `metering_quotas` is non-zero) and gating the no-quotas notice on `quota_configured === false`.
+- **Live integration tests fail when server is not running** — Several tests in `test_health.py` and `test_tenant_portal_login_integration.py` hit `localhost:8000` / `localhost:8010` directly and raised `ConnectionRefused` instead of skipping when the stack is not up. Added `api_server_available` and `tenant_direct_available` session-scoped fixtures to `conftest.py` that probe the port before the test body runs, and updated the affected tests to call `pytest.skip()` when the server is unreachable.
 
 ### Changed
 
-- Helm chart version bumped to 1.93.32.
+- Helm chart version bumped to 1.93.33.
 
 ---
 

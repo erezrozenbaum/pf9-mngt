@@ -19,6 +19,7 @@ export interface ClientHealth {
   open_medium: number;
   capacity_runway_days: number | null;
   capacity_runway_resource: string | null;
+  quota_configured?: boolean;  // false = no quota data; null/undefined treated as unknown
   last_computed: string;
 }
 
@@ -114,7 +115,7 @@ export function HealthDials({ health }: Props) {
     : Math.min(100, (health.capacity_runway_days / 90) * 100); // 90 days = 100%
 
   const runwaySub = health.capacity_runway_days == null
-    ? "no quota configured"
+    ? (health.quota_configured === false ? "no quota configured" : "usage stable")
     : `${health.capacity_runway_days}d until ${health.capacity_runway_resource ?? "limit"}`;
 
   const stabSub = health.open_critical || health.open_high || health.open_medium
@@ -135,7 +136,7 @@ export function HealthDials({ health }: Props) {
         : `Capacity Runway: At your current growth rate, a quota will be exhausted in ${health.capacity_runway_days} day${health.capacity_runway_days === 1 ? "" : "s"}. Contact your administrator to request a quota increase.`
     );
   }
-  if (health.capacity_runway_days === null) {
+  if (health.capacity_runway_days === null && health.quota_configured === false) {
     notices.push(
       `Capacity Runway: No resource quotas are configured for your project. Contact your cloud administrator if you expected quota limits to be set.`
     );

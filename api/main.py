@@ -4769,6 +4769,15 @@ def monitoring_vm_metrics():
     return {"data": rows, "timestamp": str(datetime.now()), "source": "database"}
 
 
+# Internal variant — authenticated via X-Internal-Secret (validated by rbac_middleware for
+# all /internal/* paths).  Used by the monitoring worker bootstrap and the tenant portal
+# metrics proxy so neither needs a full admin JWT.
+@app.get("/internal/monitoring/vm-metrics", include_in_schema=False)
+def internal_monitoring_vm_metrics():
+    """Same as /monitoring/vm-metrics but callable with X-Internal-Secret by worker pods."""
+    return monitoring_vm_metrics()
+
+
 @app.get("/monitoring/summary")
 def monitoring_summary():
     """Return monitoring summary from DB (fallback when monitoring service has no data)."""

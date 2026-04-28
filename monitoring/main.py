@@ -229,9 +229,13 @@ async def _bootstrap_cache_from_api():
     import httpx as _httpx
 
     _api_url = os.getenv("API_BASE_URL", "http://pf9-api:8000")
+    _internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "")
+    # Use the internal endpoint (no admin JWT required — validated with X-Internal-Secret)
+    _vm_metrics_url = f"{_api_url}/internal/monitoring/vm-metrics"
+    _headers = {"X-Internal-Secret": _internal_secret} if _internal_secret else {}
     try:
         async with _httpx.AsyncClient(timeout=15.0) as client:
-            vm_r = await client.get(f"{_api_url}/monitoring/vm-metrics")
+            vm_r = await client.get(_vm_metrics_url, headers=_headers)
         if vm_r.status_code != 200:
             logger.warning(
                 "Admin API /monitoring/vm-metrics returned HTTP %d — skipping cache bootstrap",

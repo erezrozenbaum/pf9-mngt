@@ -90,12 +90,15 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
         logger.warning("Could not fetch metrics from monitoring service %s: %s", _MONITORING_SERVICE_URL, exc)
 
     # 3. Fallback: call the main API's DB-backed metrics endpoint.
+    #    Uses the /internal/ variant so no admin JWT is needed — only X-Internal-Secret.
     #    This returns allocation-based resource data derived from servers + flavors + hypervisors
     #    when no Prometheus exporters are configured on the hypervisor nodes.
     try:
         import httpx
+        _internal_secret = os.getenv("INTERNAL_SERVICE_SECRET", "")
+        _headers = {"X-Internal-Secret": _internal_secret} if _internal_secret else {}
         with httpx.Client(timeout=10.0) as client:
-            resp = client.get(f"{_INTERNAL_API_URL}/monitoring/vm-metrics")
+            resp = client.get(f"{_INTERNAL_API_URL}/internal/monitoring/vm-metrics", headers=_headers)
             resp.raise_for_status()
             data = resp.json()
             api_vms = data.get("data", [])

@@ -1166,6 +1166,16 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
         min_runway: Optional[int] = None
         min_runway_resource: Optional[str] = None
 
+        # quota_configured = True when at least one metering_quotas row has a non-zero
+        # quota ceiling.  null capacity_runway_days + quota_configured=True means usage
+        # is flat/declining (no risk), NOT "no quotas set".
+        _quota_cols = ["vcpus_quota", "ram_quota_mb", "storage_quota_gb", "instances_quota"]
+        quota_configured: bool = any(
+            float(r.get(col) or 0) > 0
+            for r in q_rows
+            for col in _quota_cols
+        )
+
         if q_rows:
             from collections import defaultdict
             projects_rows: dict = defaultdict(list)
@@ -1199,5 +1209,6 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
             "open_medium": int(stab.get("open_medium") or 0),
             "capacity_runway_days": min_runway,
             "capacity_runway_resource": min_runway_resource,
+            "quota_configured": quota_configured,
             "last_computed": datetime.utcnow().isoformat() + "Z",
         }

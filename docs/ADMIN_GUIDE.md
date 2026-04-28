@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.32  
+**Version**: 1.93.33  
 **Last Updated**: April 28, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.33 — Monitoring 401 fix, capacity runway notice, test resilience (✅ Complete)
+
+- **Monitoring cache bootstrap 401 fixed** — The monitoring worker was calling the admin API's `/monitoring/vm-metrics` which requires a JWT. Added `/internal/monitoring/vm-metrics` (X-Internal-Secret auth) and updated the monitoring worker and tenant portal metrics proxy to use it. The K8s cache now populates on startup.
+- **Capacity Runway notice false-positive fixed** — `capacity_runway_days: null` with quotas configured means flat/declining usage (healthy), not absent quotas. Added `quota_configured` to the `/internal/client-health` response; the no-quotas advisory notice is now suppressed unless `quota_configured` is false.
+- **Live integration tests now skip when stack is not running** — Added `api_server_available` and `tenant_direct_available` session-scoped fixtures to `conftest.py`; affected tests in `test_health.py` and `test_tenant_portal_login_integration.py` call `pytest.skip()` instead of failing with `ConnectionRefused`.
 
 ### v1.93.32 — Tenant portal live metrics, health dial guidance (✅ Complete)
 

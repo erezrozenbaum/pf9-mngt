@@ -79,8 +79,10 @@ class TestMetricsEndpoint:
         r = requests.get(f"{api}/metrics", headers=headers, verify=VERIFY_SSL, timeout=5)
         assert r.status_code == 200
 
-    def test_metrics_requires_key_when_configured(self, api):
+    def test_metrics_requires_key_when_configured(self, api, api_server_available):
         """When METRICS_API_KEY is set, /metrics without the header must return 401."""
+        if not api_server_available:
+            pytest.skip("API server not reachable — skipping live enforcement test")
         key = os.getenv("METRICS_API_KEY", "")
         if not key:
             pytest.skip("METRICS_API_KEY not configured — endpoint is open, skip enforcement test")
@@ -89,12 +91,16 @@ class TestMetricsEndpoint:
 
 
 class TestProtectedEndpointRequiresAuth:
-    def test_api_metrics_requires_auth(self, api):
+    def test_api_metrics_requires_auth(self, api, api_server_available):
         """Authenticated /api/metrics must reject unauthenticated requests."""
+        if not api_server_available:
+            pytest.skip("API server not reachable — skipping live auth test")
         r = requests.get(f"{api}/api/metrics", verify=VERIFY_SSL, timeout=5)
         assert r.status_code == 401
 
-    def test_arbitrary_api_route_requires_auth(self, api):
+    def test_arbitrary_api_route_requires_auth(self, api, api_server_available):
         """/api/tenants must require a Bearer token."""
+        if not api_server_available:
+            pytest.skip("API server not reachable — skipping live auth test")
         r = requests.get(f"{api}/api/tenants", verify=VERIFY_SSL, timeout=5)
         assert r.status_code in (401, 403)
