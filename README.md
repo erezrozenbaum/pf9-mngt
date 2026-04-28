@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.34-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.35-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -636,6 +636,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+
+### Monitoring storage 100% and wrong banner fix — v1.93.35
+
+**[v1.93.35](CHANGELOG.md)** — Storage bar no longer shows 100% when running on DB-fallback metrics (set `storage_used_gb=null`). Monitoring banner now correctly shows "allocation-based" instead of "live metrics" when hypervisor exporters are unreachable.
 
 ### Capacity Runway false notice fix — v1.93.34
 

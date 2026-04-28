@@ -374,7 +374,7 @@ async def get_vm_metrics(
         # Apply limit
         vms = vms[:limit] if limit else vms
         
-        return {"data": vms, "timestamp": cache_data.get("timestamp")}
+        return {"data": vms, "timestamp": cache_data.get("timestamp"), "source": cache_data.get("source")}
     except Exception as e:
         logger.error("Error fetching VM metrics", extra={"context": {"error": str(e)}})
         raise HTTPException(status_code=500, detail=f"Error fetching VM metrics: {str(e)}")

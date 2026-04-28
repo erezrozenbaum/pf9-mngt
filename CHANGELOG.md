@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.35] - 2026-04-28
+
+### Fixed
+- Monitoring Current Usage: Storage bar no longer shows 100% when live Prometheus collection is unavailable. `storage_used_gb` in the DB bootstrap fallback is now `null` (was erroneously set equal to `storage_total_gb`, causing `alloc/alloc = 100%`).
+- Monitoring Current Usage: Banner now correctly shows "allocation-based usage" (ℹ️) instead of "live metrics" (✅) when the monitoring service is serving DB bootstrap data (i.e. when hypervisor exporters are unreachable). The monitoring service now includes its `source` field in the `/metrics/vms` response and the tenant portal propagates it.
+
+---
+
 ## [1.93.34] - 2026-04-28
 
 ### Fixed

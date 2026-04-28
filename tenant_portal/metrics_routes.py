@@ -74,10 +74,16 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
             resp.raise_for_status()
             data = resp.json()
             vms = data.get("data", data.get("vms", []))
+            # If the monitoring service itself is serving DB-bootstrap data (because
+            # its Prometheus collectors can't reach the hypervisors), treat it as
+            # allocation data so the UI shows the correct "allocation-based" banner
+            # instead of the misleading "live metrics" banner.
+            real_source = data.get("source")
+            effective_source = "allocation" if real_source == "database" else "monitoring"
             monitoring_response = {
                 "vms": vms,
                 "timestamp": data.get("timestamp"),
-                "source": "monitoring",
+                "source": effective_source,
             }
             if vms:
                 # Monitoring service has real data — use it.
@@ -345,11 +351,14 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
             }
 
     log_action_bare(ctx, "tenant_view_metrics")
+    # Propagate the real source from the cache so the UI shows the correct banner:
+    # "monitoring" = live Prometheus data, "allocation" = DB bootstrap estimates.
+    cache_source = (metrics.get("source") if metrics else None) or ("monitoring" if result else None)
     return {
         "vms": result,
         "total": len(result),
         "cache_available": metrics is not None,
-        "monitoring_source": "monitoring" if result else None,
+        "monitoring_source": cache_source,
         "cache_timestamp": metrics.get("timestamp") if metrics else None,
     }
 

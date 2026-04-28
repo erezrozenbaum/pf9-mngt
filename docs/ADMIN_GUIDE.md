@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.34  
+**Version**: 1.93.35  
 **Last Updated**: April 28, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.35 — Monitoring storage 100% and wrong banner fix (✅ Complete)
+
+- Storage bar no longer shows 100% on DB-fallback metrics — `storage_used_gb` is now `null` in the bootstrap path.
+- Monitoring banner now correctly shows "allocation-based usage" when hypervisor exporters are unreachable (monitoring service now exposes `source` field; tenant portal propagates it).
 
 ### v1.93.34 — Capacity Runway false notice fix (✅ Complete)
 

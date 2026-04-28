@@ -4763,7 +4763,7 @@ def monitoring_vm_metrics():
         # Map storage_allocated_gb → storage_total_gb for UI compatibility
         alloc = row.get("storage_allocated_gb", 0) or 0
         row["storage_total_gb"] = alloc if alloc > 0 else None
-        row["storage_used_gb"] = alloc if alloc > 0 else None  # provisioned disk (best-effort when live monitoring unavailable)
+        row["storage_used_gb"] = None  # actual usage unknown — requires live Prometheus monitoring
         row["storage_usage_percent"] = None  # N/A — requires live monitoring for actual utilisation
 
     return {"data": rows, "timestamp": str(datetime.now()), "source": "database"}
