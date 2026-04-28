@@ -162,12 +162,13 @@ class PrometheusClient:
                     "last_update": self.last_update.isoformat(),
                 },
                 "timestamp": self.last_update.isoformat(),
+                "source": "monitoring",
             }
-            os.makedirs("/tmp/cache", exist_ok=True)
-            tmp_path = "/tmp/cache/metrics_cache.json.tmp"
+            os.makedirs("/tmp/cache", exist_ok=True)  # nosec B108 — fixed Docker volume path
+            tmp_path = "/tmp/cache/metrics_cache.json.tmp"  # nosec B108
             with open(tmp_path, "w") as fh:
                 _json.dump(cache_payload, fh, default=_default)
-            os.replace(tmp_path, "/tmp/cache/metrics_cache.json")
+            os.replace(tmp_path, "/tmp/cache/metrics_cache.json")  # nosec B108
         except Exception as exc:
             logger.error(f"Failed to write metrics cache to disk: {exc}")
 

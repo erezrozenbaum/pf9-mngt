@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.36] - 2026-04-28
+
+### Fixed
+- **Monitoring — live Prometheus metrics now working**: The `pf9-monitoring` Kubernetes NetworkPolicy was missing egress rules for ports 9177 (libvirt-exporter) and 9388 (node-exporter) on the PF9 compute nodes (172.17.95.x). Every scrape cycle silently timed out (`asyncio.TimeoutError` → empty error string), keeping the cache permanently at `source: database`. Added `to: [] ports: [9177, 9388]` egress rules so the monitoring pod can now reach the PF9 hypervisor exporters and collect real CPU/memory/storage metrics for VMs.
+- **Monitoring Current Usage — allocation cache no longer blocks Gnocchi/real metrics**: The tenant portal was using the monitoring cache (source=allocation) to serve VMs even when Prometheus was unavailable, preventing the Gnocchi (Platform9 native telemetry) fallback from ever running. Cache is now only used when `source == "monitoring"` (real Prometheus data); otherwise the code falls through to Gnocchi → DB allocation.
+
+---
+
 ## [1.93.35] - 2026-04-28
 
 ### Fixed

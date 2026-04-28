@@ -344,7 +344,9 @@ The Migration Planner is a multi-stage workflow. See [MIGRATION_PLANNER_GUIDE.md
 
 ### Host metrics collection
 
-Metrics are collected from Platform9 hypervisors via Prometheus `node_exporter` (port 9388) and `libvirt_exporter` (port 9177) by the `pf9_scheduler_worker` container, which runs `host_metrics_collector.py` every 60 seconds.
+Metrics are collected from Platform9 hypervisors via Prometheus `node_exporter` (port 9388) and `libvirt_exporter` (port 9177) by the `pf9-monitoring` pod (Kubernetes) or `pf9_scheduler_worker` container (Docker Compose), which scrapes each host every 60 seconds.
+
+> **Kubernetes note**: The `pf9-monitoring` NetworkPolicy must allow egress to the PF9 compute node IPs on TCP ports **9177** and **9388**. This is included in the Helm chart from v1.93.36. If monitoring logs show `VM/Host metrics unavailable for <ip>:9177: ` (empty error), the K8s NetworkPolicy is dropping the connection — verify with `kubectl describe networkpolicy pf9-monitoring -n pf9-mngt`.
 
 ```powershell
 # Check scheduler worker logs
@@ -669,6 +671,20 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ### v1.93.34 — Capacity Runway false notice fix (✅ Complete)
 
 - Fixed `quota_configured` derivation in `/internal/client-health` — now queries `project_quotas` (OpenStack quota ceilings) instead of `metering_quotas` (whose quota columns are NULL). Eliminates the false "no resource quotas configured" notice for tenants that have quotas.
+
+### v1.93.36 — Monitoring NetworkPolicy: egress for hypervisor exporters (✅ Complete)
+
+- **`pf9-monitoring` NetworkPolicy missing egress to hypervisor exporters** — The monitoring pod's egress policy allowed outbound to the API (port 8000), Platform9 external endpoints (443/5000), and DNS (53), but had no rule for port 9177 (libvirt-exporter) or 9388 (node-exporter) on the PF9 compute nodes. Every `_collect_host_metrics()` call raised an `asyncio.TimeoutError` (empty error string in logs), causing the collection loop to skip the cache write permanently. `PF9_HOSTS` was correctly configured; the nodes and exporters are reachable — only the Kubernetes network policy blocked the traffic. Fixed by adding `to: [] ports: [9177 TCP, 9388 TCP]` egress rules to `templates/network-policies.yaml`.
+- **Tenant portal: allocation cache no longer blocks Gnocchi** — When the monitoring service served allocation estimates (`source=database/allocation`), the tenant portal used that data as-is, preventing the Platform9 Gnocchi (native OpenStack telemetry) fallback from ever running. The metrics endpoint now only uses monitoring cache data when `source == "monitoring"` (real Prometheus); otherwise falls through to Gnocchi → DB allocation.
+
+### v1.93.35 — Monitoring storage 100% and wrong banner (✅ Complete)
+
+- **Storage bar no longer shows 100%** — `storage_used_gb` in the DB bootstrap fallback was set equal to `storage_total_gb`, causing `_normalize_vm_entry` to compute 100%. Set to `None` so no bar is shown when actual usage is unknown.
+- **Banner now shows "allocation-based"** — Monitoring service now includes `source` in `/metrics/vms`; tenant portal maps `source=database` → `effective_source=allocation` so the UI shows the ℹ️ allocation banner instead of ✅ live metrics.
+
+### v1.93.34 — Capacity Runway false notice (✅ Complete)
+
+- **`quota_configured` false-positive fixed** — Was querying `metering_quotas` whose quota columns are always NULL in practice. Now queries `project_quotas` (actual OpenStack nova quota ceilings). Tenants with configured quotas no longer see the "no quotas configured" advisory.
 
 ### v1.93.33 — Monitoring 401 fix, capacity runway notice, test resilience (✅ Complete)
 

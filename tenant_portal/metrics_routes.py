@@ -231,7 +231,12 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
     # (e.g. "instance-00000001") rather than the OpenStack UUID.  Resolve
     # via instance_name_map so the IDs match what the servers table holds.
     result: List[Dict[str, Any]] = []
-    if metrics is not None:
+    # Only use monitoring cache data when it contains real Prometheus measurements.
+    # If the monitoring service is serving allocation-based DB estimates
+    # (source == "allocation" or "database"), skip to Gnocchi / DB allocation
+    # so we use Platform9's native telemetry and storage_used_gb stays None.
+    _cache_source = metrics.get("source") if metrics else None
+    if metrics is not None and _cache_source == "monitoring":
         raw_vms = metrics.get("vms") or []
         for vm in raw_vms:
             vm_id = vm.get("vm_id") or vm.get("id") or vm.get("uuid")

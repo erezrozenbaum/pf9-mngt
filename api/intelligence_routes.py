@@ -1173,6 +1173,30 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
                 )
                 quota_configured: bool = cur.fetchone() is not None
 
+                # Fetch nova quota ceilings from project_quotas for use in the runway
+                # calculation below.  metering_quotas quota columns are always NULL so
+                # we must source limits from project_quotas instead.
+                # Map: resource name in project_quotas → key used in _QUOTA_RESOURCES
+                _PQ_RESOURCE_MAP = {"cores": "vcpus", "ram": "ram_mb", "instances": "instances"}
+                cur.execute(
+                    """
+                    SELECT resource, quota_limit
+                    FROM project_quotas
+                    WHERE project_id = %s
+                      AND service = 'nova'
+                      AND resource IN ('cores', 'ram', 'instances')
+                      AND quota_limit > 0
+                    """,
+                    (tenant_id,),
+                )
+                # Build quota ceiling lookup: res_key → limit value
+                _quota_ceilings: dict = {}
+                for _pq in (cur.fetchall() or []):
+                    _rkey = _PQ_RESOURCE_MAP.get(_pq["resource"])
+                    if _rkey:
+                        # ram in project_quotas is in MB; metering_quotas uses ram_used_mb
+                        _quota_ceilings[_rkey] = float(_pq["quota_limit"])
+
         # Compute runway using the same helper as the public endpoint
         _QUOTA_RESOURCES = [
             ("vcpus",      "vcpus_used",      "vcpus_quota"),
@@ -1195,7 +1219,8 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
                 for res_key, used_col, quota_col in _QUOTA_RESOURCES:
                     try:
                         ys    = [float(r[used_col] or 0) for r in prows]
-                        quota = float(prows[-1][quota_col] or 0)
+                        # Prefer project_quotas ceiling (metering_quotas quota columns are NULL)
+                        quota = _quota_ceilings.get(res_key) or float(prows[-1][quota_col] or 0)
                         used  = ys[-1]
                         slope = _linear_forecast(xs, ys)
                         runway = _days_runway(used, quota, slope)

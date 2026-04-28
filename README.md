@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### Monitoring live metrics now working (NetworkPolicy fix) — v1.93.36
+
+**[v1.93.36](CHANGELOG.md)** — The `pf9-monitoring` Kubernetes NetworkPolicy was missing egress rules for ports 9177 (libvirt-exporter) and 9388 (node-exporter), so every Prometheus scrape against the PF9 compute nodes (172.17.95.x) silently timed out. The monitoring service was permanently stuck serving DB allocation estimates. Added egress rules for TCP 9177 and 9388 so the monitoring pod can now collect real CPU/memory/storage metrics from the hypervisor exporters. Also fixed the tenant portal bypassing Gnocchi (Platform9 native telemetry) when the monitoring cache contained allocation data.
+
 ### Monitoring storage 100% and wrong banner fix — v1.93.35
 
 **[v1.93.35](CHANGELOG.md)** — Storage bar no longer shows 100% when running on DB-fallback metrics (set `storage_used_gb=null`). Monitoring banner now correctly shows "allocation-based" instead of "live metrics" when hypervisor exporters are unreachable.
@@ -961,4 +965,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.34 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.36 | **Last Updated**: April 2026
