@@ -173,16 +173,38 @@ def _normalize_vm_entry(vm: Dict[str, Any]) -> Dict[str, Any]:
 
 def _get_tenant_vm_ids(ctx: TenantContext) -> List[str]:
     """Fetch the set of VM IDs owned by this tenant (double-scoped + RLS)."""
+    uuid_set, _ = _get_tenant_vm_info(ctx)
+    return list(uuid_set)
+
+
+def _get_tenant_vm_info(ctx: TenantContext) -> "tuple[set, dict]":
+    """Return (owned_uuid_set, instance_name_to_uuid_map) for the tenant's VMs.
+
+    The monitoring service stores VMs by their libvirt domain name
+    (e.g. "instance-00000001" from OS-EXT-SRV-ATTR:instance_name), not by
+    their OpenStack UUID.  The second return value lets the cache-filtering
+    loop resolve a libvirt domain name back to the canonical OpenStack UUID so
+    that the tenant portal serves live metrics instead of falling through to
+    the allocation estimate fallback.
+    """
     with get_tenant_connection() as conn:
         with conn.cursor() as cur:
             inject_rls_vars(cur, ctx)
             cur.execute(
-                "SELECT id FROM servers WHERE project_id = ANY(%s) AND region_id = ANY(%s)",
+                """
+                SELECT id,
+                       raw_json->>'OS-EXT-SRV-ATTR:instance_name' AS instance_name
+                FROM servers
+                WHERE project_id = ANY(%s) AND region_id = ANY(%s)
+                """,
                 (ctx.project_ids, ctx.region_ids),
             )
             rows = cur.fetchall()
             conn.commit()
-    return [r[0] for r in rows]
+    uuid_set = {r[0] for r in rows}
+    # libvirt domain name (e.g. "instance-00000001") → OpenStack UUID
+    name_map = {r[1]: r[0] for r in rows if r[1]}
+    return uuid_set, name_map
 
 
 # ---------------------------------------------------------------------------
@@ -191,18 +213,25 @@ def _get_tenant_vm_ids(ctx: TenantContext) -> List[str]:
 
 @router.get("/tenant/metrics/vms", summary="All tenant VM metrics")
 async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
-    owned_ids = set(_get_tenant_vm_ids(ctx))
+    owned_ids, instance_name_map = _get_tenant_vm_info(ctx)
 
     metrics = _load_metrics_cache()
 
     # Filter cache VMs to only those owned by this tenant.
+    # The monitoring worker stores vm_id as the libvirt domain name
+    # (e.g. "instance-00000001") rather than the OpenStack UUID.  Resolve
+    # via instance_name_map so the IDs match what the servers table holds.
     result: List[Dict[str, Any]] = []
     if metrics is not None:
         raw_vms = metrics.get("vms") or []
         for vm in raw_vms:
             vm_id = vm.get("vm_id") or vm.get("id") or vm.get("uuid")
-            if vm_id in owned_ids:
-                result.append(_normalize_vm_entry(vm))
+            # Try to resolve libvirt domain name → OpenStack UUID
+            resolved_id = instance_name_map.get(vm_id, vm_id)
+            if resolved_id in owned_ids or vm_id in owned_ids:
+                entry = _normalize_vm_entry(vm)
+                entry["vm_id"] = resolved_id  # normalise to OpenStack UUID
+                result.append(entry)
 
     # If cache has nothing for this tenant (no Prometheus, empty monitoring service,
     # or no cache file in K8s), fall back to DB-derived allocation estimates.
@@ -317,6 +346,7 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
         "vms": result,
         "total": len(result),
         "cache_available": metrics is not None,
+        "monitoring_source": "monitoring" if result else None,
         "cache_timestamp": metrics.get("timestamp") if metrics else None,
     }
 

@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.93.32] - 2026-04-28
+
+### Fixed
+
+- **Health dials now explain what they mean** — The Efficiency, Stability, and Capacity Runway dials in the tenant portal Overview screen previously showed raw numbers with no context. Each dial now has a hover tooltip explaining what the score measures. A contextual notice panel appears below the dials when Efficiency is below 40 (advising on VM right-sizing) or Capacity Runway is under 14 days (advising quota increase), giving tenants actionable guidance instead of a confusing number.
+- **Tenant portal Monitoring "Current Usage" now shows live metrics instead of allocation estimates** — The monitoring worker stores per-VM CPU%, memory%, and storage data keyed by the libvirt domain name (e.g. `instance-00000001`), not the OpenStack UUID. When `metrics_routes.py` filtered the cache by tenant ownership it compared libvirt names against OpenStack UUIDs — they never matched, so every request fell through to the DB allocation fallback (`monitoring_source: "allocation"`, showing vCPU/RAM share of hypervisor capacity). Fixed by extending `_get_tenant_vm_info` to also fetch `raw_json->>'OS-EXT-SRV-ATTR:instance_name'` and build a `libvirt_name → uuid` map; the cache-filtering loop now resolves libvirt domain names to OpenStack UUIDs before comparing. When live data is served from the monitoring cache the response now carries `monitoring_source: "monitoring"` and the UI shows a ✅ "live metrics" banner instead of the allocation notice.
+
+### Changed
+
+- Helm chart version bumped to 1.93.32.
+
+---
+
+## [1.93.32] - 2026-04-28
+
+### Fixed
+
+- **Tenant portal monitoring now shows live metrics instead of allocation estimates** — The Current Usage tab was always falling through to the DB allocation fallback even when the monitoring service had real Prometheus/libvirt data. Root cause: the monitoring worker stores VMs in the cache using their libvirt domain name (`instance-00000001`) rather than their OpenStack UUID. The tenant-scoped filter compared cache `vm_id` values against OpenStack UUIDs from the `servers` table, so the match always failed and the cache appeared empty for that tenant. Fixed by also fetching `OS-EXT-SRV-ATTR:instance_name` from the servers table and building a libvirt-name → UUID resolution map; cache entries are now matched by either the UUID or the libvirt domain name and normalised to the OpenStack UUID before being returned.
+- **Monitoring source banner now correctly labels live data** — When the cache match succeeds (live Prometheus data), the response now carries `monitoring_source: "monitoring"` and the tenant UI renders a "live metrics" confirmation banner instead of showing no banner at all.
+- **Health dials: Efficiency and Capacity Runway now have explanatory tooltips and contextual guidance** — The three circular dials previously showed raw numbers (e.g. Efficiency 3, Capacity Runway 0) with no explanation of what they mean or what action to take. Each dial now has a `title` tooltip explaining the scoring methodology. When Efficiency < 40 or Capacity Runway < 14 days (or quota is unconfigured), an advisory panel appears below the dials with a plain-English explanation and recommended action (right-size VMs, request quota increase, etc.).
+
+### Changed
+
+- Helm chart version bumped to 1.93.32.
+
+---
+
 ## [1.93.31] - 2026-04-28
 
 ### Fixed

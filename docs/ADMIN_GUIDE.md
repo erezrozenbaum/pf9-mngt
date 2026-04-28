@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.31  
-**Last Updated**: April 27, 2026  
+**Version**: 1.93.32  
+**Last Updated**: April 28, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.32 — Tenant portal live metrics, health dial guidance (✅ Complete)
+
+- **Live monitoring metrics in Current Usage tab** — The tenant portal Current Usage tab was always showing allocation-based estimates even when the monitoring service had real Prometheus/libvirt data. Root cause: the monitoring worker stores VMs by their libvirt domain name (`instance-00000001`) not their OpenStack UUID, so the ownership filter never matched. Fixed by resolving libvirt names to OpenStack UUIDs via `OS-EXT-SRV-ATTR:instance_name` from the servers table. The response now also carries `monitoring_source: "monitoring"` so the UI renders a live-data confirmation banner.
+- **Health dial tooltips and low-score advisory** — The Efficiency and Capacity Runway dials now have `title` tooltips explaining the scoring methodology. When Efficiency < 40 or Capacity Runway < 14 days, a contextual advisory panel appears below the dials with plain-English guidance (right-size VMs, request quota increase).
 
 ### v1.93.31 — rvtools reliability: quota savepoint, history schema fix (✅ Complete)
 
