@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.93.37] - 2026-04-29
+## [1.93.38] - 2026-04-28
+
+### Fixed
+- **Release pipeline — Docker images now built correctly**: v1.93.37 git tag was pushed manually before the GitHub Actions Release workflow ran, causing the `extract-version` job to detect the tag as already existing and skip all build/publish jobs (images, Helm chart, deploy repo update). Tag deleted and version bumped to ensure the full pipeline executes.
+
+### Changed
+- Helm chart version bumped to 1.93.38.
+
+---
+
+## [1.93.37] - 2026-04-28
 
 ### Fixed
 - **Flavors — "VMs Using" column now shows correct count**: The count was always 0 because it filtered `servers[]` from the paginated current page. The `/flavors` SQL now includes a `vms_using` subquery (`COUNT(servers WHERE flavor_id = f.id AND status NOT IN ('DELETED','SOFT_DELETED')`) so the count reflects all VMs across all pages. Flavor Usage Analytics in the overview panel updated to match.

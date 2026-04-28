@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### Release pipeline fix — v1.93.38
+
+**[v1.93.38](CHANGELOG.md)** — Release pipeline fix: v1.93.37 git tag was pushed manually before the GitHub Actions Release workflow ran, causing all build/publish jobs (Docker images, Helm chart, deploy repo update) to be skipped. Version bumped to re-run the full pipeline correctly.
+
 ### Admin UI fixes — v1.93.37
 
 **[v1.93.37](CHANGELOG.md)** — Fixes five admin UI regressions: (1) Flavors "VMs Using" now counts all VMs via a server-side SQL subquery instead of filtering the paginated page. (2) Change Management browser hang fixed by removing large inventory arrays from the `loadRecentChanges` effect dependency list. (3) Metering tab now enriches stale `vm_ip`/`domain`/`project_name` fields from live DB JOIN. (4) Tenant portal chargeback no longer shows "unknown" project/flavor by joining `servers → flavors → projects`. (5) `technical` role can now access Insights and SLA tabs (`sla:read` and `intelligence:read` grants added via migration). Also includes VM-level Prometheus metrics in the inventory table.
@@ -969,4 +973,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.37 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.38 | **Last Updated**: April 2026
