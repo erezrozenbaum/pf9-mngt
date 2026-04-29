@@ -1218,6 +1218,8 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('technical', 'flavors', 'write'),
 ('technical', 'snapshot_assignments', 'write'),
 ('technical', 'snapshot_exclusions', 'write'),
+('technical', 'sla',          'read'),
+('technical', 'intelligence',  'read'),
 
 -- Missing permissions for existing roles on newer UI tabs
 ('viewer', 'reports', 'read'),

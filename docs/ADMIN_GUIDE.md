@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.35  
+**Version**: 1.93.39  
 **Last Updated**: April 28, 2026  
 **Audience**: System administrators and platform operators
 
@@ -663,14 +663,24 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
-### v1.93.35 — Monitoring storage 100% and wrong banner fix (✅ Complete)
+### v1.93.39 — volumes:read 403 fix, monitoring Unknown fields, dashboard storage N/A (✅ Complete)
 
-- Storage bar no longer shows 100% on DB-fallback metrics — `storage_used_gb` is now `null` in the bootstrap path.
-- Monitoring banner now correctly shows "allocation-based usage" when hypervisor exporters are unreachable (monitoring service now exposes `source` field; tenant portal propagates it).
+- **`volumes:read` 403 on Change Management / Drift Detection / Hypervisors** — Root cause: the PostgreSQL unique index `idx_role_permissions_unique` on `role_permissions(role, resource, action)` was corrupt. Bitmap index scans for combined predicates returned 0 rows even though the permission row existed. Fixed with `REINDEX TABLE role_permissions` on the live DB. No schema change; one-time maintenance. `init.sql` updated to include correct permissions for fresh installs.
+- **Admin Monitoring: VM IP / Domain / Tenant showing "Unknown"** — `_bootstrap_cache_from_api()` in the monitoring service only preserved CPU/memory/storage percentages, discarding identity metadata (`vm_ip`, `host`, `domain`, `project_name`, `flavor`). Fixed in `monitoring/main.py` and `tenant_portal/metrics_routes.py`.
+- **Dashboard VM Hotspots — Storage column N/A** — No live Prometheus storage usage available (monitoring is DB-sourced). UI now shows "Provisioned: X GB" when real usage is unknown; backend sorts storage hotspot by provisioned size.
 
-### v1.93.34 — Capacity Runway false notice fix (✅ Complete)
+### v1.93.38 — Release pipeline fix (✅ Complete)
 
-- Fixed `quota_configured` derivation in `/internal/client-health` — now queries `project_quotas` (OpenStack quota ceilings) instead of `metering_quotas` (whose quota columns are NULL). Eliminates the false "no resource quotas configured" notice for tenants that have quotas.
+- v1.93.37 git tag was pushed manually before the GitHub Actions Release workflow ran, causing all build/publish jobs (Docker images, Helm chart, deploy repo update) to be skipped. Version bumped to re-run the full pipeline correctly.
+
+### v1.93.37 — Admin UI regressions, technical role SLA/Intelligence access (✅ Complete)
+
+- **Flavors "VMs Using" count** — now counts all VMs via server-side SQL subquery instead of filtering the paginated page.
+- **Change Management browser hang** — fixed by removing large inventory arrays from the `loadRecentChanges` effect dependency list.
+- **Metering tab stale fields** — enriches `vm_ip`/`domain`/`project_name` from live DB JOIN.
+- **Tenant portal chargeback unknown project/flavor** — joins `servers → flavors → projects`.
+- **`technical` role — Insights and SLA tabs** — added `sla:read` and `intelligence:read` grants via `db/migrate_v1_93_37.sql`.
+- VM-level Prometheus metrics included in inventory table.
 
 ### v1.93.36 — Monitoring NetworkPolicy: egress for hypervisor exporters (✅ Complete)
 

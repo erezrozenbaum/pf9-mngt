@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.35-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.39-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### volumes:read 403 fix, monitoring Unknown fields, dashboard storage — v1.93.39
+
+**[v1.93.39](CHANGELOG.md)** — (1) Fixed HTTP 403 on Change Management, Drift Detection, and Hypervisors tabs for admin/superadmin users: root cause was a corrupt `idx_role_permissions_unique` index in PostgreSQL; resolved with `REINDEX TABLE role_permissions`. (2) Admin Monitoring no longer shows "Unknown" for VM IP, Domain, and Tenant — the monitoring service bootstrap cache was discarding identity metadata; now preserved. (3) Dashboard VM Hotspots storage column no longer shows only "N/A" — shows "Provisioned: X GB" when live usage is unavailable.
+
 ### Release pipeline fix — v1.93.38
 
 **[v1.93.38](CHANGELOG.md)** — Release pipeline fix: v1.93.37 git tag was pushed manually before the GitHub Actions Release workflow ran, causing all build/publish jobs (Docker images, Helm chart, deploy repo update) to be skipped. Version bumped to re-run the full pipeline correctly.
@@ -973,4 +977,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.38 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.39 | **Last Updated**: April 2026

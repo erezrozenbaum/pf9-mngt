@@ -128,6 +128,10 @@ export const VMHotspotsCard: React.FC<Props> = ({ cpuData, memoryData, storageDa
                 const storageAllocation = formatCapacityPair(vm.storage_used_gb, vm.storage_total_gb, {
                   sourceUnit: 'gb',
                 });
+                const provisionedLabel =
+                  vm.storage_used_gb == null && vm.storage_total_gb != null
+                    ? `Provisioned: ${vm.storage_total_gb.toFixed(0)} GB`
+                    : null;
 
                 return (
                   <li key={vm.vm_id}>
@@ -140,6 +144,9 @@ export const VMHotspotsCard: React.FC<Props> = ({ cpuData, memoryData, storageDa
                     </div>
                     {storageAllocation && (
                       <div className="vm-submetric">Usage: {storageAllocation}</div>
+                    )}
+                    {!storageAllocation && provisionedLabel && (
+                      <div className="vm-submetric">{provisionedLabel}</div>
                     )}
                   </li>
                 );

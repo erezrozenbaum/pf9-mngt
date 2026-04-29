@@ -252,8 +252,18 @@ async def _bootstrap_cache_from_api():
             {
                 "vm_id": v.get("vm_id"),
                 "vm_name": v.get("vm_name"),
+                # Identity / metadata fields (needed by admin UI monitoring table)
+                "vm_ip": v.get("vm_ip"),
+                "host": v.get("host"),
+                "domain": v.get("domain"),
+                "project_name": v.get("project_name"),
+                "flavor": v.get("flavor"),
+                # Resource metrics
                 "cpu_usage_percent": v.get("cpu_usage_percent"),
+                "cpu_total": v.get("cpu_total"),
                 "memory_usage_percent": v.get("memory_usage_percent"),
+                "memory_total_mb": v.get("memory_total_mb"),
+                "memory_allocated_mb": v.get("memory_allocated_mb"),
                 "storage_total_gb": v.get("storage_total_gb"),
                 "storage_used_gb": v.get("storage_used_gb"),
                 "storage_usage_percent": v.get("storage_usage_percent"),

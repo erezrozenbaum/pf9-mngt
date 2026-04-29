@@ -1373,11 +1373,19 @@ async def get_vm_hotspots(limit: int = Query(5, ge=1, le=20), sort: str = Query(
             "storage": "storage_usage_percent",
         }.get(sort, "cpu_usage_percent")
 
-        sorted_vms = sorted(
-            vms,
-            key=lambda v: v.get(sort_key) if v.get(sort_key) is not None else -1,
-            reverse=True,
-        )
+        if sort == "storage" and all(v.get("storage_usage_percent") is None for v in vms):
+            # No real storage usage data; sort by provisioned disk size instead
+            sorted_vms = sorted(
+                vms,
+                key=lambda v: v.get("storage_total_gb") if v.get("storage_total_gb") is not None else -1,
+                reverse=True,
+            )
+        else:
+            sorted_vms = sorted(
+                vms,
+                key=lambda v: v.get(sort_key) if v.get(sort_key) is not None else -1,
+                reverse=True,
+            )
 
         top_vms = sorted_vms[:limit]
         return {

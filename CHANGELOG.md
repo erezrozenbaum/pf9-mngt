@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.39] - 2026-04-28
+
+### Fixed
+- **volumes:read 403 for all roles (Change Management, Drift Detection, Hypervisors tabs)**: Root cause was a corrupted PostgreSQL index `idx_role_permissions_unique` on the `role_permissions` table. Bitmap index scans for combined `role + resource` predicates returned 0 rows even though the underlying data was correct — a sequential scan found the rows. Fixed by running `REINDEX TABLE role_permissions` on the K8s database, restoring correct permission lookups for all roles.
+- **Admin Monitoring — VM IP, Domain, Tenant showing "Unknown"**: The monitoring service's bootstrap cache (`_bootstrap_cache_from_api()` in `monitoring/main.py`) was only persisting `vm_id, vm_name, cpu/memory/storage` fields from the admin API response, discarding `vm_ip`, `host`, `domain`, `project_name`, `flavor`, and `memory_total_mb`. When the admin UI loaded VM metrics from the monitoring service it found no identity metadata and displayed "Unknown" for all VMs. All fields are now included in the bootstrap cache.
+- **Tenant portal DB-fallback cache** (`tenant_portal/metrics_routes.py`): Same missing-field issue as monitoring bootstrap — the DB-fallback normalisation loop was discarding `vm_ip`, `host`, `domain`, `project_name`, `flavor`, `cpu_total`, `memory_total_mb`, `memory_allocated_mb`. These fields are now preserved.
+- **Dashboard VM Hotspots — Storage column shows "N/A" with no additional context**: When real Prometheus storage metrics are unavailable the storage column now shows the provisioned disk size as a sub-metric (e.g. "Provisioned: 20 GB") instead of only "N/A". The backend sorts the storage hotspot by `storage_total_gb` (provisioned size) when no real `storage_usage_percent` data is present, so the list still ranks by disk allocation.
+
+### Changed
+- Helm chart version bumped to 1.93.39.
+
+---
+
 ## [1.93.38] - 2026-04-28
 
 ### Fixed
