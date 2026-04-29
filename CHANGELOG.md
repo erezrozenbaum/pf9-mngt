@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.43] - 2026-04-30
+
+### Fixed
+- **Live VM metrics — storage, memory, and network all `None`**: The monitoring pod ran with a standard pod IP (192.168.x.x) which is blocked by hypervisor firewall rules. Enabled `hostNetwork: true` on the monitoring pod so it uses the K8s node IP (172.17.30.x) for outbound connections; the libvirt-exporter on port 9177 is now reachable and real storage/memory/network metrics flow through.
+- **Restore job audit — no way to clear stale or failed jobs**: Added `DELETE /restore/jobs/{job_id}` endpoint that permanently removes PLANNED, FAILED, INTERRUPTED, CANCELED, or SUCCEEDED jobs (steps deleted first to respect FK constraint). Added a ✕ Clear button per row in the Snapshot Restore Audit table for eligible statuses.
+- **Metering overview VM count included deleted VMs**: `GET /metering/overview` was counting `DISTINCT vm_id` from `metering_resources` — a historical records table that retains rows for deleted VMs. The count now queries the live `servers` table (`status NOT IN ('DELETED', 'SOFT_DELETED')`), joined to `projects` and `domains` to honour domain/project filters.
+- **Docs tab — no syntax highlighting on code blocks**: Integrated `highlight.js` (via `marked-highlight` extension for marked v14) into the Docs viewer. Code fences are now highlighted with the `github-dark` theme.
+
+### Added
+- **SSH + virsh fallback for VM metrics**: When `PF9_SSH_KEY_FILE` is configured, the monitoring service can collect CPU/memory/storage/network metrics directly via `virsh domstats` over SSH if the libvirt-exporter is unreachable. OpenStack VM UUIDs are extracted from block device paths.
+- **Auto-timeout for stale restore jobs**: The scheduler now marks PLANNED jobs older than 2 hours and RUNNING/PENDING jobs older than 6 hours as FAILED, preventing jobs that lost their worker from staying stuck indefinitely.
+
+### Changed
+- Helm chart version bumped to 1.93.43.
+
+---
+
 ## [1.93.42] - 2026-04-29
 
 ### Fixed

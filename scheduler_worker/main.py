@@ -515,6 +515,50 @@ def _cleanup_expired_tokens() -> None:
         log.warning("Maintenance: failed to purge expired tokens: %s", exc)
 
 
+def _timeout_stale_restore_jobs() -> None:
+    """Auto-fail restore jobs that have been stuck in PLANNED or RUNNING too long.
+
+    Thresholds (tunable via env vars):
+      RESTORE_PLANNED_TIMEOUT_H  — hours before a PLANNED job is auto-failed (default 2)
+      RESTORE_RUNNING_TIMEOUT_H  — hours before a RUNNING job is auto-failed (default 6)
+
+    PLANNED jobs that are never executed are a sign of a client crash or abandoned
+    workflow.  RUNNING jobs that exceed the timeout indicate a stuck executor.
+    """
+    planned_h = int(os.getenv("RESTORE_PLANNED_TIMEOUT_H", "2"))
+    running_h = int(os.getenv("RESTORE_RUNNING_TIMEOUT_H", "6"))
+    try:
+        conn = _get_db_conn_with_cb()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE restore_jobs
+                          SET status = 'FAILED',
+                              finished_at = NOW(),
+                              failure_reason = 'Auto-failed by scheduler: job exceeded timeout'
+                        WHERE (
+                              status = 'PLANNED'
+                              AND created_at < NOW() - make_interval(hours => %s)
+                            ) OR (
+                              status IN ('RUNNING', 'PENDING')
+                              AND started_at < NOW() - make_interval(hours => %s)
+                            )""",
+                    (planned_h, running_h),
+                )
+                timed_out = cur.rowcount
+            conn.commit()
+            if timed_out:
+                log.warning(
+                    "Maintenance: timed out %d stale restore job(s) "
+                    "(PLANNED > %dh or RUNNING > %dh)",
+                    timed_out, planned_h, running_h,
+                )
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.warning("Maintenance: failed to timeout stale restore jobs: %s", exc)
+
+
 async def _run_rvtools_for_all_regions(
     executor: ThreadPoolExecutor,
     loop: asyncio.AbstractEventLoop,
@@ -547,6 +591,8 @@ async def _run_rvtools_for_all_regions(
     await loop.run_in_executor(executor, _cleanup_old_reports)
     # L8: Purge expired password reset tokens
     await loop.run_in_executor(executor, _cleanup_expired_tokens)
+    # Auto-fail PLANNED / RUNNING restore jobs that have exceeded their timeout
+    await loop.run_in_executor(executor, _timeout_stale_restore_jobs)
 
 
 # ---------------------------------------------------------------------------

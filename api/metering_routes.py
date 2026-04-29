@@ -539,9 +539,32 @@ async def get_metering_overview(
             params.append(effective_region)
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Total unique VMs metered
-            cur.execute(f"SELECT COUNT(DISTINCT vm_id) AS total_vms FROM metering_resources WHERE 1=1 {pfilter}", params)
-            total_vms = cur.fetchone()["total_vms"]
+            # Total active VMs — use live servers table for accurate count.
+            # Filters on project_name / domain are joined through projects/domains tables.
+            live_vm_filter = "WHERE s.status NOT IN ('DELETED', 'SOFT_DELETED')"
+            live_vm_params: list = []
+            if project:
+                live_vm_filter += " AND p.name = %s"
+                live_vm_params.append(project)
+            if domain:
+                live_vm_filter += " AND d.name = %s"
+                live_vm_params.append(domain)
+            try:
+                cur.execute(
+                    f"""SELECT COUNT(DISTINCT s.id) AS total_vms
+                          FROM servers s
+                          LEFT JOIN projects p ON p.id = s.project_id
+                          LEFT JOIN domains d ON d.id = p.domain_id
+                          {live_vm_filter}""",
+                    live_vm_params,
+                )
+                total_vms = cur.fetchone()["total_vms"]
+            except Exception:
+                # Fallback to metering records if servers table is unavailable
+                cur.execute(
+                    f"SELECT COUNT(DISTINCT vm_id) AS total_vms FROM metering_resources WHERE 1=1 {pfilter}",
+                    params,
+                )
 
             # Latest resource totals – use DISTINCT ON to get most recent per VM
             cur.execute(f"""

@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.39-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.43-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### Live VM metrics, restore job cleanup, metering VM count, docs highlighting — v1.93.43
+
+**[v1.93.43](CHANGELOG.md)** — (1) Fixed live VM metrics (storage/memory/network all `None`): enabled `hostNetwork: true` on the monitoring pod so it uses the K8s node IP instead of the blocked pod CIDR, allowing it to reach the libvirt-exporter on hypervisors. (2) Added SSH+virsh fallback so VM metrics can be collected directly via SSH when the exporter is unreachable. (3) Added restore job deletion: `DELETE /restore/jobs/{job_id}` endpoint + Clear button in the Restore Audit table for PLANNED/FAILED/INTERRUPTED/CANCELED/SUCCEEDED jobs. (4) Added auto-timeout for stale restore jobs (PLANNED>2h, RUNNING>6h → FAILED). (5) Fixed metering overview VM count: now uses the live `servers` table instead of historical metering records. (6) Added syntax highlighting (highlight.js + github-dark theme) to the in-app Docs viewer.
+
 ### Hypervisor graph crash, volume assignments, storage display — v1.93.42
 
 **[v1.93.42](CHANGELOG.md)** — (1) Fixed "Error: Graph query failed" when opening a hypervisor dependency graph: `_fetch_host()` was referencing columns that don’t exist on the `hypervisors` table (fields live in `raw_json`). (2) Fixed Volume Assignments tab showing empty even when volumes are assigned via Cinder metadata: the assignments endpoint now merges DB-table rows with Cinder-metadata-enrolled volumes. (3) Improved storage cell display from ambiguous `—` to `N/A / no live data / X GB provisioned` and fixed the Storage Used column header tooltip to render on all browsers.
@@ -989,4 +993,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.42 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.43 | **Last Updated**: April 2026

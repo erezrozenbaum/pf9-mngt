@@ -44,6 +44,11 @@ class PrometheusClient:
         # Keys: domain_id (for VMs) or '__host_<ip>' (for hosts).
         self._prev_cpu_totals: dict = {}
 
+        # SSH configuration for direct virsh-based VM metrics collection.
+        # Used when libvirt-exporter (port 9177) is not deployed on hypervisors.
+        self.ssh_user = os.getenv('PF9_SSH_USER', 'root')
+        self.ssh_key_file = os.getenv('PF9_SSH_KEY_FILE', '')
+
     async def start_collection(self):
         """Start background metrics collection"""
         self.session = aiohttp.ClientSession(
@@ -179,12 +184,34 @@ class PrometheusClient:
         vm_metrics: List[VMMetrics] = []
         host_metrics: List[HostMetrics] = []
 
-        # VM metrics from libvirt exporter —————————————————————————————————
-        try:
-            vm_text = await self._scrape_raw(host, self.libvirt_port)
-            vm_metrics = self._parse_vm_metrics_libvirt(vm_text, host)
-        except Exception as e:
-            logger.warning(f"VM metrics unavailable for {host}:{self.libvirt_port}: {e}")
+        # VM metrics collection strategy:
+        #  1. SSH + virsh (direct libvirt on hypervisor) — primary when SSH key configured
+        #  2. libvirt-exporter HTTP endpoint (port 9177) — used if SSH not configured
+        #  In both cases the other method is tried as a fallback.
+        if self._ssh_key_configured():
+            try:
+                vm_metrics = await self._collect_vm_metrics_virsh_ssh(host)
+                logger.info(f"Collected {len(vm_metrics)} VM metrics via SSH virsh from {host}")
+            except Exception as e:
+                logger.warning(f"SSH virsh collection failed for {host}: {e}; trying libvirt-exporter")
+                try:
+                    vm_text = await self._scrape_raw(host, self.libvirt_port)
+                    vm_metrics = self._parse_vm_metrics_libvirt(vm_text, host)
+                except Exception as e2:
+                    logger.warning(f"VM metrics unavailable for {host} (both methods failed): {e2}")
+        else:
+            try:
+                vm_text = await self._scrape_raw(host, self.libvirt_port)
+                vm_metrics = self._parse_vm_metrics_libvirt(vm_text, host)
+            except Exception as e:
+                logger.warning(
+                    f"VM metrics via libvirt-exporter unavailable for {host}:{self.libvirt_port}: {e}. "
+                    f"Set PF9_SSH_KEY_FILE to enable direct virsh collection."
+                )
+                try:
+                    vm_metrics = await self._collect_vm_metrics_virsh_ssh(host)
+                except Exception as e2:
+                    logger.warning(f"SSH virsh fallback also failed for {host}: {e2}")
 
         # Host metrics from node exporter ————————————————————————————————
         try:
@@ -196,6 +223,207 @@ class PrometheusClient:
             logger.warning(f"Host metrics unavailable for {host}:{self.node_exporter_port}: {e}")
 
         return vm_metrics, host_metrics
+
+    # ------------------------------------------------------------------ #
+    # SSH virsh direct collection (primary when PF9_SSH_KEY_FILE is set) #
+    # ------------------------------------------------------------------ #
+
+    def _ssh_key_configured(self) -> bool:
+        """Return True when an SSH private key file is configured and readable."""
+        return bool(self.ssh_key_file and os.path.exists(self.ssh_key_file))
+
+    async def _collect_vm_metrics_virsh_ssh(self, host: str) -> List[VMMetrics]:
+        """SSH into a hypervisor and collect per-VM metrics via virsh domstats.
+
+        This is the authoritative real-time collection path when
+        libvirt-exporter is not deployed on the hypervisor node.
+        Requires PF9_SSH_KEY_FILE (path to an SSH private key readable by the
+        monitoring container) and PF9_SSH_USER (default: root).
+
+        Runs a single SSH session and two commands:
+          1. ``virsh domstats --raw --state-running``  — CPU/net/block/balloon
+          2. ``virsh list --state-running --name``     — confirm running list
+        """
+        try:
+            import asyncssh  # optional dependency; imported lazily
+        except ImportError:
+            raise RuntimeError(
+                "asyncssh is not installed. Add it to monitoring/requirements.txt "
+                "to enable direct virsh collection."
+            )
+
+        if not self._ssh_key_configured():
+            raise RuntimeError(
+                f"SSH key not found at '{self.ssh_key_file}' (PF9_SSH_KEY_FILE)"
+            )
+
+        connect_opts = dict(
+            username=self.ssh_user,
+            client_keys=[self.ssh_key_file],
+            known_hosts=None,   # nosec B106 — hypervisor IPs are admin-configured
+            connect_timeout=10,
+        )
+
+        async with asyncssh.connect(host, **connect_opts) as conn:
+            result = await conn.run(
+                'virsh domstats --raw --state-running 2>/dev/null',
+                timeout=30,
+            )
+        raw_output = result.stdout or ''
+        if not raw_output.strip():
+            logger.info(f"No running VMs reported by virsh on {host}")
+            return []
+        return self._parse_virsh_domstats(raw_output, host, datetime.utcnow())
+
+    def _parse_virsh_domstats(
+        self, text: str, host: str, now: datetime
+    ) -> List[VMMetrics]:
+        """Parse ``virsh domstats --raw --state-running`` output into VMMetrics.
+
+        Key data extracted per domain
+        ──────────────────────────────
+        CPU    : cpu.time (nanoseconds, cumulative) + vcpu.current
+        Memory : balloon.maximum / balloon.rss / balloon.unused / balloon.current
+                 (all in KiB; rss is most accurate when balloon driver active)
+        Network: net.N.rx.bytes / net.N.tx.bytes (cumulative, bytes)
+        Storage: block.N.capacity / block.N.allocation / block.N.physical (bytes)
+                 block.N.path  →  extract OpenStack instance UUID
+        """
+        import re
+
+        # ---- split output into per-domain blocks ----
+        blocks: List[tuple] = []   # [(domain_name, {key: val})]
+        cur_name: Optional[str] = None
+        cur_raw: dict = {}
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("Domain: '") and line.endswith("'"):
+                if cur_name is not None:
+                    blocks.append((cur_name, cur_raw))
+                cur_name = line[9:-1]
+                cur_raw = {}
+            elif cur_name is not None and '=' in line:
+                key, _, val = line.partition('=')
+                cur_raw[key.strip()] = val.strip()
+
+        if cur_name is not None:
+            blocks.append((cur_name, cur_raw))
+
+        vm_list: List[VMMetrics] = []
+
+        for domain_name, raw in blocks:
+            # Only process running (state 1) or paused (state 3) domains
+            state = raw.get('state.state', '1')
+            if state not in ('1', '2', '3', '4'):   # 1=running,2=blocked,3=paused,4=shutdown
+                continue
+
+            # ---- UUID from block device paths (OpenStack nova convention) ----
+            vm_id = domain_name
+            block_count = int(raw.get('block.count', 0) or 0)
+            block_cap_total = 0.0
+            block_alloc_total = 0.0
+            block_phys_total = 0.0
+
+            for i in range(block_count):
+                path = raw.get(f'block.{i}.path', '') or ''
+                if path and vm_id == domain_name:
+                    # Nova stores disks under /var/lib/nova/instances/<UUID>/…
+                    m = re.search(
+                        r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})',
+                        path, re.I,
+                    )
+                    if m:
+                        vm_id = m.group(1).lower()
+                cap   = float(raw.get(f'block.{i}.capacity',   0) or 0)
+                alloc = float(raw.get(f'block.{i}.allocation', 0) or 0)
+                phys  = float(raw.get(f'block.{i}.physical',   0) or 0)
+                block_cap_total   += cap
+                block_alloc_total += alloc
+                # Physical size = actual bytes on disk for thin-provisioned images
+                block_phys_total  += phys if phys > 0 else alloc
+
+            # ---- Network (cumulative byte counters) ----
+            net_count = int(raw.get('net.count', 0) or 0)
+            net_rx = 0.0
+            net_tx = 0.0
+            for i in range(net_count):
+                net_rx += float(raw.get(f'net.{i}.rx.bytes', 0) or 0)
+                net_tx += float(raw.get(f'net.{i}.tx.bytes', 0) or 0)
+
+            # ---- CPU (delta-based %) ----
+            cpu_time_ns = float(raw.get('cpu.time', 0) or 0)
+            vcpu_count  = int(raw.get('vcpu.current', 1) or 1)
+
+            cpu_pct = 0.0
+            prev = self._prev_cpu_totals.get(vm_id)
+            if prev and cpu_time_ns > 0 and 'cpu_time_ns' in prev:
+                delta_ns   = cpu_time_ns - prev['cpu_time_ns']
+                delta_wall = (now - prev['ts']).total_seconds()
+                if delta_wall > 0 and delta_ns >= 0:
+                    # cpu.time is total nanoseconds across all vCPUs
+                    cpu_pct = round(
+                        min(delta_ns / (delta_wall * vcpu_count * 1e9) * 100, 100), 1
+                    )
+            if cpu_time_ns > 0:
+                self._prev_cpu_totals[vm_id] = {'cpu_time_ns': cpu_time_ns, 'ts': now}
+
+            # ---- Memory (virsh reports in KiB) ----
+            mem_max_kib  = float(raw.get('balloon.maximum', 0) or 0)
+            mem_rss_kib  = float(raw.get('balloon.rss',     0) or 0)
+            mem_cur_kib  = float(raw.get('balloon.current', 0) or 0)
+            mem_unused_kib = float(raw.get('balloon.unused', 0) or 0)
+
+            mem_total_mb = round(mem_max_kib / 1024, 1) if mem_max_kib else None
+
+            # Best estimate: RSS (balloon driver) > current-unused > current
+            if mem_rss_kib > 0:
+                mem_used_mb = round(mem_rss_kib / 1024, 1)
+            elif mem_unused_kib > 0 and mem_cur_kib > 0:
+                mem_used_mb = round(max(mem_cur_kib - mem_unused_kib, 0) / 1024, 1)
+            elif mem_cur_kib > 0:
+                mem_used_mb = round(mem_cur_kib / 1024, 1)
+            else:
+                mem_used_mb = None
+
+            mem_pct: Optional[float] = None
+            if mem_total_mb and mem_used_mb:
+                mem_pct = round(mem_used_mb / mem_total_mb * 100, 1)
+
+            # ---- Storage ----
+            storage_total_gb = (
+                round(block_cap_total   / (1024 ** 3), 1) if block_cap_total   else None
+            )
+            storage_used_gb  = (
+                round(block_phys_total  / (1024 ** 3), 1) if block_cap_total   else None
+            )
+            storage_alloc_gb = (
+                round(block_alloc_total / (1024 ** 3), 1) if block_alloc_total else None
+            )
+
+            try:
+                vm_list.append(VMMetrics(
+                    vm_id=vm_id,
+                    vm_name=domain_name,
+                    host=host,
+                    timestamp=now,
+                    cpu_usage_percent=cpu_pct,
+                    cpu_total=float(vcpu_count),
+                    memory_total_mb=mem_total_mb,
+                    memory_used_mb=mem_used_mb,
+                    memory_usage_percent=mem_pct,
+                    network_rx_bytes=net_rx if net_rx > 0 else None,
+                    network_tx_bytes=net_tx if net_tx > 0 else None,
+                    storage_total_gb=storage_total_gb,
+                    storage_used_gb=storage_used_gb,
+                    storage_allocated_gb=storage_alloc_gb,
+                ))
+            except Exception as exc:
+                logger.warning(f"Skipping VM {domain_name} ({vm_id}): {exc}")
+
+        return vm_list
 
     # ------------------------------------------------------------------ #
     # Low-level scraping                                                   #

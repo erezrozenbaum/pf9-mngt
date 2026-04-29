@@ -663,6 +663,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.93.43 — Live VM metrics, restore job cleanup, metering VM count, docs highlighting (✅ Complete)
+
+- **Live VM metrics (storage / memory / network `None`)** — The monitoring pod was assigned a pod-CIDR IP (192.168.x.x) which hypervisor firewalls block. Added `hostNetwork: true` to the Helm deployment so the pod uses the K8s node IP (172.17.30.x); the libvirt-exporter on port 9177 is reachable and live metrics flow correctly.
+- **SSH + virsh fallback for VM metrics** — When `PF9_SSH_KEY_FILE` is configured, monitoring can collect VM metrics via `virsh domstats` over SSH as a fallback path. Set `PF9_SSH_USER` and `PF9_SSH_KEY_FILE` env vars and mount the key into the monitoring pod.
+- **Restore job deletion** — `DELETE /restore/jobs/{job_id}` allows permanently removing non-active job records. A ✕ Clear button appears per row in the Restore Audit table for PLANNED, FAILED, INTERRUPTED, CANCELED, and SUCCEEDED jobs.
+- **Stale restore job auto-timeout** — The scheduler marks PLANNED jobs older than 2 hours (`RESTORE_PLANNED_TIMEOUT_H`, default 2) and RUNNING/PENDING jobs older than 6 hours (`RESTORE_RUNNING_TIMEOUT_H`, default 6) as FAILED. Prevents orphaned jobs from remaining stuck indefinitely.
+- **Metering overview VM count accuracy** — `GET /metering/overview` now counts active VMs from the `servers` table (`status NOT IN ('DELETED','SOFT_DELETED')`) instead of historical `metering_resources` records, which inflated the count with deleted VMs.
+- **Docs tab syntax highlighting** — Code blocks in the in-app documentation viewer are now syntax-highlighted using `highlight.js` with the `github-dark` theme via the `marked-highlight` extension.
+
 ### v1.93.42 — Hypervisor graph crash, volume assignments, storage display (✅ Complete)
 
 - **Hypervisor graph crash — "Error: Graph query failed"** — `_fetch_host()` in `graph_routes.py` referenced `vcpus_used`, `memory_mb_used`, and `disk_available_least` as direct table columns. These fields only exist in `raw_json` on the `hypervisors` table; the missing-column error surfaced as a generic 500. All fields now use `COALESCE(raw_json->>'field'::type, column_fallback, 0)`.

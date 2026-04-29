@@ -1,8 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { marked } from "marked";
+import { markedHighlight } from "marked-highlight";
+import hljs from "highlight.js";
+import "highlight.js/styles/github-dark.css";
 import DOMPurify from "dompurify";
 import { apiFetch } from '../lib/api';
 import "../styles/DocsTab.css";
+
+// Configure marked with syntax highlighting once at module load
+marked.use(
+  markedHighlight({
+    langPrefix: "hljs language-",
+    highlight(code, lang) {
+      const language = hljs.getLanguage(lang) ? lang : "plaintext";
+      return hljs.highlight(code, { language }).value;
+    },
+  })
+);
 
 /* =========================================================================
    DocsTab — In-app documentation viewer with department visibility control
@@ -50,9 +64,8 @@ function groupByCategory(entries: DocEntry[]): Map<string, DocEntry[]> {
   return map;
 }
 
-// Render markdown safely using marked
+// Render markdown safely using marked (highlight.js applied via markedHighlight)
 function renderMarkdown(md: string): string {
-  // marked.parse returns string (sync) when given a string
   return marked.parse(md) as string;
 }
 

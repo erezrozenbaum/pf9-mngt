@@ -194,6 +194,10 @@ monitoring:
   metricsCacheTTL: "60"
   watchdogInterval: "60"
   watchdogCooldown: "1800"
+  # hostNetwork: use the K8s node's IP for outbound traffic to hypervisors.
+  # Enable when the hypervisor firewall permits node IPs but not pod IPs.
+  # K8s nodes: 172.17.30.x  |  Hypervisors: 172.17.95.x  |  Pod CIDR: 192.168.x.x
+  hostNetwork: true
   resources:
     limits:
       cpu: "500m"

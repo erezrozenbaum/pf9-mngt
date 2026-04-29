@@ -79,6 +79,7 @@ services:
     ports: []
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "${PF9_SSH_KEY_PATH:-./secrets/pf9_ssh_key}:/run/secrets/pf9_ssh_key:ro"
 
   # -------------------------------------------------------------------------
   # nginx — use prod config (UI upstream on :80, no Vite HMR upgrade)

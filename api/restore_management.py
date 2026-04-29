@@ -2468,6 +2468,41 @@ def setup_restore_routes(app):
             return {"job_id": job_id, "status": "CANCELED", "message": "Job cancellation requested"}
 
     # ------------------------------------------------------------------
+    # DELETE /restore/jobs/{job_id}  — remove a PLANNED or FAILED job
+    # ------------------------------------------------------------------
+    @app.delete("/restore/jobs/{job_id}", tags=["Snapshot Restore"])
+    async def delete_restore_job(
+        job_id: str,
+        current_user: User = Depends(get_current_user),
+        _perm: bool = Depends(require_permission("snapshots", "write")),
+    ):
+        """Permanently delete a restore job record.
+
+        Only PLANNED (never executed) and FAILED / INTERRUPTED / CANCELED jobs
+        may be deleted.  RUNNING or PENDING jobs must be canceled first.
+        """
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT status FROM restore_jobs WHERE id = %s", (job_id,))
+                job = cur.fetchone()
+                if not job:
+                    raise HTTPException(404, f"Restore job {job_id} not found")
+
+                allowed = ("PLANNED", "FAILED", "INTERRUPTED", "CANCELED", "SUCCEEDED")
+                if job["status"] not in allowed:
+                    raise HTTPException(
+                        400,
+                        f"Cannot delete job in status '{job['status']}'. "
+                        "Cancel the job first."
+                    )
+
+                # Delete steps first (FK constraint)
+                cur.execute("DELETE FROM restore_job_steps WHERE job_id = %s", (job_id,))
+                cur.execute("DELETE FROM restore_jobs WHERE id = %s", (job_id,))
+
+        return {"job_id": job_id, "deleted": True}
+
+    # ------------------------------------------------------------------
     # POST /restore/jobs/{job_id}/cleanup  — clean up orphaned resources
     # ------------------------------------------------------------------
     @app.post("/restore/jobs/{job_id}/cleanup", tags=["Snapshot Restore"])

@@ -248,11 +248,22 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-pf9-mgmt@example.com}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Platform9 Management}
+      # SSH-based virsh VM metrics collection (direct libvirt on hypervisors)
+      # Set PF9_SSH_KEY_FILE to the container-side path of the SSH private key
+      # and mount your key at that path (see volumes below).
+      # PF9_SSH_USER defaults to 'root'; override if hypervisors use a different account.
+      PF9_SSH_USER: ${PF9_SSH_USER:-root}
+      PF9_SSH_KEY_FILE: ${PF9_SSH_KEY_FILE:-/run/secrets/pf9_ssh_key}
     # Port binding added by docker-compose.override.yml for dev (auto-loaded).
     volumes:
       - "./monitoring/cache:/tmp/cache"
       - "./logs:/app/logs"
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      # SSH key for direct virsh collection — create once:
+      #   mkdir -p secrets && chmod 700 secrets
+      #   cp /path/to/hypervisor_id_rsa secrets/pf9_ssh_key && chmod 600 secrets/pf9_ssh_key
+      # Leave the default path unchanged and the mount is a no-op when the file doesn't exist.
+      - "${PF9_SSH_KEY_PATH:-./secrets/pf9_ssh_key}:/run/secrets/pf9_ssh_key:ro"
     depends_on:
       - pf9_api
     restart: unless-stopped

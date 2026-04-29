@@ -18,6 +18,14 @@ spec:
         {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: monitoring
     spec:
+      # hostNetwork allows the monitoring pod to use the K8s node's IP for outbound
+      # connections to hypervisors (172.17.95.x). Pod IPs (192.168.x.x) are typically
+      # blocked by hypervisor firewall rules; node IPs (172.17.30.x) are permitted.
+      # ClusterFirstWithHostNet preserves in-cluster DNS resolution for pf9-api etc.
+      {{- if .Values.monitoring.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

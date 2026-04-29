@@ -245,6 +245,25 @@ const SnapshotRestoreAudit: React.FC = () => {
   };
 
   // -----------------------------------------------------------------------
+  // Clear (delete) a job record
+  // -----------------------------------------------------------------------
+  const clearJob = async (jobId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // don't expand/collapse the row
+    if (!window.confirm("Permanently delete this restore job record?")) return;
+    try {
+      await apiFetch(`/restore/jobs/${jobId}`, { method: "DELETE" });
+      setJobs(prev => prev.filter(j => j.id !== jobId));
+      setTotal(prev => prev - 1);
+      if (expandedJobId === jobId) {
+        setExpandedJobId(null);
+        setJobDetail(null);
+      }
+    } catch (err: any) {
+      alert(`Failed to delete job: ${err.message}`);
+    }
+  };
+
+  // -----------------------------------------------------------------------
   // CSV Export
   // -----------------------------------------------------------------------
   const exportCSV = () => {
@@ -445,6 +464,7 @@ const SnapshotRestoreAudit: React.FC = () => {
                     <th>Created At</th>
                     <th>Duration</th>
                     <th>Result</th>
+                    <th style={{ width: 60 }}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -506,12 +526,26 @@ const SnapshotRestoreAudit: React.FC = () => {
                             <span style={{ color: "#795548", fontSize: "0.8rem" }}>🚫 Canceled</span>
                           )}
                         </td>
+                        <td onClick={e => e.stopPropagation()} style={{ textAlign: "center" }}>
+                          {["PLANNED","FAILED","INTERRUPTED","CANCELED","SUCCEEDED"].includes(j.status) && (
+                            <button
+                              onClick={e => clearJob(j.id, e)}
+                              title="Remove this job record"
+                              style={{
+                                background: "none", border: "1px solid #f44336", borderRadius: 4,
+                                color: "#f44336", cursor: "pointer", fontSize: "0.75rem", padding: "2px 6px"
+                              }}
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </td>
                       </tr>
 
                       {/* Expanded Detail Row */}
                       {expandedJobId === j.id && (
                         <tr className="restore-audit-detail-row">
-                          <td colSpan={10}>
+                          <td colSpan={11}>
                             {detailLoading ? (
                               <div style={{ padding: 20, textAlign: "center", color: "#888" }}>Loading details...</div>
                             ) : jobDetail ? (
