@@ -296,6 +296,9 @@ spec:
                   name: {{ .Values.secrets.metricsSecret }}
                   key: metrics-api-key
                   optional: true
+            # --- Internal service URLs ---
+            - name: MONITORING_SERVICE_URL
+              value: "http://pf9-monitoring:8001"
             # --- PRODUCTION_MODE guard (JWT startup check) ---
             - name: PRODUCTION_MODE
               value: "true"

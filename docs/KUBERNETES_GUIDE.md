@@ -1054,6 +1054,23 @@ are extracted from block device paths to correlate metrics with `servers` table 
 > **Note:** SSH fallback and the libvirt-exporter scraper are complementary — the service
 > tries the exporter first and falls back to SSH if the exporter is unreachable.
 
+### Dashboard VM Hotspots / Host Utilization / Health Summary showing allocation data
+
+**Symptom:** The Dashboard shows allocation-based estimates (vCPU count, provisioned GB)
+instead of real Prometheus metrics in the VM Hotspots, Host Utilization, and Health Summary
+avg CPU/memory widgets, even though `/metrics/vms` returns live data.
+
+**Root cause:** `dashboards.py`'s `_load_metrics_cache()` only searched for a local cache
+file written by the monitoring service. In Kubernetes, the API pod and monitoring pod have
+separate filesystems — no shared volume — so the file is never found and all three widgets
+fall back to DB allocation data.
+
+**Fix (v1.93.44):** `_load_metrics_cache()` now falls back to calling `GET /metrics/vms`
+and `GET /metrics/hosts` on the monitoring service via HTTP when no local cache file exists.
+The API pod Helm deployment now sets `MONITORING_SERVICE_URL=http://pf9-monitoring:8001`
+(same env var used by the tenant-portal pod and `/monitoring/vm-metrics`). No manual action
+is required — this is included in the chart from v1.93.44.
+
 ---
 
 ## 15. Architecture Decision Records

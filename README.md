@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### Dashboard live metrics in K8s — v1.93.44
+
+**[v1.93.44](CHANGELOG.md)** — Fixed Dashboard VM Hotspots, Host Utilization, and Health Summary avg CPU/memory showing allocation-based estimates instead of real Prometheus values in Kubernetes. The root cause was `_load_metrics_cache()` in `dashboards.py` only searching for a local cache file (written by the monitoring service via a shared Docker volume). In K8s there is no shared volume between the API pod and the monitoring pod, so the function always returned `None` and all three dashboard widgets fell back to DB allocation data. Fixed by adding an HTTP fallback: when no local cache file is found, the function calls `GET /metrics/vms` and `GET /metrics/hosts` on the monitoring service. Added `MONITORING_SERVICE_URL=http://pf9-monitoring:8001` env var to the API pod Helm deployment (was already set on tenant-portal but missing from the API pod).
+
 ### Live VM metrics, restore job cleanup, metering VM count, docs highlighting — v1.93.43
 
 **[v1.93.43](CHANGELOG.md)** — (1) Fixed live VM metrics (storage/memory/network all `None`): enabled `hostNetwork: true` on the monitoring pod so it uses the K8s node IP instead of the blocked pod CIDR, allowing it to reach the libvirt-exporter on hypervisors. (2) Added SSH+virsh fallback so VM metrics can be collected directly via SSH when the exporter is unreachable. (3) Added restore job deletion: `DELETE /restore/jobs/{job_id}` endpoint + Clear button in the Restore Audit table for PLANNED/FAILED/INTERRUPTED/CANCELED/SUCCEEDED jobs. (4) Added auto-timeout for stale restore jobs (PLANNED>2h, RUNNING>6h → FAILED). (5) Fixed metering overview VM count: now uses the live `servers` table instead of historical metering records. (6) Added syntax highlighting (highlight.js + github-dark theme) to the in-app Docs viewer.

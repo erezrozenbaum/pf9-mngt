@@ -1764,7 +1764,12 @@ async def get_tenant_summary():
 # =========================================================================
 
 def _load_metrics_cache() -> Optional[Dict[str, Any]]:
-    """Load metrics from cache file (populated by monitoring service)."""
+    """Load metrics from cache file (populated by monitoring service).
+
+    Falls back to the monitoring service HTTP API when no local cache file
+    is found — this is the normal case in Kubernetes where the API pod and
+    the monitoring pod do not share a filesystem volume.
+    """
     try:
         cache_paths = [
             "/app/monitoring/cache/metrics_cache.json",
@@ -1772,7 +1777,7 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
             "metrics_cache.json",
             "/app/metrics_cache.json",
         ]
-        
+
         def parse_timestamp(value: Optional[str]) -> Optional[datetime]:
             if not value:
                 return None
@@ -1793,26 +1798,53 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
             except Exception as e:
                 logger.warning(f"Could not read metrics cache {cache_path}: {e}")
 
-        if not candidates:
-            return None
+        if candidates:
+            def score_candidate(candidate: Dict[str, Any]) -> tuple:
+                vms = candidate.get("vms", []) or []
+                hosts = candidate.get("hosts", []) or []
+                ts_value = candidate.get("timestamp") or candidate.get("summary", {}).get("last_update")
+                ts = parse_timestamp(ts_value)
+                score = 0
+                if vms:
+                    score += 4
+                if hosts:
+                    score += 2
+                if ts:
+                    score += 1
+                return (score, ts or datetime.min)
 
-        def score_candidate(candidate: Dict[str, Any]) -> tuple:
-            vms = candidate.get("vms", []) or []
-            hosts = candidate.get("hosts", []) or []
-            ts_value = candidate.get("timestamp") or candidate.get("summary", {}).get("last_update")
-            ts = parse_timestamp(ts_value)
+            return max(candidates, key=score_candidate)
 
-            score = 0
-            if vms:
-                score += 4
-            if hosts:
-                score += 2
-            if ts:
-                score += 1
-            return (score, ts or datetime.min)
+        # No local cache file — try the monitoring service HTTP API (K8s path)
+        try:
+            import httpx as _httpx
+            _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9_monitoring:8001")
+            with _httpx.Client(timeout=4.0) as _c:
+                vms_resp = _c.get(f"{_monitoring_url}/metrics/vms")
+                vms_resp.raise_for_status()
+                vms_data = vms_resp.json()
+                vms = vms_data.get("data", vms_data.get("vms", []))
 
-        best = max(candidates, key=score_candidate)
-        return best
+                hosts: List[Dict[str, Any]] = []
+                try:
+                    hosts_resp = _c.get(f"{_monitoring_url}/metrics/hosts")
+                    hosts_resp.raise_for_status()
+                    hosts_data = hosts_resp.json()
+                    hosts = hosts_data.get("data", hosts_data.get("hosts", []))
+                except Exception:
+                    pass
+
+            if vms or hosts:
+                return {
+                    "vms": vms,
+                    "hosts": hosts,
+                    "source": vms_data.get("source", "monitoring"),
+                    "timestamp": vms_data.get("timestamp"),
+                }
+        except Exception as e:
+            logger.warning("Could not fetch metrics from monitoring service HTTP API: %s", e)
+
+        return None
     except Exception as e:
         logger.warning("Could not load metrics cache: %s", e)
         return None

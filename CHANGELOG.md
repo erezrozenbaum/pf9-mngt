@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.44] - 2026-04-29
+
+### Fixed
+- **Dashboard VM Hotspots / Host Utilization always showing allocation-based data in K8s**: `dashboards.py`'s `_load_metrics_cache()` only looked for a local cache file (shared volume pattern). In Kubernetes, the API pod and monitoring pod have no shared filesystem, so all dashboard endpoints that consume live metrics (VM Hotspots, Top Hosts Utilization, Health Summary avg CPU/memory) fell through to the DB allocation fallback. Fixed by adding an HTTP fallback: when no local cache file exists, the function fetches `/metrics/vms` and `/metrics/hosts` from the monitoring service via `MONITORING_SERVICE_URL`. Added `MONITORING_SERVICE_URL=http://pf9-monitoring:8001` env var to the API pod Helm deployment template (was already set on the tenant-portal pod but missing from the API pod).
+
+---
+
 ## [1.93.43] - 2026-04-30
 
 ### Fixed

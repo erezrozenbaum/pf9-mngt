@@ -663,6 +663,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.93.44 — Dashboard live metrics in K8s (✅ Complete)
+
+- **Dashboard VM Hotspots / Host Utilization / Health Summary avg CPU — always showing DB allocation in K8s** — `_load_metrics_cache()` in `dashboards.py` searched for a shared-volume cache file that only exists in Docker Compose. In Kubernetes the API pod and monitoring pod share no filesystem, so the function always returned `None` and all three dashboard widgets fell back to DB allocation estimates. Fixed by adding an HTTP fallback: when no local file is found, the function calls `GET /metrics/vms` and `GET /metrics/hosts` on the monitoring service (same `MONITORING_SERVICE_URL` env var pattern used by the tenant portal and `/monitoring/vm-metrics`). Added `MONITORING_SERVICE_URL=http://pf9-monitoring:8001` env var to the API pod Helm deployment template (`k8s/helm/pf9-mngt/templates/api/deployment.yaml`) — it was already present on the tenant-portal pod but was missing from the API pod.
+
 ### v1.93.43 — Live VM metrics, restore job cleanup, metering VM count, docs highlighting (✅ Complete)
 
 - **Live VM metrics (storage / memory / network `None`)** — The monitoring pod was assigned a pod-CIDR IP (192.168.x.x) which hypervisor firewalls block. Added `hostNetwork: true` to the Helm deployment so the pod uses the K8s node IP (172.17.30.x); the libvirt-exporter on port 9177 is reachable and live metrics flow correctly.
