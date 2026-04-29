@@ -186,7 +186,6 @@ const SnapshotPolicyManager: FC = () => {
                   loadData();
                 }}
                 onCancel={() => setShowCreatePolicy(false)}
-                token={token}
               />
             )}
 
@@ -381,10 +380,9 @@ interface PolicyFormProps {
   policy: PolicySet | null;
   onSave: () => void;
   onCancel: () => void;
-  token: string | null;
 }
 
-const PolicyForm: React.FC<PolicyFormProps> = ({ policy, onSave, onCancel, token }) => {
+const PolicyForm: React.FC<PolicyFormProps> = ({ policy, onSave, onCancel }) => {
   const [formData, setFormData] = useState<Partial<PolicySet>>(
     policy || {
       name: '',
@@ -406,16 +404,11 @@ const PolicyForm: React.FC<PolicyFormProps> = ({ policy, onSave, onCancel, token
       : '/api/snapshot/policy-sets';
 
     try {
-      const res = await fetch(url, {
+      await apiFetch(url, {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
-
-      if (!res.ok) throw new Error('Failed to save policy');
       onSave();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to save policy');
