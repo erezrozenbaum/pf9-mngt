@@ -63,10 +63,14 @@
 - **Dry-Run Mode**: Validate the full restore plan before executing against OpenStack
 - **Safety First**: Disabled by default, concurrent restore prevention, quota double-check, rollback on failure
 - **Full Restore Audit**: Every operation logged — who, what mode, duration, outcome
+- **Job Deletion**: `DELETE /restore/jobs/{job_id}` permanently removes completed/non-active records (PLANNED/FAILED/INTERRUPTED/CANCELED/SUCCEEDED); ✕ Clear button per row in the Restore Audit table
+- **Stale Job Auto-Timeout**: Scheduler marks PLANNED jobs older than `RESTORE_PLANNED_TIMEOUT_H` hours (default 2) and RUNNING/PENDING jobs older than `RESTORE_RUNNING_TIMEOUT_H` hours (default 6) as FAILED — prevents orphaned jobs from remaining stuck indefinitely
 
 ### 👁️ Real-Time Monitoring
 - **Host Metrics**: Live CPU, memory, storage from PF9 compute nodes via Prometheus node_exporter (port 9388)
 - **VM Metrics**: Individual VM resource tracking via libvirt_exporter (port 9177)
+- **K8s hostNetwork mode**: Monitoring pod runs with `hostNetwork: true` so it uses the K8s node IP (not pod-CIDR) for outbound connections; required when hypervisor firewalls permit only node-IP traffic — prevents storage/memory/network metrics from returning `None`
+- **SSH + virsh fallback**: When `PF9_SSH_KEY_FILE` is configured, the monitoring service collects CPU/memory/storage/network metrics via `virsh domstats` over SSH when the libvirt-exporter is unreachable; OpenStack VM UUIDs extracted from block device paths for correlation
 - **Automated Collection**: Background collection every 30 minutes
 - **Persistent Cache**: Metrics survive service restarts
 - **Integrated Dashboard**: Real-time monitoring tab with auto-refresh
@@ -88,6 +92,7 @@
 - **Multi-Category Pricing**: Compute, storage, snapshot, restore, volume, network — hourly + monthly rates
 - **Chargeback Export**: Per-tenant cost breakdown with one-click CSV export
 - **8 Sub-Tab UI**: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, Pricing, Export
+- **Accurate VM Count in Overview**: Overview counts active VMs from the live `servers` table (excluding `DELETED`/`SOFT_DELETED` status) with domain/project filter support — not inflated by historical metering records for deleted VMs
 
 ### 🏢 Customer Provisioning & Domain Management *(v1.16 → v1.34.2)*
 - **5-Step Provisioning Wizard**: Domain → Project → User/Role → Quotas → Networks/Security Group

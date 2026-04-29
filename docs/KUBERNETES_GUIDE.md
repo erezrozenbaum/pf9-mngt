@@ -1000,6 +1000,60 @@ internally, which breaks Grafana's datasource that calls the root API path.
 **Fix:** Do not set `routePrefix` or `externalUrl` in `prometheusSpec`. Use the nginx
 `rewrite-target` annotation instead (already correct in the provided values file).
 
+### Monitoring pod shows storage / memory / network as `None`
+
+**Symptom:** The Monitoring tab shows `None` for `storage_used_gb`, `memory_used_mb`, and
+`network_rx_bytes` / `network_tx_bytes` even though hypervisors are reachable.
+
+**Root cause:** Kubernetes assigns the monitoring pod a pod-CIDR IP (e.g. `192.168.x.x`).
+PF9 hypervisor firewalls typically DROP inbound connections from pod-CIDR ranges — only
+connections from known node IPs (e.g. `172.17.30.x`) are permitted. The libvirt-exporter
+on port 9177 therefore never responds, so all per-VM metrics arrive as `None`.
+
+**Fix:** Enable `hostNetwork: true` in `values.yaml` so the monitoring pod uses the K8s
+node's IP address for outbound connections:
+
+```yaml
+# k8s/helm/pf9-mngt/values.yaml
+monitoring:
+  hostNetwork: true    # uses node IP instead of pod-CIDR IP — required when hypervisor
+                       # firewalls allow node IPs but block pod-CIDR ranges
+```
+
+With `hostNetwork: true` the pod inherits the node IP (e.g. `172.17.30.163`), which passes
+the hypervisor firewall, and the libvirt-exporter on port 9177 becomes reachable.
+
+> This setting is **enabled by default** in the chart's `values.yaml`. Only disable it if
+> your cluster's network policy explicitly allows pod-CIDR traffic to the hypervisors.
+
+### SSH + virsh fallback for VM metrics
+
+When the libvirt-exporter is not installed on hypervisors, or is unreachable even with
+`hostNetwork: true`, the monitoring service can collect VM metrics directly via SSH:
+
+```yaml
+# k8s/helm/pf9-mngt/values.yaml — or set via Helm --set flags
+monitoring:
+  sshUser: root                        # or the SSH user on your hypervisors
+  sshKeyFile: /etc/pf9-ssh/id_rsa     # path inside the container
+```
+
+You must also mount the SSH private key as a Kubernetes secret. Create the secret:
+
+```bash
+kubectl create secret generic pf9-monitoring-ssh-key \
+  --namespace pf9-mngt \
+  --from-file=id_rsa=/path/to/your/private_key
+```
+
+Then reference it in `values.yaml` under `monitoring.sshKeySecret`. When configured, the
+monitoring service runs `virsh domstats --raw --state-running` over SSH on each hypervisor
+and parses CPU, memory, network I/O, and block device metrics per VM. OpenStack VM UUIDs
+are extracted from block device paths to correlate metrics with `servers` table records.
+
+> **Note:** SSH fallback and the libvirt-exporter scraper are complementary — the service
+> tries the exporter first and falls back to SSH if the exporter is unreachable.
+
 ---
 
 ## 15. Architecture Decision Records

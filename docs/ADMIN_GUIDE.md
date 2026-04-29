@@ -2619,6 +2619,18 @@ POSTGRES_DB=pf9_mgmt
 PF9_HOSTS=203.0.113.10,203.0.113.11,203.0.113.12,203.0.113.13
 # PF9_HOST_MAP=203.0.113.10:host-01,203.0.113.11:host-02
 METRICS_CACHE_TTL=60
+
+# SSH + virsh fallback for VM metrics (optional)
+# When PF9_SSH_KEY_FILE is set, the monitoring service collects VM metrics
+# via 'virsh domstats' over SSH when the libvirt-exporter (port 9177) is unreachable.
+# PF9_SSH_USER=root
+# PF9_SSH_KEY_FILE=/etc/pf9-ssh/id_rsa
+
+# Restore job auto-timeout (optional, scheduler_worker)
+# PLANNED jobs older than RESTORE_PLANNED_TIMEOUT_H hours → FAILED (default: 2)
+# RUNNING/PENDING jobs older than RESTORE_RUNNING_TIMEOUT_H hours → FAILED (default: 6)
+# RESTORE_PLANNED_TIMEOUT_H=2
+# RESTORE_RUNNING_TIMEOUT_H=6
 EOF
 chmod 600 .env
 ```
@@ -3597,6 +3609,15 @@ PF9_HOSTS=203.0.113.10,203.0.113.11,203.0.113.12,203.0.113.13
 # Map host IPs to friendly hostnames for monitoring display
 # PF9_HOST_MAP=203.0.113.10:host-01,203.0.113.11:host-02
 METRICS_CACHE_TTL=60
+
+# SSH + virsh fallback for VM metrics (optional)
+# Collects VM metrics via 'virsh domstats' over SSH when libvirt-exporter is unreachable.
+# PF9_SSH_USER=root
+# PF9_SSH_KEY_FILE=/etc/pf9-ssh/id_rsa
+
+# Restore job auto-timeout (optional, scheduler_worker)
+# RESTORE_PLANNED_TIMEOUT_H=2   # mark stale PLANNED jobs as FAILED after N hours
+# RESTORE_RUNNING_TIMEOUT_H=6   # mark stale RUNNING/PENDING jobs as FAILED after N hours
 ```
 
 **PF9 Host Requirements**:

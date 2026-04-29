@@ -301,6 +301,18 @@ Content-Type: application/json
 }
 ```
 
+### Delete Restore Job Record
+```bash
+DELETE /restore/jobs/{job_id}
+# Permanently removes a completed or non-active job record from the database.
+# Allowed statuses: PLANNED, FAILED, INTERRUPTED, CANCELED, SUCCEEDED
+# Active jobs (RUNNING, PENDING) cannot be deleted — cancel first.
+# Deletes restore_job_steps (FK) then restore_jobs row.
+# Returns: {"job_id": "<uuid>", "deleted": true}
+```
+
+> **UI**: The Restore Audit table shows a ✕ **Clear** button on each row whose status is PLANNED, FAILED, INTERRUPTED, CANCELED, or SUCCEEDED. Clicking it prompts for confirmation before permanently deleting the record.
+
 ---
 
 ## Dry-Run Mode
@@ -382,12 +394,31 @@ The Restore Wizard's success panel shows **Storage Leftovers** buttons for REPLA
 
 ## Stale Job Recovery
 
+### On API Restart
+
 On API startup, the system scans for any restore jobs that are still in PENDING or RUNNING status. These are jobs that were interrupted by an API restart or crash.
 
 - PENDING jobs → marked as INTERRUPTED
 - RUNNING jobs → marked as INTERRUPTED
 
 Interrupted jobs cannot be resumed. A new restore must be initiated.
+
+### Automatic Timeout (Scheduler)
+
+The scheduler worker also monitors for jobs that have been stuck too long without progress. This protects against orphaned jobs that lost their worker process without triggering a restart:
+
+| Status | Default Timeout | Environment Variable |
+|--------|----------------|----------------------|
+| `PLANNED` | 2 hours | `RESTORE_PLANNED_TIMEOUT_H` |
+| `RUNNING` / `PENDING` | 6 hours | `RESTORE_RUNNING_TIMEOUT_H` |
+
+Jobs exceeding these thresholds are automatically marked `FAILED` with a message indicating timeout. To adjust the thresholds:
+
+```bash
+# In .env or docker-compose.yml
+RESTORE_PLANNED_TIMEOUT_H=4   # Mark PLANNED jobs as FAILED after 4 hours
+RESTORE_RUNNING_TIMEOUT_H=12  # Mark RUNNING/PENDING jobs as FAILED after 12 hours
+```
 
 ---
 
@@ -457,6 +488,11 @@ See [SNAPSHOT_SERVICE_USER.md](SNAPSHOT_SERVICE_USER.md) for detailed setup inst
 ### Stale Jobs After API Restart
 - **Symptom**: Old jobs show INTERRUPTED status
 - **Explanation**: This is expected — jobs that were in progress when the API restarted are automatically marked INTERRUPTED. Start a new restore.
+
+### Jobs Stuck in PLANNED or RUNNING
+- **Symptom**: A job has been PLANNED or RUNNING for many hours with no progress
+- **Explanation**: The scheduler automatically times out PLANNED jobs after `RESTORE_PLANNED_TIMEOUT_H` hours (default 2) and RUNNING/PENDING jobs after `RESTORE_RUNNING_TIMEOUT_H` hours (default 6). The job will be marked FAILED automatically.
+- **Fix**: If you need the timeout to trigger sooner, adjust the env vars and restart the scheduler worker.
 
 ### REPLACE Mode Confirmation
 - **Symptom**: 400 error "Destructive confirmation required"
