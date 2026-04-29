@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### Hypervisor graph crash, volume assignments, storage display — v1.93.42
+
+**[v1.93.42](CHANGELOG.md)** — (1) Fixed "Error: Graph query failed" when opening a hypervisor dependency graph: `_fetch_host()` was referencing columns that don’t exist on the `hypervisors` table (fields live in `raw_json`). (2) Fixed Volume Assignments tab showing empty even when volumes are assigned via Cinder metadata: the assignments endpoint now merges DB-table rows with Cinder-metadata-enrolled volumes. (3) Improved storage cell display from ambiguous `—` to `N/A / no live data / X GB provisioned` and fixed the Storage Used column header tooltip to render on all browsers.
+
 ### UX fixes: pagination, graph depth, hypervisors panel, metering filters — v1.93.41
 
 **[v1.93.41](CHANGELOG.md)** — (1) Fixed Snapshot Audit Trail pagination stuck on page 1 when navigating pages. (2) Domain Dependency Graph now opens at depth 3 (showing domain → tenants → VMs/volumes) instead of stopping at depth 2. (3) Added Hypervisors detail panel with full host info and a dependency graph shortcut. (4) Metering tab domain/project filters now reset when switching sub-tabs, preventing filter carry-over. (5) Snapshot PolicyForm `apiFetch` migration completed — the create/edit form was missed in the earlier refactor. (6) Improved empty-state messages on Volume Assignments and Monitoring storage column.
@@ -985,4 +989,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.41 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.42 | **Last Updated**: April 2026

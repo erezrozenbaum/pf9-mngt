@@ -231,12 +231,21 @@ def _fetch_tenant(cur, db_id: str) -> Optional[Dict]:
 
 def _fetch_host(cur, db_id: str) -> Optional[Dict]:
     cur.execute(
-        "SELECT id, hostname, state, status, "
-        "       vcpus, vcpus_used, memory_mb, memory_mb_used, "
-        "       local_gb, "
-        "       CASE WHEN local_gb > 0 AND disk_available_least IS NOT NULL "
-        "            THEN local_gb - GREATEST(0, disk_available_least) "
-        "            ELSE local_gb_used END AS local_gb_used_calc "
+        "SELECT id, "
+        "       COALESCE(raw_json->>'hypervisor_hostname', hostname) AS hostname, "
+        "       state, status, "
+        "       COALESCE((raw_json->>'vcpus')::integer, vcpus, 0)          AS vcpus, "
+        "       COALESCE((raw_json->>'vcpus_used')::integer, 0)            AS vcpus_used, "
+        "       COALESCE((raw_json->>'memory_mb')::bigint, memory_mb, 0)   AS memory_mb, "
+        "       COALESCE((raw_json->>'memory_mb_used')::bigint, 0)         AS memory_mb_used, "
+        "       COALESCE((raw_json->>'local_gb')::integer, local_gb, 0)    AS local_gb, "
+        "       CASE "
+        "         WHEN COALESCE((raw_json->>'local_gb')::integer, local_gb, 0) > 0 "
+        "              AND (raw_json->>'disk_available_least') IS NOT NULL "
+        "         THEN COALESCE((raw_json->>'local_gb')::integer, local_gb, 0) "
+        "              - GREATEST(0, (raw_json->>'disk_available_least')::integer) "
+        "         ELSE COALESCE((raw_json->>'local_gb_used')::integer, 0) "
+        "       END AS local_gb_used_calc "
         "FROM hypervisors WHERE id = %s",
         (db_id,),
     )

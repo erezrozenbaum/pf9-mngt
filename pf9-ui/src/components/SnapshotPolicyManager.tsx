@@ -28,7 +28,7 @@ interface PolicySet {
 }
 
 interface SnapshotAssignment {
-  id: number;
+  id?: number | null;
   volume_id: string;
   volume_name: string;
   tenant_id: string;

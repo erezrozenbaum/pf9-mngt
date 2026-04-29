@@ -663,6 +663,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.93.42 — Hypervisor graph crash, volume assignments, storage display (✅ Complete)
+
+- **Hypervisor graph crash — "Error: Graph query failed"** — `_fetch_host()` in `graph_routes.py` referenced `vcpus_used`, `memory_mb_used`, and `disk_available_least` as direct table columns. These fields only exist in `raw_json` on the `hypervisors` table; the missing-column error surfaced as a generic 500. All fields now use `COALESCE(raw_json->>'field'::type, column_fallback, 0)`.
+- **Volume Assignments tab empty despite volumes being enrolled** — `GET /api/snapshot/assignments` only read `snapshot_assignments` table rows. Volumes enrolled via Cinder volume metadata (`auto_snapshot=true`) are never written to that table. The endpoint now also queries `volumes.raw_json->'metadata'` and merges those as `assignment_source: cinder_metadata` rows.
+- **Storage cell display** — Replaced ambiguous `—` with `N/A` / `no live data / X GB provisioned` to make the fallback behavior obvious without tooltips.
+- **Storage column tooltip fix** — Added `display: inline-block` to the ⓘ `<span>` so the browser `title` attribute tooltip renders correctly on all major browsers.
+
 ### v1.93.41 — UX fixes: pagination, graph depth, hypervisors panel, metering filters (✅ Complete)
 
 - **Snapshot Audit Trail pagination stuck on page 1** — `currentPage` was in the filter `useEffect` dependency array, causing every page navigation to re-run `filterRecords()` which reset `currentPage` to 1 immediately. Removed `currentPage` from the dependency array.

@@ -709,11 +709,16 @@ def setup_snapshot_routes(app):
         current_user: User = Depends(get_current_user),
         _has_permission: bool = Depends(require_permission("snapshot_assignments", "read"))
     ):
-        """Get snapshot assignments with optional filtering"""
+        """Get snapshot assignments with optional filtering.
+        Combines DB-table assignments with Cinder-metadata assignments so that
+        volumes enrolled via Cinder metadata (auto_snapshot=true in volume
+        metadata) are also visible in the Assignments tab.
+        """
         try:
             with get_connection() as conn:
                 cur = conn.cursor(cursor_factory=RealDictCursor)
 
+                # ── 1. DB-table assignments ──────────────────────────────────
                 query = """
                     SELECT id, volume_id, volume_name, tenant_id, tenant_name,
                            project_id, project_name, vm_id, vm_name, policy_set_id,
@@ -723,7 +728,7 @@ def setup_snapshot_routes(app):
                     FROM snapshot_assignments
                     WHERE 1=1
                 """
-                params = []
+                params: list = []
 
                 if volume_id:
                     query += " AND volume_id = %s"
@@ -745,8 +750,86 @@ def setup_snapshot_routes(app):
                 params.extend([limit, offset])
 
                 cur.execute(query, params)
-                results = cur.fetchall()
+                db_rows = list(cur.fetchall())
+                assigned_ids = {r["volume_id"] for r in db_rows}
 
+                # ── 2. Cinder-metadata assignments (not already in table) ────
+                # Only include when no auto_snapshot=False filter is set
+                cinder_rows: list = []
+                if auto_snapshot is not False:
+                    cinder_params: list = [list(assigned_ids) if assigned_ids else []]
+                    cinder_query = """
+                        SELECT
+                            v.id              AS volume_id,
+                            v.name            AS volume_name,
+                            proj.domain_id    AS tenant_id,
+                            dom.name          AS tenant_name,
+                            v.project_id      AS project_id,
+                            proj.name         AS project_name,
+                            v.raw_json->'attachments'->0->>'server_id' AS vm_id,
+                            srv.name          AS vm_name,
+                            v.raw_json->'metadata' AS metadata
+                        FROM volumes v
+                        LEFT JOIN projects proj ON proj.id = v.project_id
+                        LEFT JOIN domains  dom  ON dom.id  = proj.domain_id
+                        LEFT JOIN servers  srv
+                               ON srv.id = v.raw_json->'attachments'->0->>'server_id'
+                        WHERE v.raw_json->'metadata'->>'auto_snapshot'
+                                  IN ('true', 'True', '1', 'yes')
+                          AND v.raw_json->'metadata'->>'snapshot_policies' IS NOT NULL
+                          AND v.id != ALL(%s::text[])
+                    """
+                    if volume_id:
+                        cinder_query += " AND v.id = %s"
+                        cinder_params.append(volume_id)
+                    if project_id:
+                        cinder_query += " AND v.project_id = %s"
+                        cinder_params.append(project_id)
+                    if tenant_id:
+                        cinder_query += " AND proj.domain_id = %s"
+                        cinder_params.append(tenant_id)
+                    if vm_id:
+                        cinder_query += " AND srv.id = %s"
+                        cinder_params.append(vm_id)
+
+                    cur.execute(cinder_query, cinder_params)
+                    for r in cur.fetchall():
+                        meta = r.get("metadata") or {}
+                        if isinstance(meta, str):
+                            try:
+                                meta = json.loads(meta)
+                            except Exception:
+                                meta = {}
+                        pol_csv = meta.get("snapshot_policies", "")
+                        pol_list = [p.strip() for p in pol_csv.split(",") if p.strip()]
+                        ret_map = {
+                            p: (_safe_int(meta.get(f"retention_{p}")) or 0)
+                            for p in pol_list
+                        }
+                        cinder_rows.append({
+                            "id": None,
+                            "volume_id":         r["volume_id"],
+                            "volume_name":       r["volume_name"] or r["volume_id"],
+                            "tenant_id":         r.get("tenant_id") or "",
+                            "tenant_name":       r.get("tenant_name") or "",
+                            "project_id":        r.get("project_id") or "",
+                            "project_name":      r.get("project_name") or "",
+                            "vm_id":             r.get("vm_id") or "",
+                            "vm_name":           r.get("vm_name") or "",
+                            "policy_set_id":     None,
+                            "auto_snapshot":     True,
+                            "policies":          pol_list,
+                            "retention_map":     ret_map,
+                            "assignment_source": "cinder_metadata",
+                            "matched_rules":     None,
+                            "created_at":        None,
+                            "created_by":        None,
+                            "updated_at":        None,
+                            "updated_by":        None,
+                            "last_verified_at":  None,
+                        })
+
+                results = db_rows + cinder_rows
                 return {"assignments": results, "count": len(results), "limit": limit, "offset": offset}
 
         except Exception as e:

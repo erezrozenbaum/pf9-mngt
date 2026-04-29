@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.42] - 2026-04-29
+
+### Fixed
+- **Hypervisor graph crash — "Error: Graph query failed"**: `_fetch_host()` in `graph_routes.py` referenced `vcpus_used`, `memory_mb_used`, and `disk_available_least` as bare columns. These fields only exist inside `raw_json` in the `hypervisors` table; querying them as columns raised a `psycopg2` `UndefinedColumn` error that surfaced as a generic 500 "Graph query failed". All fields now read from `raw_json` with `COALESCE` fallbacks.
+- **Snapshot Volume Assignments showing empty despite volumes being assigned**: `GET /api/snapshot/assignments` only read the `snapshot_assignments` DB table. Volumes enrolled via Cinder metadata (`auto_snapshot=true` in Cinder volume metadata) are never written to that table — they are authoritative in Cinder. The endpoint now also queries `volumes.raw_json->'metadata'` and merges Cinder-metadata assignments (tagged `assignment_source: cinder_metadata`) so all enrolled volumes appear in the Assignments tab.
+- **Monitoring Storage column — "—" with no context**: Replaced bare `—` in the Storage Used cell with `N/A` and `no live data / X GB provisioned` so users understand what the value means without hovering.
+
+### Improved
+- Storage Used column header tooltip now renders correctly on all browsers (added `display: inline-block` to the info icon `<span>`).
+- `SnapshotAssignment` TypeScript interface: `id` changed to `id?: number | null` to accommodate Cinder-metadata assignments that have no DB row id.
+
+### Changed
+- Helm chart version bumped to 1.93.42.
+
+---
+
 ## [1.93.41] - 2026-04-29
 
 ### Fixed

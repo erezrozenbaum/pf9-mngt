@@ -6077,7 +6077,11 @@ const App: React.FC = () => {
                         <th>Tenant</th>
                         <th>CPU Usage</th>
                         <th>Memory Usage</th>
-                        <th>Storage Used <span title="Real-time storage usage requires libvirt-exporter on hypervisors. Shows provisioned size when live data is unavailable." style={{ cursor: "help", opacity: 0.6, fontSize: "0.8em" }}>ⓘ</span></th>
+                        <th>Storage Used <span
+                            title="Real-time storage usage requires libvirt-exporter on hypervisors. Shows provisioned size when live data is unavailable."
+                            style={{ cursor: "help", opacity: 0.6, fontSize: "0.8em", display: "inline-block" }}
+                            aria-label="Storage info"
+                          >ⓘ</span></th>
                         <th>Network RX/TX</th>
                         <th>Last Update</th>
                       </tr>
@@ -6135,10 +6139,10 @@ const App: React.FC = () => {
                                     color: (vm.storage_usage_percent || 0) > 90 ? '#e74c3c' : 
                                            (vm.storage_usage_percent || 0) > 75 ? '#f39c12' : '#27ae60'
                                   }}>
-                                    {vm.storage_usage_percent != null ? `${vm.storage_usage_percent.toFixed(1)}%` : '—'}
+                                    {vm.storage_usage_percent != null ? `${vm.storage_usage_percent.toFixed(1)}%` : 'N/A'}
                                   </span>
                                   <div className="pf9-cell-subtle">
-                                    {vm.storage_used_gb != null ? `${vm.storage_used_gb.toFixed(1)}GB` : '—'} / {(vm.storage_total_gb ?? vm.storage_allocated_gb ?? 0).toFixed(1)}GB
+                                    {vm.storage_used_gb != null ? `${vm.storage_used_gb.toFixed(1)}GB` : 'no live data'} / {(vm.storage_total_gb ?? vm.storage_allocated_gb ?? 0).toFixed(1)}GB provisioned
                                   </div>
                                 </>
                               ) : 'N/A'}
