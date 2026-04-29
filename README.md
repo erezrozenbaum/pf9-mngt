@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### Auth fixes, SLA 503, VM metrics, capacity forecast — v1.93.40
+
+**[v1.93.40](CHANGELOG.md)** — (1) Fixed HTTP 401 on System Log and API Metrics tabs: cookie-first auth added to both backend handlers and the frontend now uses `apiFetch` with proper credential passing. (2) Fixed Snapshot Policy Assignments showing no data: raw `fetch` calls with a fake Bearer token replaced by `apiFetch` throughout `SnapshotPolicyManager`. (3) Fixed SLA Compliance Summary returning HTTP 503: unhandled DB exception now caught and returns a graceful 200 with empty summary. (4) Fixed VM Resource Metrics showing a misleading hypervisor-level CPU ratio instead of per-VM usage: DB fallback now returns `null` with a warning banner. (5) Fixed Capacity Forecast showing no data on new installs: minimum data-point threshold lowered to 2 days and the metering worker seeds an initial quota snapshot on startup. (6) Improved empty-state messages on all Insights tabs to explain data requirements.
+
 ### volumes:read 403 fix, monitoring Unknown fields, dashboard storage — v1.93.39
 
 **[v1.93.39](CHANGELOG.md)** — (1) Fixed HTTP 403 on Change Management, Drift Detection, and Hypervisors tabs for admin/superadmin users: root cause was a corrupt `idx_role_permissions_unique` index in PostgreSQL; resolved with `REINDEX TABLE role_permissions`. (2) Admin Monitoring no longer shows "Unknown" for VM IP, Domain, and Tenant — the monitoring service bootstrap cache was discarding identity metadata; now preserved. (3) Dashboard VM Hotspots storage column no longer shows only "N/A" — shows "Provisioned: X GB" when live usage is unavailable.
@@ -977,4 +981,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.39 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.40 | **Last Updated**: April 2026

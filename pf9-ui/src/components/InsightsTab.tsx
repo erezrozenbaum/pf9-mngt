@@ -589,6 +589,13 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
             <div className="insights-empty">
               <div className="insights-empty-icon">✅</div>
               <p className="insights-empty-text">No insights match your filters.</p>
+              {filterStatus === "open" && filterSeverity === "" && filterType === "" && (
+                <p style={{ fontSize: "0.82rem", color: "var(--text-secondary,#9ca3af)", marginTop: "0.5rem" }}>
+                  The intelligence worker generates insights from VM efficiency, volumes, snapshots, and capacity data.
+                  Insights appear once the worker has analysed at least 6 days of metering history. Check that the
+                  <strong> intelligence-worker</strong> pod is running.
+                </p>
+              )}
             </div>
           ) : (
             <table className="insights-table">
@@ -880,6 +887,10 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
           <div className="insights-empty">
             <div className="insights-empty-icon">✅</div>
             <p className="insights-empty-text">No active risk or capacity insights.</p>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-secondary,#9ca3af)", marginTop: "0.5rem" }}>
+              Risk insights are generated from VM efficiency trends, host capacity, and anomaly detection.
+              They require at least 7 days of metering history to detect patterns.
+            </p>
           </div>
         ) : (
           <table className="insights-table">
@@ -1003,7 +1014,10 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
         {forecasts.length === 0 ? (
           <div className="insights-empty">
             <div className="insights-empty-icon">📊</div>
-            <p className="insights-empty-text">No forecast data yet — requires at least 3 days of metering history.</p>
+            <p className="insights-empty-text">No forecast data yet — requires at least 2 days of metering history per project.</p>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-secondary,#9ca3af)", marginTop: "0.5rem" }}>
+              The metering worker collects quota snapshots daily. Data will appear automatically once 2 or more snapshots exist per project.
+            </p>
           </div>
         ) : (
           <table className="insights-table">

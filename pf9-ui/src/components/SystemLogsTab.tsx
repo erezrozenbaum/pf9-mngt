@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/SystemLogsTab.css';
-import { API_BASE } from '../config';
-import { getToken } from '../lib/api';
+import { apiFetch } from '../lib/api';
 
 interface LogEntry {
   timestamp?: string;
@@ -39,27 +38,13 @@ export const SystemLogsTab: React.FC = () => {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const token = getToken();
         const params = new URLSearchParams();
         params.append('limit', limit.toString());
         if (filter.level) params.append('level', filter.level);
         if (filter.source) params.append('source', filter.source);
         if (logFileFilter) params.append('log_file', logFileFilter);
 
-        const response = await fetch(`${API_BASE}/api/logs?${params}`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-
-        if (!response.ok) {
-          if (response.status === 403) {
-            throw new Error('Access denied. Only admins can view system logs.');
-          }
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data: LogsResponse = await response.json();
+        const data = await apiFetch<LogsResponse>(`/api/logs?${params}`);
         setLogs(data.logs);
         setLogFile(data.log_file);
         setAvailableFiles(data.available_files || []);

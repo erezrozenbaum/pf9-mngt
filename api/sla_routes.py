@@ -254,21 +254,28 @@ def get_compliance_summary(
     with get_connection() as conn:
         # All projects with their commitment status
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT
-                    p.id AS tenant_id,
-                    p.name AS tenant_name,
-                    sc.tier,
-                    cm.breach_fields,
-                    cm.at_risk_fields
-                FROM projects p
-                LEFT JOIN sla_commitments sc ON sc.tenant_id = p.id
-                    AND sc.effective_to IS NULL
-                LEFT JOIN sla_compliance_monthly cm ON cm.tenant_id = p.id
-                    AND cm.month = %s AND cm.region_id = ''
-                ORDER BY p.name ASC
-            """, (month_start,))
-            rows = cur.fetchall()
+            try:
+                cur.execute("""
+                    SELECT
+                        p.id AS tenant_id,
+                        p.name AS tenant_name,
+                        sc.tier,
+                        cm.breach_fields,
+                        cm.at_risk_fields
+                    FROM projects p
+                    LEFT JOIN sla_commitments sc ON sc.tenant_id = p.id
+                        AND sc.effective_to IS NULL
+                    LEFT JOIN sla_compliance_monthly cm ON cm.tenant_id = p.id
+                        AND cm.month = %s AND cm.region_id = ''
+                    ORDER BY p.name ASC
+                """, (month_start,))
+                rows = cur.fetchall()
+            except Exception as db_err:
+                logger.error(
+                    "SLA compliance/summary DB error: %s", db_err,
+                    extra={"context": {"error": str(db_err)}}
+                )
+                return {"summary": [], "month": str(month_start), "error": "data_unavailable"}
 
     results = []
     for row in rows:

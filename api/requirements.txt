@@ -4,7 +4,7 @@ gunicorn==22.0.0
 psycopg2-binary==2.9.7
 python-dotenv==1.2.2
 pydantic==2.9.2
-requests>=2.32.4,<3.0.0
+requests>=2.33.0,<3.0.0
 httpx>=0.27.0,<1.0.0
 paramiko==3.4.0
 aiofiles==24.1.0
@@ -14,6 +14,9 @@ redis>=5.0.0,<6.0.0
 # Authentication and Authorization dependencies
 python-ldap>=3.4.5,<4.0.0
 python-jose[cryptography]>=3.4.0,<4.0.0
+# Transitive deps of python-jose — pin to safe versions (CVE-2026-34073, CVE-2026-39892, CVE-2026-33936)
+cryptography>=46.0.7
+ecdsa>=0.19.2
 passlib[bcrypt]==1.7.4
 python-multipart>=0.0.22,<1.0.0
 python-dateutil==2.8.2

@@ -663,6 +663,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.93.40 — Auth fixes, SLA 503, VM metrics accuracy, capacity forecast (✅ Complete)
+
+- **System Log / API Metrics → HTTP 401** — The `/api/logs` and `/api/metrics` handlers used inline Bearer-only auth. Browser clients send an httpOnly cookie; both routes now use cookie-first auth with Bearer fallback. `SystemLogsTab.tsx` replaced raw `fetch` with `apiFetch` to include cookies.
+- **Snapshot Policy Assignments → empty** — `SnapshotPolicyManager.tsx` was sending a fake Bearer token on raw `fetch` calls with no `credentials: 'include'`. Replaced all fetch calls with `apiFetch`.
+- **SLA Compliance Summary → HTTP 503** — Unhandled DB exception in the SLA compliance query; now returns 200 with empty summary on error.
+- **VM Resource Metrics — misleading CPU percentage** — DB fallback computed `flavor_vcpus / hypervisor_vcpus * 100` (hypervisor-wide ratio, not per-VM). Now returns `NULL`; UI shows N/A with a warning banner when real-time monitoring is unavailable.
+- **Capacity Forecast — no data on new installs** — Minimum data-point threshold lowered from 3 to 2. Metering worker seeds initial quota snapshot on startup when the table is empty.
+- **Insights tabs empty states** — Contextual messages added explaining data collection requirements.
+
 ### v1.93.39 — volumes:read 403 fix, monitoring Unknown fields, dashboard storage N/A (✅ Complete)
 
 - **`volumes:read` 403 on Change Management / Drift Detection / Hypervisors** — Root cause: the PostgreSQL unique index `idx_role_permissions_unique` on `role_permissions(role, resource, action)` was corrupt. Bitmap index scans for combined predicates returned 0 rows even though the permission row existed. Fixed with `REINDEX TABLE role_permissions` on the live DB. No schema change; one-time maintenance. `init.sql` updated to include correct permissions for fresh installs.

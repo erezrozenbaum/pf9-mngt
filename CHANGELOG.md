@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.40] - 2026-04-29
+
+### Fixed
+- **System Log → HTTP 401 (Change Management tab)**: The `/api/logs` handler was using inline Bearer-only token verification. The browser sends an httpOnly cookie (not a Bearer token), so every request failed with 401 and the log viewer was permanently empty. Fixed by adding cookie-first auth with Bearer header fallback in the backend handler. The frontend (`SystemLogsTab.tsx`) was also replaced with `apiFetch` (which includes `credentials: 'include'`) removing the manual fake-token `Authorization` header.
+- **API Metrics → HTTP 401 (Change Management tab)**: The `/api/metrics` handler had the same inline Bearer-only auth issue as System Log. Fixed with identical cookie-first auth pattern.
+- **Snapshot Policy Assignments → No Data**: `SnapshotPolicyManager.tsx` was constructing `Authorization: Bearer <expiry-timestamp>` headers on raw `fetch` calls with no `credentials: 'include'`. The backend RBAC middleware correctly handles cookie auth, but the cookie was never sent. All fetch calls replaced with `apiFetch` so the httpOnly cookie is transmitted.
+- **SLA Compliance Summary → HTTP 503**: An unhandled database exception in the SLA compliance route was propagating as a 503. The query is now wrapped in try/except; on DB error the endpoint returns 200 with an empty summary and `"error": "data_unavailable"` so the UI degrades gracefully instead of hard-failing.
+- **VM Resource Metrics — CPU showing hypervisor-level ratio instead of per-VM usage**: When the monitoring service cannot reach hypervisors, the metering worker's database fallback was computing `flavor.vcpus / hypervisor.vcpus * 100` — a hypervisor-wide allocation ratio, not actual per-VM CPU utilisation. The fallback now returns `NULL` for `cpu_usage_percent` so the UI correctly shows N/A, and a warning banner is displayed explaining that real-time metrics are unavailable.
+- **Capacity Forecast — No Data on new installs**: The forecast endpoint required at least 3 daily quota snapshots per project before producing any output. On fresh installs the quota table is empty and nothing was shown. Minimum threshold lowered to 2 data points, and the metering worker now runs an immediate quota snapshot on startup if the table is empty, seeding the first baseline record.
+
+### Improved
+- **Insights tabs (Waste, Risk, Anomalies, Feed) — empty state messages**: When tabs return no results, contextual messages now explain the data requirements (e.g. minimum history depth for anomaly detection, intelligence worker collection schedule) instead of showing a blank panel.
+
+### Security
+- **cryptography** upgraded to ≥46.0.7 (CVE-2026-34073, CVE-2026-39892 — memory safety issues in Rust cryptographic primitives).
+- **ecdsa** pinned to ≥0.19.2 (CVE-2026-33936 — invalid-curve attack on ECDH key agreement).
+- **requests** minimum bumped to ≥2.33.0 (CVE-2026-25645 — path traversal in `extract_zipped_paths`).
+- **pyasn1** already constrained to ≥0.6.3 (CVE-2026-30922 — OID parsing DoS); no change needed.
+- **python-dotenv** already pinned to 1.2.2 (CVE-2026-28684 — symlink race in `.env` loading); no change needed.
+
+### Changed
+- Helm chart version bumped to 1.93.40.
+
+---
+
 ## [1.93.39] - 2026-04-28
 
 ### Fixed

@@ -8,7 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import type { FC } from 'react';
 import SnapshotComplianceReport from './SnapshotComplianceReport';
-import { getToken } from '../lib/api';
+import { apiFetch } from '../lib/api';
 
 interface PolicySet {
   id: number;
@@ -72,8 +72,6 @@ const SnapshotPolicyManager: FC = () => {
   const [showCreatePolicy, setShowCreatePolicy] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<PolicySet | null>(null);
 
-  const token = getToken();
-
   useEffect(() => {
     loadData();
   }, [activeTab]);
@@ -83,29 +81,21 @@ const SnapshotPolicyManager: FC = () => {
     setError(null);
 
     try {
-      const headers = { Authorization: `Bearer ${token}` };
-
       switch (activeTab) {
         case 'policies': {
-          const policiesRes = await fetch('/api/snapshot/policy-sets', { headers });
-          if (!policiesRes.ok) throw new Error('Failed to load policy sets');
-          const policiesData = await policiesRes.json();
+          const policiesData = await apiFetch<{ policy_sets: PolicySet[] }>('/api/snapshot/policy-sets');
           setPolicySets(policiesData.policy_sets || []);
           break;
         }
 
         case 'assignments': {
-          const assignmentsRes = await fetch('/api/snapshot/assignments', { headers });
-          if (!assignmentsRes.ok) throw new Error('Failed to load assignments');
-          const assignmentsData = await assignmentsRes.json();
+          const assignmentsData = await apiFetch<{ assignments: SnapshotAssignment[] }>('/api/snapshot/assignments');
           setAssignments(assignmentsData.assignments || []);
           break;
         }
 
         case 'runs': {
-          const runsRes = await fetch('/api/snapshot/runs', { headers });
-          if (!runsRes.ok) throw new Error('Failed to load snapshot runs');
-          const runsData = await runsRes.json();
+          const runsData = await apiFetch<{ runs: SnapshotRun[] }>('/api/snapshot/runs');
           setRuns(runsData.runs || []);
           break;
         }
@@ -121,12 +111,7 @@ const SnapshotPolicyManager: FC = () => {
     if (!window.confirm('Are you sure you want to delete this policy?')) return;
 
     try {
-      const res = await fetch(`/api/snapshot/policy-sets/${policyId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) throw new Error('Failed to delete policy');
+      await apiFetch(`/api/snapshot/policy-sets/${policyId}`, { method: 'DELETE' });
       setPolicySets(policySets.filter((p: PolicySet) => p.id !== policyId));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete policy');
@@ -137,12 +122,7 @@ const SnapshotPolicyManager: FC = () => {
     if (!window.confirm('Are you sure you want to delete this assignment?')) return;
 
     try {
-      const res = await fetch(`/api/snapshot/assignments/${volumeId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) throw new Error('Failed to delete assignment');
+      await apiFetch(`/api/snapshot/assignments/${volumeId}`, { method: 'DELETE' });
       setAssignments(assignments.filter((a: SnapshotAssignment) => a.volume_id !== volumeId));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete assignment');

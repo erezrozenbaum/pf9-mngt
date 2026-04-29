@@ -613,7 +613,7 @@ def get_capacity_forecast(
     forecasts = []
     for pid, pdata in projects.items():
         prows = pdata["rows"]
-        if len(prows) < 3:
+        if len(prows) < 2:  # minimum 2 data points for linear regression
             continue
         t0 = float(prows[0]["ts"])
         xs = [(float(r["ts"]) - t0) / 86400.0 for r in prows]
@@ -788,7 +788,7 @@ def get_client_health(
             projects_rows[r["project_id"]].append(r)
 
         for _pid, prows in projects_rows.items():
-            if len(prows) < 3:
+            if len(prows) < 2:  # minimum 2 data points for linear regression
                 continue
             import time as _time
             # Approximate ts using row position (rows ordered by collected_at)

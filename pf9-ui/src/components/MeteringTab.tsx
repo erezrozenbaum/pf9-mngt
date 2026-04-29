@@ -833,6 +833,13 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
       {subTab === "resources" && !loading && (
         <div>
           {filterBar()}
+          {/* Warn when monitoring service is unavailable (CPU/network data is null/N-A) */}
+          {resources.length > 0 && resources.slice(0, 10).every(r => r.cpu_usage_percent === null || r.cpu_usage_percent === undefined) && (
+            <div style={{ margin: "0 0 10px", padding: "8px 12px", background: "rgba(245,158,11,0.1)", border: "1px solid var(--color-warning,#f59e0b)", borderRadius: 6, fontSize: "0.83em", color: "var(--color-text-primary,#374151)", display: "flex", alignItems: "center", gap: 8 }}>
+              <span>⚠️</span>
+              <span><strong>Real-time metrics unavailable.</strong> The monitoring service cannot reach hypervisors — CPU %, RAM %, and network data will show N/A. Provisioned disk size is shown. Contact your infrastructure team to verify the Prometheus/libvirt exporter setup on hypervisors.</span>
+            </div>
+          )}
           <div style={{ overflowX: "auto" }}>
             <div style={{ marginBottom: 8, fontSize: "0.85em", color: "var(--color-text-secondary, #666)" }}>{resources.length} records</div>
             <table className="pf9-table" style={{ width: "100%", fontSize: "0.82em" }}>

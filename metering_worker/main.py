@@ -324,14 +324,16 @@ def collect_resource_metrics(conn, region_id: str) -> int:
                              WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(vol.raw_json->'attachments') att
                                            WHERE att->>'server_id' = s.id))
                         ) AS storage_allocated_gb,
-                        CASE WHEN h.vcpus > 0 AND fl.vcpus > 0
-                            THEN ROUND(fl.vcpus::numeric / h.vcpus * 100, 1) ELSE 0
-                        END AS cpu_usage_percent
+                        -- cpu_usage_percent intentionally NULL here: the DB-direct fallback
+                        -- has no real per-VM CPU telemetry. Returning NULL surfaces as "N/A"
+                        -- in the UI, which is accurate. The hypervisor-ratio estimate that
+                        -- was previously computed (fl.vcpus / h.vcpus * 100) was misleading
+                        -- because it measured hypervisor-level allocation, not VM utilisation.
+                        NULL::numeric AS cpu_usage_percent
                     FROM servers s
                     LEFT JOIN projects p ON p.id = s.project_id
                     LEFT JOIN domains d ON d.id = p.domain_id
                     LEFT JOIN flavors fl ON fl.id = s.flavor_id
-                    LEFT JOIN hypervisors h ON h.hostname = s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname'
                     WHERE s.status = 'ACTIVE'
                     ORDER BY s.name
                 """)
@@ -1040,6 +1042,21 @@ def main():
         conn.close()
     except Exception:
         interval_min = 15
+
+    # Startup backfill: if metering_quotas is empty, run an immediate quota
+    # collection so the capacity forecast has data on first startup.
+    try:
+        conn = get_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM metering_quotas")
+            quota_count = cur.fetchone()[0]
+        if quota_count == 0:
+            log.info("metering_quotas is empty — running startup quota backfill")
+            n = collect_quota_usage(conn, "")
+            log.info("Startup quota backfill complete: %d projects seeded", n)
+        conn.close()
+    except Exception as exc:
+        log.warning("Startup quota backfill failed (non-fatal): %s", exc)
 
     # POLL_INTERVAL (env var, Helm-controlled) governs the actual cadence.
     # collection_interval_min from the DB is a display-only admin setting;

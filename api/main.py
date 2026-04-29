@@ -2102,10 +2102,13 @@ def get_worker_metrics(request: Request):
 def get_api_metrics_authenticated(request: Request):
     """Get API performance metrics (authenticated endpoint for UI)"""
     try:
-        token = None
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
+        # Cookie-first auth: httpOnly cookie is primary in K8s/browser deployments.
+        # Bearer header is kept for backward compat (CI / direct API calls).
+        token = request.cookies.get("access_token")
+        if not token:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
 
         if not token:
             raise HTTPException(status_code=401, detail="Not authenticated")
@@ -2151,10 +2154,13 @@ def get_system_logs(
     - log_file: Filter by log file (pf9_api, pf9_monitoring, all)
     """
     try:
-        token = None
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
+        # Cookie-first auth: httpOnly cookie is primary in K8s/browser deployments.
+        # Bearer header is kept for backward compat (CI / direct API calls).
+        token = request.cookies.get("access_token")
+        if not token:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
 
         if not token:
             raise HTTPException(status_code=401, detail="Not authenticated")
