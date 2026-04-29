@@ -51,7 +51,7 @@ export const SnapshotAuditTrail: React.FC = () => {
 
   useEffect(() => {
     filterRecords();
-  }, [records, filters, currentPage, pageSize]);
+  }, [records, filters, pageSize]);
 
   const loadRecords = async () => {
     setLoading(true);

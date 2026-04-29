@@ -732,7 +732,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
         {SUB_TABS.map((t) => (
           <button
             key={t.id}
-            onClick={() => { setSubTab(t.id); setSortField("collected_at"); setSortDir("desc"); }}
+            onClick={() => { setSubTab(t.id); setSortField("collected_at"); setSortDir("desc"); setDomainFilter(""); setProjectFilter(""); }}
             style={{
               padding: "8px 16px",
               background: subTab === t.id ? "var(--color-primary, #1976D2)" : "transparent",

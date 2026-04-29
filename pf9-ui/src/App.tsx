@@ -6077,7 +6077,7 @@ const App: React.FC = () => {
                         <th>Tenant</th>
                         <th>CPU Usage</th>
                         <th>Memory Usage</th>
-                        <th>Storage Used</th>
+                        <th>Storage Used <span title="Real-time storage usage requires libvirt-exporter on hypervisors. Shows provisioned size when live data is unavailable." style={{ cursor: "help", opacity: 0.6, fontSize: "0.8em" }}>ⓘ</span></th>
                         <th>Network RX/TX</th>
                         <th>Last Update</th>
                       </tr>
@@ -6683,21 +6683,37 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {/* Hypervisor Details Panel */}
+          {activeTab === "hypervisors" && selectedHypervisor && (
+            <div>
+              <h2>Hypervisor Details</h2>
+              <p><strong>Hostname:</strong> {selectedHypervisor.hypervisor_hostname}</p>
+              {selectedHypervisor.host_ip && <p><strong>IP:</strong> {selectedHypervisor.host_ip}</p>}
+              <p><strong>State:</strong> {selectedHypervisor.state ?? "—"}</p>
+              <p><strong>Status:</strong> {selectedHypervisor.status ?? "—"}</p>
+              <p><strong>Type:</strong> {selectedHypervisor.hypervisor_type ?? "—"}</p>
+              <p><strong>Running VMs:</strong> {selectedHypervisor.running_vms ?? 0}</p>
+              <p><strong>vCPUs:</strong> {selectedHypervisor.vcpus_used ?? 0} / {selectedHypervisor.vcpus ?? 0}</p>
+              <p><strong>RAM:</strong> {selectedHypervisor.memory_mb_used ?? 0} / {selectedHypervisor.memory_mb ?? 0} MB</p>
+              <p><strong>Disk:</strong> {selectedHypervisor.local_gb_used ?? 0} / {selectedHypervisor.local_gb ?? 0} GB</p>
+              {selectedHypervisor.pf9_roles && <p><strong>Roles:</strong> {selectedHypervisor.pf9_roles}</p>}
+              {selectedHypervisor.last_seen_at && <p><strong>Last Seen:</strong> {formatDate(selectedHypervisor.last_seen_at)}</p>}
+              <button
+                className="graph-view-deps-btn"
+                onClick={() => setGraphTarget({ type: "host", id: selectedHypervisor.hypervisor_id, label: selectedHypervisor.hypervisor_hostname })}
+              >
+                🕸️ View Dependencies
+              </button>
+            </div>
+          )}
+
           {/* User Details Panel */}
           {activeTab === "users" && selectedUserItem && (
             <div>
               <h2>User Details</h2>
-              <p>
-                <strong>Name:</strong> {selectedUserItem.name}
-              </p>
-              <p>
-                <strong>ID:</strong> {selectedUserItem.id}
-              </p>
-              {selectedUserItem.email && (
-                <p>
-                  <strong>Email:</strong> {selectedUserItem.email}
-                </p>
-              )}
+              <p><strong>Name:</strong> {selectedUserItem.name}</p>
+              <p><strong>ID:</strong> {selectedUserItem.id}</p>
+              {selectedUserItem.email && <p><strong>Email:</strong> {selectedUserItem.email}</p>}
               <p>
                 <strong>Domain:</strong> {selectedUserItem.domain_name || "N/A"}
               </p>

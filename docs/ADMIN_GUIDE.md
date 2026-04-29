@@ -663,6 +663,16 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.93.41 — UX fixes: pagination, graph depth, hypervisors panel, metering filters (✅ Complete)
+
+- **Snapshot Audit Trail pagination stuck on page 1** — `currentPage` was in the filter `useEffect` dependency array, causing every page navigation to re-run `filterRecords()` which reset `currentPage` to 1 immediately. Removed `currentPage` from the dependency array.
+- **Domain graph depth 2 → 3** — `DependencyGraph` defaulted to depth 2 for all root types. Domain roots now default to depth 3, showing domain → tenants → VMs/volumes.
+- **Hypervisors detail panel missing** — No detail panel or graph shortcut existed for selected hypervisor rows. Added full detail panel (hostname, IP, state, vCPUs, RAM, disk, running VMs, roles, last seen) with a "View Dependencies" button.
+- **Metering filter carry-over between sub-tabs** — Domain and project filters were shared state across all sub-tabs; switching tabs preserved the previous filter. Filters now reset when switching sub-tabs.
+- **Snapshot PolicyForm auth fix** — `PolicyForm` sub-component was missed in the `apiFetch` migration; it still used raw `fetch` with a fake Bearer token. Replaced with `apiFetch`.
+- **Volume Assignments empty state** — Improved empty-state message to explain that assignments are created automatically by the Snapshot Worker or manually.
+- **Monitoring Storage column tooltip** — Added info tooltip explaining that real-time storage requires libvirt-exporter on hypervisors.
+
 ### v1.93.40 — Auth fixes, SLA 503, VM metrics accuracy, capacity forecast (✅ Complete)
 
 - **System Log / API Metrics → HTTP 401** — The `/api/logs` and `/api/metrics` handlers used inline Bearer-only auth. Browser clients send an httpOnly cookie; both routes now use cookie-first auth with Bearer fallback. `SystemLogsTab.tsx` replaced raw `fetch` with `apiFetch` to include cookies.

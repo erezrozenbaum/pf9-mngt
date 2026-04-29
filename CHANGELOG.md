@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.41] - 2026-04-29
+
+### Fixed
+- **Snapshot Audit Trail — pagination stuck on page 1**: Changing filters correctly resets to page 1, but navigating pages was also re-triggering the filter effect (which reset `currentPage` back to 1 immediately). Removed `currentPage` from the filter `useEffect` dependency array so page navigation works independently of filter changes.
+- **Domain Dependency Graph — only 2 layers deep**: Clicking "View Dependencies" from the Domain detail panel opened the graph at depth 2, showing only domain → tenants. Domains now default to depth 3 (domain → tenants → VMs/volumes) to provide useful topology context.
+- **Hypervisors — no detail panel and no graph link**: Clicking a hypervisor row showed no detail panel on the right side and no "View Dependencies" button. Added a full hypervisor detail panel (hostname, IP, state, vCPUs, RAM, disk, running VMs, roles, last seen) with a dependency graph shortcut.
+- **Metering tab — filters carry over between sub-tabs**: Switching between sub-tabs (e.g. API Usage → Overview) preserved the domain/project filter from the previous tab, showing filtered instead of full data. Domain and project filters now reset to empty when switching sub-tabs.
+- **Snapshot PolicyForm — `PolicyForm` was missing `apiFetch` migration**: The create/edit policy form (`PolicyForm` sub-component) was missed in the earlier `apiFetch` refactor and still used a raw `fetch` call with a manual `Authorization: Bearer` header. Replaced with `apiFetch` so form submission uses cookie auth correctly.
+
+### Improved
+- **Snapshot Volume Assignments — descriptive empty state**: When no assignments exist the table now shows an explanatory message describing how assignments are created (automatically by the Snapshot Worker or manually) instead of a bare "No assignments found" text.
+- **Monitoring Storage column — tooltip on "—" values**: Added an info icon tooltip to the Storage Used column header explaining that real-time storage usage requires libvirt-exporter on hypervisors, and that the provisioned size is shown as a fallback when live data is unavailable.
+
+### Changed
+- Helm chart version bumped to 1.93.41.
+
+---
+
 ## [1.93.40] - 2026-04-29
 
 ### Fixed

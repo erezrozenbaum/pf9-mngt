@@ -520,6 +520,8 @@ interface Props {
    * rootType/rootId. Enables VMware-side migration graphs from migration_routes.
    */
   graphUrl?: string;
+  /** Override the default starting depth (default: 2, domain default: 3). */
+  defaultDepth?: number;
 }
 
 // Map graph node type → App.tsx ActiveTab id
@@ -544,8 +546,8 @@ const NODE_TYPE_TO_API_ROOT: Record<string, GraphRootType> = {
   fip: "floating_ip",
 };
 
-export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, onNavigate, onCreateSnapshot, migrationProjectId, graphUrl }: Props) {
-  const [depth,       setDepth]       = useState(2);
+export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, onNavigate, onCreateSnapshot, migrationProjectId, graphUrl, defaultDepth }: Props) {
+  const [depth,       setDepth]       = useState(defaultDepth ?? (rootType === "domain" ? 3 : 2));
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set(["port", "subnet"]));
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState<string | null>(null);

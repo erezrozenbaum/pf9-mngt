@@ -266,7 +266,12 @@ const SnapshotPolicyManager: FC = () => {
                     {assignments.length === 0 ? (
                       <tr>
                         <td colSpan={8} className="empty-cell">
-                          No assignments found
+                          <div style={{ padding: "16px 0" }}>
+                            <strong>No volume assignments yet.</strong>
+                            <p style={{ marginTop: 6, color: "var(--color-text-secondary, #94a3b8)", fontSize: "0.875rem" }}>
+                              Assignments are created automatically by the Snapshot Worker when active policy sets match volumes, or can be created manually by selecting a volume in the Inventory.
+                            </p>
+                          </div>
                         </td>
                       </tr>
                     ) : (
