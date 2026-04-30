@@ -1634,7 +1634,15 @@ docker exec pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
   -c "SELECT filename, applied_at FROM schema_migrations ORDER BY applied_at;"
 ```
 
-There are currently ~70 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
+There are currently ~71 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
+
+**v1.94.0** adds `db/migrate_v1_94_0.sql`: creates the `dashboard_health_snapshots` table (one row per calendar day — `total_vms`, `running_vms`, `total_hosts`, `critical_count`) and a descending date index. Written by `pf9_scheduler_worker` via UPSERT; read by the new `GET /dashboard/health-trend` endpoint for admin dashboard sparkline charts. Apply with:
+```bash
+# Docker
+docker exec pf9_api python run_migration.py
+# Kubernetes (auto-applied via Helm post-upgrade hook)
+kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py
+```
 
 **v1.93.37** adds `db/migrate_v1_93_37.sql`: grants `sla:read` and `intelligence:read` to the `technical` role — these permissions were missing, preventing technical users from accessing the Insights and SLA tabs. Uses `ON CONFLICT DO NOTHING` — safe to re-run. Apply with:
 ```bash

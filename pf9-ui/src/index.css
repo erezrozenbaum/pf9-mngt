@@ -1,5 +1,5 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -13,7 +13,7 @@
   --color-primary-dark: #1565C0;
   --color-primary-light: #42A5F5;
   --color-secondary: #424242;
-  --color-background: #F8F9FA;
+  --color-background: #F0F4F8;
   --color-surface: #FFFFFF;
   --color-surface-elevated: #F5F7FA;
   --color-card: #FFFFFF;
@@ -39,11 +39,10 @@
   --color-status-pending: #FF9800;
   --color-status-building: #2196F3;
   
-  /* Sidebar light mode: same white as cards so sidebar and content read as one system.
-     Visual hierarchy is created by the border-right + the slightly recessed canvas
-     (--color-background: #F8F9FA) behind everything, not by a tinted sidebar. */
-  --color-sidebar-bg: var(--color-surface);    /* #FFFFFF — same as cards */
-  --color-nav-items-bg: var(--color-surface-elevated);  /* #F5F7FA — subtle hover/active bg */
+  /* Sidebar light mode: dark sidebar even in light mode — like AWS Console.
+     White text explicitly set via .pf9-sidebar CSS class. */
+  --color-sidebar-bg: #1A1D2E;    /* dark navy in light mode */
+  --color-nav-items-bg: rgba(255,255,255,0.06);  /* subtle hover on dark sidebar */
 
   /* Action tab accent (write-capable tabs) */
   --color-action-accent: #E65100;
@@ -74,136 +73,104 @@
   --secondary-color: #E0E0E0;
   --secondary-dark: #BDBDBD;
 
-  /* Component-level (--pf9-*) aliases used by inline styles */
-  --pf9-text: #2d3748;
-  --pf9-text-secondary: #718096;
-  --pf9-text-muted: #a0aec0;
-  --pf9-border: #e2e8f0;
-  --pf9-bg-input: #ffffff;
-  --pf9-bg-card: #f7fafc;
-  --pf9-bg-muted: #edf2f7;
-  --pf9-bg-header: #edf2f7;
-  --pf9-bg-selected: #ebf8ff;
-  --pf9-heading: #1a365d;
-  --pf9-success: #48bb78;
-  --pf9-warning-bg: #fffaf0;
-  --pf9-warning-border: #ed8936;
-  --pf9-warning-text: #c05621;
-  --pf9-info-bg: #ebf8ff;
-  --pf9-info-border: #4299e1;
-  --pf9-info-text: #2b6cb0;
-  --pf9-danger-bg: #fff5f5;
-  --pf9-danger-border: #fed7d7;
-  --pf9-danger-text: #c53030;
-  --pf9-safe-bg: #f0fff4;
-  --pf9-safe-border: #c6f6d5;
-  --pf9-safe-text: #276749;
-  --pf9-badge-enabled-bg: #c6f6d5;
-  --pf9-badge-enabled-text: #276749;
-  --pf9-badge-disabled-bg: #fed7d7;
-  --pf9-badge-disabled-text: #9b2c2c;
-  --pf9-id-color: #cbd5e0;
-  --pf9-toggle-active: #4299e1;
-  --pf9-toggle-inactive: #cbd5e0;
-  --pf9-accent-orange: #c05621;
-  --pf9-tooltip-bg: #2d3748;
+  /* Legacy aliases — now reference canonical tokens so they auto-adapt to theme */
+  --pf9-text: var(--color-text-primary);
+  --pf9-text-secondary: var(--color-text-secondary);
+  --pf9-text-muted: var(--color-text-secondary);
+  --pf9-border: var(--color-border);
+  --pf9-bg-input: var(--color-surface);
+  --pf9-bg-card: var(--color-card);
+  --pf9-bg-muted: var(--color-surface-elevated);
+  --pf9-bg-header: var(--color-table-header);
+  --pf9-bg-selected: var(--color-table-row-hover);
+  --pf9-heading: var(--color-primary);
+  --pf9-success: var(--color-success);
+  --pf9-warning-bg: rgba(255, 152, 0, 0.10);
+  --pf9-warning-border: var(--color-warning);
+  --pf9-warning-text: var(--color-warning);
+  --pf9-info-bg: rgba(33, 150, 243, 0.10);
+  --pf9-info-border: var(--color-info);
+  --pf9-info-text: var(--color-info);
+  --pf9-danger-bg: var(--color-error-bg);
+  --pf9-danger-border: rgba(244, 67, 54, 0.30);
+  --pf9-danger-text: var(--color-error);
+  --pf9-safe-bg: rgba(76, 175, 80, 0.10);
+  --pf9-safe-border: rgba(76, 175, 80, 0.30);
+  --pf9-safe-text: var(--color-success);
+  --pf9-badge-enabled-bg: rgba(76, 175, 80, 0.15);
+  --pf9-badge-enabled-text: var(--color-success);
+  --pf9-badge-disabled-bg: rgba(244, 67, 54, 0.15);
+  --pf9-badge-disabled-text: var(--color-error);
+  --pf9-id-color: var(--color-text-secondary);
+  --pf9-toggle-active: var(--color-primary);
+  --pf9-toggle-inactive: var(--color-border);
+  --pf9-accent-orange: var(--color-action-accent);
+  --pf9-tooltip-bg: var(--color-surface-elevated);
 
   /* Theme transition */
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Enhanced Dark theme colors */
+/* Dark theme — Grafana-class mission control palette */
 :root[data-theme="dark"] {
-  --color-primary: #90CAF9;
-  --color-primary-dark: #5C6BC0;
-  --color-primary-light: #BBDEFB;
-  --color-secondary: #B0B0B0;
-  --color-background: #0D1117;
-  --color-surface: #1A1D23;
-  --color-surface-elevated: #1F2937;
-  --color-card: #252A31;
-  --color-text-primary: #FFFFFF;
-  --color-text-secondary: #B0BEC5;
-  --color-border: #37474F;
-  --color-border-light: #2C3E50;
-  --color-success: #66BB6A;
-  --color-warning: #FFA726;
-  --color-error: #EF5350;
-  --color-info: #42A5F5;
-  
+  --color-primary: #38BDF8;
+  --color-primary-dark: #0EA5E9;
+  --color-primary-light: #7DD3FC;
+  --color-secondary: #94A3B8;
+  --color-background: #0B0F19;
+  --color-surface: #111827;
+  --color-surface-elevated: #1E2A3B;
+  --color-card: #162032;
+  --color-text-primary: #E2E8F0;
+  --color-text-secondary: #94A3B8;
+  --color-border: #1F3050;
+  --color-border-light: #162040;
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-error: #EF4444;
+  --color-info: #38BDF8;
+
   /* Dark table colors */
-  --color-table-header: #1F2937;
-  --color-table-row-even: #1A202C;
-  --color-table-row-hover: #2D3748;
-  --color-table-border: #374151;
-  
+  --color-table-header: #162032;
+  --color-table-row-even: #0F1A2A;
+  --color-table-row-hover: #1E2A3B;
+  --color-table-border: #1F3050;
+
   /* Dark status colors */
   --color-status-active: #10B981;
   --color-status-inactive: #EF4444;
   --color-status-pending: #F59E0B;
-  --color-status-building: #3B82F6;
-  
-  /* Sidebar — dark: match surface (#1A1D23) so sidebar + header form a unified chrome
-     around the darker content canvas (#0D1117). */
-  --color-sidebar-bg: #1A1D23;
-  --color-nav-items-bg: rgba(255,255,255,0.03);
+  --color-status-building: #38BDF8;
 
-  /* Dark action tab accent */
-  --color-action-accent: #FFB74D;
-  --color-action-accent-light: #FFE0B2;
-  --color-action-accent-dark: #F57C00;
-  --color-action-accent-bg: rgba(255, 183, 77, 0.08);
-  --color-action-accent-border: rgba(255, 183, 77, 0.3);
+  /* Sidebar — darker than content canvas to frame the work area */
+  --color-sidebar-bg: #080C14;
+  --color-nav-items-bg: rgba(56, 189, 248, 0.04);
 
-  /* Dark shadows */
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.4);
-  --shadow-md: 0 3px 6px rgba(0,0,0,0.4), 0 3px 6px rgba(0,0,0,0.5);
-  --shadow-lg: 0 10px 20px rgba(0,0,0,0.5), 0 6px 6px rgba(0,0,0,0.6);
+  /* Action tab accent — orange for write-capable tabs */
+  --color-action-accent: #F97316;
+  --color-action-accent-light: #FDBA74;
+  --color-action-accent-dark: #EA580C;
+  --color-action-accent-bg: rgba(249, 115, 22, 0.08);
+  --color-action-accent-border: rgba(249, 115, 22, 0.3);
+
+  /* Dark shadows — deeper for floating panels */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.5);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.4);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.6), 0 6px 12px rgba(0,0,0,0.5);
 
   /* Aliases for component CSS files */
-  --text-primary: #FFFFFF;
-  --text-secondary: #B0BEC5;
-  --card-bg: #252A31;
-  --bg-secondary: #1F2937;
-  --border-color: #37474F;
-  --primary-color: #90CAF9;
-  --primary-dark: #5C6BC0;
-  --secondary-color: #37474F;
-  --secondary-dark: #455A64;
+  --text-primary: #E2E8F0;
+  --text-secondary: #94A3B8;
+  --card-bg: #162032;
+  --bg-secondary: #1E2A3B;
+  --border-color: #1F3050;
+  --primary-color: #38BDF8;
+  --primary-dark: #0EA5E9;
+  --secondary-color: #1F3050;
+  --secondary-dark: #162040;
 
-  /* Component-level (--pf9-*) aliases – dark overrides */
-  --pf9-text: #E2E8F0;
-  --pf9-text-secondary: #A0B4C0;
-  --pf9-text-muted: #8899A6;
-  --pf9-border: #37474F;
-  --pf9-bg-input: #1A1D23;
-  --pf9-bg-card: #1E2330;
-  --pf9-bg-muted: #1F2937;
-  --pf9-bg-header: #1F2937;
-  --pf9-bg-selected: #263040;
-  --pf9-heading: #90CAF9;
-  --pf9-success: #66BB6A;
-  --pf9-warning-bg: #332B1A;
-  --pf9-warning-border: #B8860B;
-  --pf9-warning-text: #FFB74D;
-  --pf9-info-bg: #1A2636;
-  --pf9-info-border: #42A5F5;
-  --pf9-info-text: #90CAF9;
-  --pf9-danger-bg: #2D1A1A;
-  --pf9-danger-border: #7F3333;
-  --pf9-danger-text: #EF9A9A;
-  --pf9-safe-bg: #1A2D1A;
-  --pf9-safe-border: #2E7D32;
-  --pf9-safe-text: #A5D6A7;
-  --pf9-badge-enabled-bg: #1B3A2A;
-  --pf9-badge-enabled-text: #81C784;
-  --pf9-badge-disabled-bg: #3A1B1B;
-  --pf9-badge-disabled-text: #EF9A9A;
-  --pf9-id-color: #607D8B;
-  --pf9-toggle-active: #42A5F5;
-  --pf9-toggle-inactive: #546E7A;
-  --pf9-accent-orange: #FFB74D;
-  --pf9-tooltip-bg: #37474F;
+  /* error-bg dark override (for --pf9-danger-bg which uses --color-error-bg) */
+  --color-error-bg: rgba(239, 68, 68, 0.12);
 }
 
 /* Text selection — override browser default so selected text stays readable in dark mode */

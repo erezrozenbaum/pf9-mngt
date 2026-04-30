@@ -874,6 +874,32 @@ CREATE TABLE psa_webhook_config (
 
 ---
 
+## Dashboard Health Trend (v1.94.0)
+
+### dashboard_health_snapshots
+One row per calendar day. Written by `pf9_scheduler_worker` via UPSERT so missed days back-fill automatically. Read by `GET /dashboard/health-trend` for admin dashboard sparkline charts.
+
+```sql
+CREATE TABLE IF NOT EXISTS dashboard_health_snapshots (
+    id             BIGSERIAL PRIMARY KEY,
+    snapshot_date  DATE        NOT NULL UNIQUE,
+    total_vms      INTEGER     NOT NULL DEFAULT 0,
+    running_vms    INTEGER     NOT NULL DEFAULT 0,
+    total_hosts    INTEGER     NOT NULL DEFAULT 0,
+    critical_count INTEGER     NOT NULL DEFAULT 0,
+    recorded_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_health_snapshots_date
+    ON dashboard_health_snapshots(snapshot_date DESC);
+```
+
+**Write pattern**: `scheduler_worker` calls `_snapshot_health_daily()` once per daily RVTools cycle. Uses `ON CONFLICT (snapshot_date) DO UPDATE` so the row is refreshed if the scheduler runs more than once per day.
+
+**Read pattern**: `GET /dashboard/health-trend?days=N` returns the last N rows ordered by date ascending. Returns `[]` if the table has no rows yet (new deployments).
+
+---
+
 ## Enriched Views
 
 ### Volume Attachments
@@ -990,4 +1016,4 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v1.83.50** (April 2026)
+Current schema version: **v1.94.0** (May 2026)

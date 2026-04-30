@@ -590,6 +590,12 @@ Every infrastructure resource follows a **dual-table pattern**:
 | `v_most_changed_resources` | Aggregated change counts for hotspot detection |
 | `v_user_activity_summary` | User activity dashboard (role counts, project access, 7/30-day activity) |
 
+### Key Tables Added in v1.94.0
+
+| Table | Purpose |
+|---|---|
+| `dashboard_health_snapshots` | One row per calendar day — `total_vms`, `running_vms`, `total_hosts`, `critical_count`. Written by `pf9_scheduler_worker` (UPSERT), read by `GET /dashboard/health-trend` for dashboard sparkline charts. |
+
 ---
 
 ## 🔄 Restore Flow & Safety Checks
@@ -756,14 +762,20 @@ sequenceDiagram
 - Modern responsive web interface
 - Real-time data visualization
 - Administrative operations UI
-- Theme support (light/dark mode)
+- Theme support (light/dark mode via `[data-theme="dark"]` CSS attribute)
 
 ```typescript
 // Component Structure
 src/
-├── App.tsx              # Main application component
+├── App.tsx              # Main application component with GlobalHealthBar
 ├── config.ts            # Centralised API_BASE + MONITORING_BASE config
 ├── components/
+│   ├── GlobalHealthBar.tsx  # 32px persistent status bar — live VM/host/alert counts (v1.94.0)
+│   ├── HealthSummaryCard.tsx # Health overview card with Recharts sparkline (v1.94.0)
+│   ├── VMHotspotsCard.tsx   # Top-VM horizontal bar chart via Recharts (v1.94.0)
+│   ├── HostUtilizationCard.tsx # Host CPU+memory grouped bar chart via Recharts (v1.94.0)
+│   ├── StatusBadge.tsx      # Reusable status pill (12 variants) (v1.94.0)
+│   ├── Skeleton.tsx         # Loading skeleton cards for dashboard (v1.94.0)
 │   └── ThemeToggle.tsx  # Theme switching component
 ├── hooks/
 │   └── useTheme.tsx     # Theme management hook
@@ -777,7 +789,8 @@ src/
 - **Advanced filtering and pagination**
 - **White-label branding** — Login page customizable via Admin Panel (colors, logo, hero content)
 - **Drag-and-drop tab reordering** — Per-user tab order with localStorage + backend persistence
-- **Comprehensive dark mode** — Full theme support across all components with CSS variable system
+- **Comprehensive dark mode** — Full theme support across all components with CSS variable system; `[data-theme="dark"]` attribute selector; Inter font (Google Fonts, weights 400–700)
+- **Recharts integration** — AreaChart sparklines and horizontal BarCharts for VM/host visualizations (v1.94.0)
 - **Administrative operation forms**
 
 ### Backend API Service
@@ -791,14 +804,14 @@ src/
 - Administrative operations
 - User management and role tracking
 - Historical analysis and audit trails
-- Real-time dashboard analytics with 14 endpoints
+- Real-time dashboard analytics with 15 endpoints
 
 ```python
 # API Structure
 api/
 ├── main.py              # FastAPI application and routes (66+ infrastructure endpoints)
 ├── db_pool.py           # Centralized ThreadedConnectionPool (shared across all modules)
-├── dashboards.py        # Analytics dashboard routes (14 endpoints)
+├── dashboards.py        # Analytics dashboard routes (15 endpoints)
 ├── notification_routes.py # Email notification management (7 endpoints)
 ├── restore_management.py # Snapshot restore planner + executor (8 endpoints)
 ├── metering_routes.py    # Operational metering endpoints (14 endpoints + 6 CSV exports)
@@ -814,9 +827,10 @@ api/
 
 **API Endpoints** (170+ total across modules):
 
-**Dashboard Analytics Endpoints** (api/dashboards.py - 14 endpoints):
+**Dashboard Analytics Endpoints** (api/dashboards.py - 15 endpoints):
 ```python
 GET  /dashboard/health-summary              # System health metrics
+GET  /dashboard/health-trend                # Daily health snapshots for sparkline charts (v1.94.0)
 GET  /dashboard/snapshot-sla-compliance      # Tenant compliance tracking
 GET  /dashboard/top-hosts-utilization       # Top resource consumers
 GET  /dashboard/recent-changes              # 24-hour activity timeline
@@ -1303,6 +1317,9 @@ tenant_portal_access, tenant_portal_branding,
 tenant_action_log, tenant_portal_mfa, runbook_project_tags
 -- tenant_cp_view: safe projection of pf9_control_planes (no password_enc)
 -- RLS enabled on: servers, volumes, snapshots, snapshot_records, restore_jobs
+
+-- Dashboard Health Trend (v1.94.0)
+dashboard_health_snapshots  -- daily aggregate snapshots for sparkline charts
 ```
 
 **Enhanced Schema Features**:

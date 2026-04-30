@@ -4290,3 +4290,17 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('tenant', 'servers',   'read'),
     ('tenant', 'volumes',   'read')
 ON CONFLICT DO NOTHING;
+
+
+-- Dashboard health trend snapshots (daily aggregate for sparklines)
+CREATE TABLE IF NOT EXISTS dashboard_health_snapshots (
+    id             BIGSERIAL PRIMARY KEY,
+    snapshot_date  DATE        NOT NULL UNIQUE,
+    total_vms      INTEGER     NOT NULL DEFAULT 0,
+    running_vms    INTEGER     NOT NULL DEFAULT 0,
+    total_hosts    INTEGER     NOT NULL DEFAULT 0,
+    critical_count INTEGER     NOT NULL DEFAULT 0,
+    recorded_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_health_snapshots_date
+    ON dashboard_health_snapshots(snapshot_date DESC);

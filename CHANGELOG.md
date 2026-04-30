@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.0] - 2026-05-02
+
+### Changed
+- **Enterprise dashboard overhaul — Grafana-class dark palette**: The dark theme now uses a deep navy/slate background (`#0B0F19`) with cyan-sky primary accent (`#38BDF8`), replacing the previous indigo palette. All CSS tokens are fully separated between light and dark themes with no hardcoded hex values remaining in component stylesheets.
+- **Inter font adopted across the entire UI**: Google Fonts Inter (weights 400–700) is preloaded in the document head. All body text, headings, navigation items, table cells, and dashboard cards now use Inter with system-ui fallback.
+- **Sidebar redesigned — permanently dark in both light and dark mode**: The navigation sidebar uses a dedicated `#1A1D2E` background in light mode and `#080C14` in dark mode, matching the AWS Console pattern. Nav items are 220 px wide with 2 px cyan left-border active indicators and uppercase 12 px group labels.
+- **Dashboard cards — glassmorphism with cyan-ghost borders**: Dark mode `.card` elements use `rgba(22, 32, 50, 0.85)` with `backdrop-filter: blur(8px)` and a 1 px `rgba(56,189,248,0.08)` border. Hover state lifts the border to `rgba(56,189,248,0.18)`.
+- **KPI metric hierarchy tightened**: `.health-value` increased to 2.5 rem / 700 weight; `.health-label` reduced to 0.625 rem uppercase with 0.07 em letter-spacing; `.health-sublabel` at 0.6875 rem / 500 weight with 0.8 opacity.
+- **Table density reduced**: `tbody td` padding reduced to `0.32 rem 0.72 rem`; font size 0.8 rem. Header cells now 0.7 rem uppercase with 0.04 em letter-spacing. Row hover uses an inset 2 px primary-colour left shadow instead of a solid background fill.
+
+### Added
+- **GlobalHealthBar — 32 px persistent status strip**: A top-of-page health bar shows live VM counts (running/total), host count, critical and warning counts, and a colour-coded status dot. Refreshes every 30 s via the existing health-summary endpoint. Pulses red when `critical_count > 0`. Renders nothing until first successful fetch (no flash of empty bar).
+- **7-day health-trend sparkline in the System Health card**: A Recharts `AreaChart` sparkline with a cyan gradient fill appears below the KPI grid when historical data is available. Data is collected daily by the scheduler and served via `GET /api/dashboard/health-trend?days=7`.
+- **`dashboard_health_snapshots` database table**: New table records daily aggregates of `total_vms`, `running_vms`, `total_hosts`, and `critical_count`. The scheduler performs an UPSERT after each daily data collection run.
+- **Recharts BarCharts replace CSS bars in VM Hotspots and Top Hosts**: The VM Hotspots card now renders three horizontal `BarChart` panels (CPU / Memory / Storage) with colour-coded cells and tooltips. The Top Hosts card shows a grouped bar chart (CPU + Memory per host) with semantic colour mapping — green < 70 %, amber 70–85 %, red > 85 %.
+- **`StatusBadge` component**: `<StatusBadge status="active" />` renders a colour-coded pill badge with a status dot. Supported variants: `active`, `inactive`, `running`, `stopped`, `error`, `warning`, `critical`, `healthy`, `degraded`, `unknown`, `enabled`, `disabled`.
+- **`Skeleton` and `SkeletonCard` components**: Shimmer-animated skeleton placeholders replace spinner/text loading states throughout the dashboard. The initial dashboard load renders a 6-card skeleton grid. The Insights tab SLA and forecast panels each show a `SkeletonCard` while data is loading.
+
+### Fixed
+- **Removed global `z-index: -1 !important` nuclear rule**: A CSS override that was incorrectly setting `*::before, *::after` z-index to −1 globally has been removed. This was causing z-index stacking issues with tooltips, dropdowns, and overlays.
+- **Dark mode CSS token consolidation**: The `--pf9-*` alias block in `:root[data-theme="dark"]` has been eliminated. All `--pf9-*` variables in `:root` now reference canonical `var(--color-*)` tokens and adapt automatically to dark mode through the token system.
+- **Dark mode selector migration in dashboard styles**: All `.dark` class-based selectors in `LandingDashboard.css` were migrated to the standard `[data-theme="dark"]` attribute selector, matching the rest of the application.
+
+---
+
 ## [1.93.47] - 2026-04-30
 
 ### Fixed

@@ -349,6 +349,26 @@ Response:
 }
 ```
 
+### Health Trend
+**GET** `/dashboard/health-trend`  
+Query Parameters:
+- `days` (optional, default: 7, min: 1, max: 30) - Number of days of history
+
+Returns daily health snapshots for sparkline charts in the admin dashboard. Written by the scheduler worker once per day (UPSERT). Returns an empty array gracefully if no snapshots have been recorded yet.
+
+Response:
+```json
+[
+  {
+    "snapshot_date": "2026-04-30",
+    "total_vms": 145,
+    "running_vms": 132,
+    "total_hosts": 12,
+    "critical_count": 2
+  }
+]
+```
+
 ---
 
 ## Infrastructure Endpoints

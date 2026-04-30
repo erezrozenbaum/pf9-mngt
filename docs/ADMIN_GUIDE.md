@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.47  
-**Last Updated**: April 30, 2026  
+**Version**: 1.94.0  
+**Last Updated**: May 2, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -662,6 +662,18 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.94.0 — Enterprise dashboard overhaul (✅ Complete)
+
+- **Grafana-class dark palette** — Deep navy/slate background (`#0B0F19`) with cyan-sky primary accent (`#38BDF8`). All CSS custom properties are token-based with no hardcoded hex values in component stylesheets.
+- **Inter font** — Google Fonts Inter (400–700) preloaded for all UI text.
+- **GlobalHealthBar** — Persistent 32 px strip at the top of every page showing live VM counts, host count, and critical/warning tallies. Refreshes every 30 s.
+- **7-day health-trend sparkline** — `dashboard_health_snapshots` table (daily UPSERT by the scheduler) feeds a Recharts `AreaChart` in the System Health card.
+- **Recharts charts** — VM Hotspots uses horizontal BarCharts with semantic colour thresholds; Top Hosts uses a grouped CPU/Memory BarChart.
+- **`StatusBadge` component** — Consistent colour-coded pill badges with dot indicators for all status values.
+- **Skeleton loading states** — Shimmer-animated placeholders replace spinner/text loading throughout the dashboard and Insights tab.
+- **Table density reduced** — Compact padding, uppercase column headers, and inset primary-colour left shadow on row hover.
+- **Sidebar redesigned** — Permanently dark in both light and dark mode with 2 px cyan active indicators.
 
 ### v1.93.47 — Monitoring push-cache, host network throughput, Copilot intents, dashboard polish (✅ Complete)
 

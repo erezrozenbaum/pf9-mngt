@@ -1,4 +1,5 @@
 import React from 'react';
+import { AreaChart, Area, ResponsiveContainer, Tooltip } from 'recharts';
 
 interface HealthData {
   total_tenants: number;
@@ -20,11 +21,20 @@ interface HealthData {
   timestamp: string;
 }
 
-interface Props {
-  data: HealthData;
+interface TrendPoint {
+  snapshot_date: string;
+  total_vms: number;
+  running_vms: number;
+  total_hosts: number;
+  critical_count: number;
 }
 
-export const HealthSummaryCard: React.FC<Props> = ({ data }) => {
+interface Props {
+  data: HealthData;
+  trendData?: TrendPoint[];
+}
+
+export const HealthSummaryCard: React.FC<Props> = ({ data, trendData = [] }) => {
   const getStatusIcon = (metric: number, thresholds: { warning: number; critical: number }): string => {
     if (metric >= thresholds.critical) return '🔴';
     if (metric >= thresholds.warning) return '🟡';
@@ -67,6 +77,37 @@ export const HealthSummaryCard: React.FC<Props> = ({ data }) => {
           <div className="health-sublabel">Total</div>
         </div>
       </div>
+
+      {/* 7-day trend sparkline */}
+      {trendData.length > 1 && (
+        <div className="health-trend-sparkline">
+          <div className="sparkline-label">Running VMs — 7 day trend</div>
+          <ResponsiveContainer width="100%" height={48}>
+            <AreaChart data={trendData} margin={{ top: 2, right: 4, left: 4, bottom: 2 }}>
+              <defs>
+                <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.35} />
+                  <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area
+                type="monotone"
+                dataKey="running_vms"
+                stroke="var(--color-primary)"
+                strokeWidth={1.5}
+                fill="url(#sparkGrad)"
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Tooltip
+                contentStyle={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: 11 }}
+                labelFormatter={(label: string) => new Date(label).toLocaleDateString()}
+                formatter={(val: number) => [val, 'Running VMs']}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Utilization Metrics */}
       <div className="utilization-section">

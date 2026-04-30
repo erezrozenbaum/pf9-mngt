@@ -654,6 +654,38 @@ async def get_health_summary(
 
 
 # =========================================================================
+# ENDPOINT 1b: Health Trend (daily sparkline data)
+# =========================================================================
+@router.get("/health-trend", dependencies=[Depends(require_permission("dashboard", "read"))])
+async def get_health_trend(
+    days: int = Query(7, ge=1, le=30, description="Number of days of history to return"),
+):
+    """
+    Return the last N daily health snapshots for dashboard sparklines.
+
+    Returns an empty list gracefully when no snapshots exist yet.
+    Snapshots are written once daily by the scheduler worker.
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT snapshot_date, total_vms, running_vms, total_hosts, critical_count
+                    FROM dashboard_health_snapshots
+                    ORDER BY snapshot_date ASC
+                    LIMIT %s
+                    """,
+                    (days,),
+                )
+                rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error("Error in get_health_trend: %s", e)
+        return []  # graceful degradation — sparklines simply won't render
+
+
+# =========================================================================
 # ENDPOINT 2: Snapshot SLA Compliance
 # =========================================================================
 @router.get("/snapshot-sla-compliance")

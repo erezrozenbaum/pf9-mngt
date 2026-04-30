@@ -127,3 +127,5 @@ k8s/sealed-secrets/*.yaml
 # Use the *.yaml files in the same directories as starting-point templates.
 k8s/nginx-ingress-tenant/metallb-pool.yaml
 k8s/nginx-ingress-tenant/values.yaml
+
+metrics_cache_live.json

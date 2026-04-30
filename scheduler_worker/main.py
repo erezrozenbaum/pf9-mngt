@@ -473,6 +473,57 @@ async def rvtools_loop(executor: ThreadPoolExecutor) -> None:
     log.info("RVTools loop stopped.")
 
 
+def _snapshot_health_daily() -> None:
+    """Upsert today's aggregate health counts into dashboard_health_snapshots.
+
+    Runs once per RVTools cycle (daily or on interval) so the health-trend
+    endpoint always has fresh data for the last 7 days of sparklines.
+    Silently skips if the table does not exist yet (first deploy before migration).
+    """
+    try:
+        conn = _get_db_conn_with_cb()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM servers")
+                total_vms = (cur.fetchone() or [0])[0]
+
+                cur.execute("SELECT COUNT(*) FROM servers WHERE status = 'ACTIVE'")
+                running_vms = (cur.fetchone() or [0])[0]
+
+                cur.execute("SELECT COUNT(*) FROM hypervisors")
+                total_hosts = (cur.fetchone() or [0])[0]
+
+                # Count critical alerts: hosts in error state or hypervisors with 0 VMs
+                cur.execute(
+                    "SELECT COUNT(*) FROM hypervisors WHERE state = 'down' OR status = 'disabled'"
+                )
+                critical_count = (cur.fetchone() or [0])[0]
+
+                cur.execute(
+                    """
+                    INSERT INTO dashboard_health_snapshots
+                        (snapshot_date, total_vms, running_vms, total_hosts, critical_count)
+                    VALUES (CURRENT_DATE, %s, %s, %s, %s)
+                    ON CONFLICT (snapshot_date) DO UPDATE SET
+                        total_vms      = EXCLUDED.total_vms,
+                        running_vms    = EXCLUDED.running_vms,
+                        total_hosts    = EXCLUDED.total_hosts,
+                        critical_count = EXCLUDED.critical_count,
+                        recorded_at    = now()
+                    """,
+                    (total_vms, running_vms, total_hosts, critical_count),
+                )
+            conn.commit()
+            log.info(
+                "Health snapshot: vms=%d running=%d hosts=%d critical=%d",
+                total_vms, running_vms, total_hosts, critical_count,
+            )
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.warning("Health snapshot: skipped — %s", exc)
+
+
 def _cleanup_old_reports() -> None:
     """Delete xlsx files in PF9_OUTPUT_DIR older than RVTOOLS_RETENTION_DAYS."""
     import time as _time
@@ -593,6 +644,8 @@ async def _run_rvtools_for_all_regions(
     await loop.run_in_executor(executor, _cleanup_expired_tokens)
     # Auto-fail PLANNED / RUNNING restore jobs that have exceeded their timeout
     await loop.run_in_executor(executor, _timeout_stale_restore_jobs)
+    # Capture daily health snapshot for dashboard sparklines
+    await loop.run_in_executor(executor, _snapshot_health_daily)
 
 
 # ---------------------------------------------------------------------------

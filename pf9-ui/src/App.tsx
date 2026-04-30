@@ -3,6 +3,7 @@ import "./App.css";
 import { ThemeProvider, useTheme } from "./hooks/useTheme";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { LandingDashboard } from "./components/LandingDashboard";
+import { GlobalHealthBar } from "./components/GlobalHealthBar";
 import UserManagement from "./components/UserManagement";
 import SnapshotPolicyManager from "./components/SnapshotPolicyManager";
 import SnapshotAuditTrail from "./components/SnapshotAuditTrail";
@@ -3321,6 +3322,7 @@ const App: React.FC = () => {
               <ThemeToggle />
             </div>
           </header>
+          <GlobalHealthBar />
           <div className="pf9-page-content">
 
       <section className="pf9-subtitle">

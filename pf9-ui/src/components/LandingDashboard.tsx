@@ -14,8 +14,9 @@ import { TrendlinesCard } from './TrendlinesCard';
 import { TenantRiskHeatmapCard } from './TenantRiskHeatmapCard';
 import { CapacityTrendsCard } from './CapacityTrendsCard';
 import { ComplianceDriftCard } from './ComplianceDriftCard';
-import { API_BASE } from '../config';
 import { useClusterContext } from './ClusterContext';
+import { API_BASE } from '../config';
+import { SkeletonCard } from './Skeleton';
 
 interface DashboardData {
   health: any;
@@ -36,6 +37,7 @@ interface DashboardData {
   osDistribution: any;
   ticketStats: any;
   insightSummary: any;
+  healthTrend: any;
 }
 
 // ---------- Widget registry for the chooser ----------
@@ -127,6 +129,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
     osDistribution: null,
     ticketStats: null,
     insightSummary: null,
+    healthTrend: null,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -209,7 +212,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
       ]);
 
       // Batch 3: trends + analytics
-      const [trendlines, tenantRiskHeatmap, capacityTrends, complianceDrift, rvtoolsLastRun, osDistribution, ticketStats, insightSummary] = await Promise.all([
+      const [trendlines, tenantRiskHeatmap, capacityTrends, complianceDrift, rvtoolsLastRun, osDistribution, ticketStats, insightSummary, healthTrend] = await Promise.all([
         safeFetch(`${API_BASE}/dashboard/trendlines`),
         safeFetch(`${API_BASE}/dashboard/tenant-risk-heatmap`),
         safeFetch(`${API_BASE}/dashboard/capacity-trends`),
@@ -218,6 +221,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         safeFetch(`${API_BASE}/os-distribution`),
         safeFetch(`${API_BASE}/api/tickets/stats`),
         safeFetch(`${API_BASE}/api/intelligence/insights/summary`),
+        safeFetch(`${API_BASE}/dashboard/health-trend?days=7`),
       ]);
 
       setData({
@@ -239,6 +243,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         osDistribution,
         ticketStats,
         insightSummary,
+        healthTrend,
       });
       setLastRefresh(new Date());
       setLastRVToolsRun(rvtoolsLastRun?.last_run ? rvtoolsLastRun : null);
@@ -270,19 +275,20 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
 
   if (loading && !data.health) {
     return (
-      <div className={`landing-dashboard loading ${theme === 'dark' ? 'dark' : ''}`}>
-        <div className="spinner">
-          <div className="bounce1"></div>
-          <div className="bounce2"></div>
-          <div className="bounce3"></div>
+      <div className="landing-dashboard loading">
+        <div className="dashboard-skeleton-grid">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="card">
+              <SkeletonCard rows={4} />
+            </div>
+          ))}
         </div>
-        <p>Loading dashboard...</p>
       </div>
     );
   }
 
   return (
-    <div className={`landing-dashboard ${theme === 'dark' ? 'dark' : ''}`}>
+    <div className="landing-dashboard">
       <div className="dashboard-header">
         <div className="header-actions">
           <div className="widget-chooser-wrapper" ref={chooserRef}>
@@ -367,7 +373,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
 
       <div className="dashboard-grid">
         {/* Row 1: Health Summary */}
-        {visibleWidgets.has('health') && data.health && <HealthSummaryCard data={data.health} />}
+        {visibleWidgets.has('health') && data.health && <HealthSummaryCard data={data.health} trendData={data.healthTrend ?? []} />}
 
         {/* Row 1: SLA Compliance */}
         {visibleWidgets.has('sla') && data.sla && (

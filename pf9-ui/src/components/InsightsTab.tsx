@@ -12,6 +12,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/api";
 import "../styles/InsightsTab.css";
 import IntelligenceSettingsPanel from "./IntelligenceSettingsPanel";
+import { SkeletonCard } from "./Skeleton";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -944,9 +945,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
   function renderForecast() {
     if (forecastLoading) {
       return (
-        <div style={{ padding: "2rem 1.5rem", color: "var(--text-secondary,#6b7280)" }}>
-          Loading capacity forecast…
-        </div>
+        <div style={{ padding: "1.5rem" }}><SkeletonCard rows={5} /></div>
       );
     }
 
@@ -1167,7 +1166,7 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
 
   function renderSla() {
     if (slaLoading) {
-      return <div style={{ padding: "2rem 1.5rem", color: "var(--text-secondary,#6b7280)" }}>Loading SLA summary…</div>;
+      return <div style={{ padding: "1.5rem" }}><SkeletonCard rows={5} /></div>;
     }
 
     if (slaLoadError) {

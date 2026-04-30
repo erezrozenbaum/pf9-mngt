@@ -1,4 +1,5 @@
 import React from 'react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 
 interface Host {
   hostname: string;
@@ -24,16 +25,17 @@ interface HostsData {
 
 interface Props {
   data: HostsData;
-  isDark?: boolean;
+  isDark?: boolean; // retained for backward compat, unused
 }
 
-export const HostUtilizationCard: React.FC<Props> = ({ data, isDark = false }) => {
-  const getUtilizationColor = (percent: number | null): string => {
-    if (percent === null) return isDark ? '#4b5563' : '#94a3b8';
-    if (percent > 85) return '#f87171'; // red (softened)
-    if (percent > 70) return '#f59e0b'; // amber
-    return '#10b981'; // green
-  };
+const getBarFill = (value: number | null) => {
+  if (value === null) return 'var(--color-border)';
+  if (value > 85) return 'var(--color-error)';
+  if (value > 70) return 'var(--color-warning)';
+  return 'var(--color-success)';
+};
+
+export const HostUtilizationCard: React.FC<Props> = ({ data }) => {
 
   return (
     <div className="host-utilization-card card">
@@ -65,86 +67,51 @@ export const HostUtilizationCard: React.FC<Props> = ({ data, isDark = false }) =
           <p>No host metrics available. Ensure monitoring service is running.</p>
         </div>
       ) : (
-        <div className="hosts-list">
-          {data.hosts.map((host, idx) => (
-            <div
-              key={host.hostname}
-              className={`host-item ${host.is_critical ? 'critical' : ''}`}
-            >
-              <div className="host-header">
-                <div className="host-rank">#{idx + 1}</div>
-                <div className="host-name">
-                  {host.host_display_name ?? host.hostname}
-                  {host.host_display_name && host.host_display_name !== host.hostname && (
-                    <span className="host-hostname">{host.hostname}</span>
-                  )}
-                  {host.is_critical && <span className="critical-badge">⚠️ HIGH</span>}
-                </div>
-                <div className="host-vm-count">
-                  {host.vm_count} VMs
-                  {host.capacity_vcpus != null && host.capacity_memory_mb != null && (
-                    <span className="host-capacity">
-                      • {host.capacity_vcpus} vCPU • {Math.round(host.capacity_memory_mb / 1024)} GB RAM
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="host-metrics">
-                <div className="metric-item">
-                  <div className="metric-label">CPU</div>
-                  <div className="metric-bar">
-                    <div
-                      className="metric-fill"
-                      style={{
-                          width: `${Math.min(host.cpu_utilization_percent ?? 0, 100)}%`,
-                          backgroundColor: getUtilizationColor(host.cpu_utilization_percent),
-                      }}
-                    />
-                  </div>
-                  <span className="metric-percent">
-                    {host.cpu_utilization_percent === null ? 'N/A' : `${host.cpu_utilization_percent}%`}
-                  </span>
-                </div>
-
-                <div className="metric-item">
-                  <div className="metric-label">Memory</div>
-                  <div className="metric-bar">
-                    <div
-                      className="metric-fill"
-                      style={{
-                          width: `${Math.min(host.memory_utilization_percent ?? 0, 100)}%`,
-                          backgroundColor: getUtilizationColor(host.memory_utilization_percent),
-                      }}
-                    />
-                  </div>
-                  <span className="metric-percent">
-                    {host.memory_utilization_percent === null ? 'N/A' : `${host.memory_utilization_percent}%`}
-                  </span>
-                </div>
-              </div>
-
-              {host.is_critical && (
-                <div className="critical-warning">
-                  ⚠️ Resource utilization is high. Consider workload rebalancing.
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        <ResponsiveContainer width="100%" height={data.hosts.length * 36 + 32}>
+          <BarChart
+            data={data.hosts.map(h => ({
+              name: (h.host_display_name ?? h.hostname).slice(0, 20),
+              CPU: h.cpu_utilization_percent ?? 0,
+              Memory: h.memory_utilization_percent ?? 0,
+              isCritical: h.is_critical,
+            }))}
+            layout="vertical"
+            margin={{ top: 4, right: 40, left: 8, bottom: 0 }}
+            barSize={6}
+            barGap={2}
+          >
+            <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--color-text-secondary)' }} tickFormatter={v => `${v}%`} />
+            <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--color-text-secondary)' }} width={130} />
+            <Tooltip
+              contentStyle={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: 11 }}
+              formatter={(val: number, name: string) => [`${val}%`, name]}
+            />
+            <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="CPU" radius={[0, 4, 4, 0]}>
+              {data.hosts.map((host, idx) => (
+                <Cell key={idx} fill={getBarFill(host.cpu_utilization_percent)} />
+              ))}
+            </Bar>
+            <Bar dataKey="Memory" radius={[0, 4, 4, 0]}>
+              {data.hosts.map((host, idx) => (
+                <Cell key={idx} fill={getBarFill(host.memory_utilization_percent)} opacity={0.7} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
       )}
 
       <div className="host-legend">
         <span className="legend-item">
-          <span className="status-indicator" style={{ backgroundColor: '#10b981' }} />
+          <span className="status-indicator" style={{ backgroundColor: 'var(--color-success)' }} />
           Normal (&lt;70%)
         </span>
         <span className="legend-item">
-          <span className="status-indicator" style={{ backgroundColor: '#f59e0b' }} />
-          Warning (70-85%)
+          <span className="status-indicator" style={{ backgroundColor: 'var(--color-warning)' }} />
+          Warning (70–85%)
         </span>
         <span className="legend-item">
-          <span className="status-indicator" style={{ backgroundColor: '#f87171' }} />
+          <span className="status-indicator" style={{ backgroundColor: 'var(--color-error)' }} />
           Critical (&gt;85%)
         </span>
       </div>

@@ -1,6 +1,5 @@
 .pf9-app {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   padding: 0;
   background: var(--color-background);
   color: var(--color-text-primary);
@@ -13,23 +12,29 @@
 
 /* ── Sidebar ── */
 .pf9-sidebar {
-  width: 240px;
+  width: 220px;
   flex-shrink: 0;
   height: 100vh;
   overflow-y: auto;
   background: var(--color-sidebar-bg);
-  /* Inset shadow instead of a hard border — sidebar and header share the same
-     background so a hard line would look out of place */
-  box-shadow: inset -1px 0 0 var(--color-border);
+  /* Sidebar is always dark — force light text regardless of page theme */
+  color: rgba(255,255,255,0.85);
+  /* Subtle cyan ghost border instead of hard separator */
+  border-right: 1px solid rgba(56, 189, 248, 0.06);
   display: flex;
   flex-direction: column;
   position: sticky;
   top: 0;
   scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+.pf9-sidebar:hover {
+  scrollbar-color: rgba(255,255,255,0.2) transparent;
 }
 
 .pf9-sidebar-brand {
-  height: 64px;
+  height: 56px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -59,7 +64,7 @@
 .pf9-sidebar-footer {
   margin-top: auto;
   padding: 12px 16px;
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid rgba(255,255,255,0.07);
   flex-shrink: 0;
 }
 
@@ -196,14 +201,15 @@
   padding: 9px 12px 9px 16px;
   border-radius: 0;
   border: none;
-  border-left: 3px solid transparent;
+  border-left: 2px solid transparent;
   background: transparent;
-  color: var(--color-text-primary);
+  color: rgba(255,255,255,0.75);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.1px;
-  transition: all 0.15s ease;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition: background 0.15s ease, color 0.15s ease;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -214,15 +220,15 @@
 }
 
 .pf9-nav-group-pill:hover {
-  background: var(--color-surface-elevated);
-  color: var(--color-primary);
+  background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.95);
   transform: none;
   box-shadow: none;
 }
 
 .pf9-nav-group-active {
-  border-left: 3px solid var(--color-primary);
-  background: rgba(25, 118, 210, 0.07);
+  border-left: 2px solid var(--color-primary);
+  background: rgba(56, 189, 248, 0.08);
   color: var(--color-primary);
   box-shadow: none;
 }
@@ -256,16 +262,17 @@
 
 /* Sidebar tab (nav item under a group) */
 .pf9-grouped-nav .pf9-tab {
-  padding: 7px 12px 7px 30px;
+  padding: 6px 12px 6px 28px;
   border-radius: 0;
   border: none;
-  border-left: 3px solid transparent;
+  border-left: 2px solid transparent;
   background: transparent;
-  color: var(--color-text-secondary);
+  color: rgba(255,255,255,0.55);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 400;
-  transition: all 0.15s ease;
+  letter-spacing: 0.02em;
+  transition: background 0.15s ease, color 0.15s ease;
   width: 100%;
   text-align: left;
   box-shadow: none;
@@ -275,37 +282,38 @@
 }
 
 .pf9-grouped-nav .pf9-tab:hover {
-  background: var(--color-table-row-hover);
-  color: var(--color-primary);
+  background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.9);
   transform: none;
   box-shadow: none;
 }
 
 .pf9-grouped-nav .pf9-tab-active {
-  border-left: 3px solid var(--color-primary);
-  background: var(--color-table-row-hover);
+  border-left: 2px solid var(--color-primary);
+  background: rgba(56, 189, 248, 0.08);
   color: var(--color-primary);
-  font-weight: 600;
+  font-weight: 500;
   box-shadow: none;
   transform: none;
 }
 
 .pf9-grouped-nav .pf9-tab-action {
-  border-left: 3px solid var(--color-action-accent);
+  border-left: 2px solid var(--color-action-accent);
   background: var(--color-action-accent-bg);
+  color: var(--color-action-accent-light);
   border-top: none;
   border-right: none;
   border-bottom: none;
 }
 
 .pf9-grouped-nav .pf9-tab-action:hover {
-  background: rgba(230, 81, 0, 0.1);
+  background: var(--color-action-accent-bg);
   color: var(--color-action-accent);
 }
 
 .pf9-grouped-nav .pf9-tab-action.pf9-tab-active {
-  border-left: 3px solid var(--color-action-accent);
-  background: rgba(230, 81, 0, 0.12);
+  border-left: 2px solid var(--color-action-accent);
+  background: var(--color-action-accent-bg);
   color: var(--color-action-accent);
 }
 
@@ -324,13 +332,13 @@
 }
 
 .pf9-nav-group-action:not(.pf9-nav-group-active):hover {
-  background: rgba(230, 81, 0, 0.08);
+  background: var(--color-action-accent-bg);
   color: var(--color-action-accent);
 }
 
 .pf9-nav-group-action.pf9-nav-group-active {
   border-left-color: var(--color-action-accent);
-  background: rgba(230, 81, 0, 0.07);
+  background: var(--color-action-accent-bg);
   color: var(--color-action-accent);
 }
 
@@ -557,11 +565,6 @@ section h3 {
   position: relative;
 }
 
-/* Remove any potential overlays from before/after pseudo-elements */
-*::before, *::after {
-  z-index: -1 !important;
-}
-
 /* Dark mode specific fixes for white backgrounds */
 :root[data-theme="dark"] * {
   /* Override any hardcoded white backgrounds in dark mode */
@@ -672,16 +675,17 @@ section h3 {
 
 /* Table hover effects */
 .pf9-table tr {
-  transition: background-color 0.2s ease;
+  transition: box-shadow 0.15s ease, background-color 0.15s ease;
   cursor: pointer;
 }
 
-.pf9-table tr:hover {
-  background-color: var(--color-surface);
+.pf9-table tbody tr:hover {
+  background-color: var(--color-table-row-hover);
+  box-shadow: inset 2px 0 0 var(--color-primary);
 }
 
 .pf9-table tr:nth-child(even) {
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: var(--color-table-row-even);
 }
 
 :root[data-theme="dark"] .pf9-table tr:nth-child(even) {
@@ -771,13 +775,13 @@ section h3 {
 .pf9-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 0.8rem;
 }
 
 .pf9-table th,
 .pf9-table td {
   border-bottom: 1px solid var(--color-border);
-  padding: 8px 12px;
+  padding: 0.32rem 0.72rem;
   color: var(--color-text-primary);
   text-align: left;
   vertical-align: middle;
@@ -813,8 +817,8 @@ section h3 {
 
 /* Simple but effective dark mode table header fix */
 [data-theme="dark"] .pf9-table th {
-  background-color: #374151 !important;
-  color: #F9FAFB !important;
+  background-color: var(--color-table-header) !important;
+  color: var(--color-text-secondary) !important;
 }
 
 /* Remove all the debug CSS */
@@ -826,7 +830,7 @@ section h3 {
   background-color: transparent !important;
   color: var(--color-text-primary) !important;
   border-bottom: 1px solid var(--color-border) !important;
-  padding: 8px 12px !important;
+  padding: 0.32rem 0.72rem !important;
   text-align: left !important;
   vertical-align: middle !important;
 }
@@ -861,7 +865,10 @@ section h3 {
 .pf9-table th {
   background-color: var(--color-table-header);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
   border-bottom: 2px solid var(--color-border);
 }
 
