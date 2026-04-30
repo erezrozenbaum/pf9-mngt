@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.43-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.46-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,9 +637,13 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### Tenant Portal live metrics + dashboard storage N/A — v1.93.46
+
+**[v1.93.46](CHANGELOG.md)** — Fixed the root cause of several "allocation-based usage" and N/A metric issues across all surfaces. The monitoring pod ran with `hostNetwork: true`, making its K8s Service endpoint resolve to a physical node IP (`172.17.30.164`). When kube-proxy on `pf9-worker02` tried to DNAT ClusterIP traffic to that node IP it timed out, making the monitoring service unreachable from every pod on worker02 (tenant-portal, API pod, all workers). Fixed by: (1) disabling `hostNetwork` — the CNI masquerade rule NATSs pod traffic through the node IP for non-pod destinations, so hypervisor scrapes continue to work without `hostNetwork`; (2) making the tenant portal proxy all metrics through the main API (`pf9-api:8000`) instead of calling `pf9-monitoring:8001` directly — the API is the single gateway for live metrics; (3) adding API→monitoring egress in the NetworkPolicy; (4) fixing three wrong default `MONITORING_SERVICE_URL` fallbacks (`pf9_monitoring` with underscore → `pf9-monitoring` with hyphen) in `main.py` and `dashboards.py`.
+
 ### Monitoring pod node placement — v1.93.45
 
-**[v1.93.45](CHANGELOG.md)** — Fixed monitoring pod landing on the wrong K8s node (`pf9-worker02`, 172.17.30.165) which has no route to the hypervisor subnet 172.17.95.0/24. All Prometheus scrapes timed out, leaving the cache at `source: database` with storage, memory, and network fields all `None`. Added `nodeSelector: kubernetes.io/hostname: pf9-worker01` to the monitoring Helm deployment to pin the pod to the node that has the route. This restores live libvirt metrics across all surfaces: Dashboard VM Hotspots, Inventory VM table, Monitoring Resource Metrics, and Tenant Portal Current Usage.
+**[v1.93.45](CHANGELOG.md)** — Fixed monitoring pod landing on the wrong K8s node (`pf9-worker02`, 172.17.30.165) which has no route to the hypervisor subnet 172.17.95.0/24. All Prometheus scrapes timed out, leaving the cache at `source: database` with storage, memory, and network fields all `None`. Added `nodeSelector: kubernetes.io/hostname: pf9-worker01` to the monitoring Helm deployment to pin the pod to the node that has the route.
 
 ### Dashboard live metrics in K8s — v1.93.44
 
@@ -1001,4 +1005,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.45 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.46 | **Last Updated**: April 2026

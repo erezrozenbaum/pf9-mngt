@@ -4778,7 +4778,7 @@ def monitoring_vm_metrics():
         db_meta[row["vm_name"]] = row  # secondary lookup by name
 
     # ── Step 2: try Prometheus cache ──────────────────────────────────────────
-    _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9_monitoring:8001")
+    _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9-monitoring:8001")
     _cache_paths = [
         "/app/monitoring/cache/metrics_cache.json",
         "/tmp/cache/metrics_cache.json",  # nosec B108
@@ -4873,7 +4873,7 @@ def monitoring_summary():
     """Return monitoring summary — prefers live Prometheus cache, falls back to DB."""
     import httpx as _httpx
 
-    _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9_monitoring:8001")
+    _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9-monitoring:8001")
     _cache_paths = [
         "/app/monitoring/cache/metrics_cache.json",
         "/tmp/cache/metrics_cache.json",  # nosec B108

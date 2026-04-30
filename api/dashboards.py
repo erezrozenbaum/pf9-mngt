@@ -1818,7 +1818,7 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
         # No local cache file — try the monitoring service HTTP API (K8s path)
         try:
             import httpx as _httpx
-            _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9_monitoring:8001")
+            _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9-monitoring:8001")
             with _httpx.Client(timeout=4.0) as _c:
                 vms_resp = _c.get(f"{_monitoring_url}/metrics/vms")
                 vms_resp.raise_for_status()

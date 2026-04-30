@@ -1010,26 +1010,26 @@ PF9 hypervisor firewalls typically DROP inbound connections from pod-CIDR ranges
 connections from known node IPs (e.g. `172.17.30.x`) are permitted. The libvirt-exporter
 on port 9177 therefore never responds, so all per-VM metrics arrive as `None`.
 
-**Fix:** Enable `hostNetwork: true` in `values.yaml` so the monitoring pod uses the K8s
-node's IP address for outbound connections:
+**Fix:** Flannel's masquerade rules NAT outbound pod traffic to the K8s node IP when
+connecting to non-pod-CIDR destinations (such as the hypervisors at 172.17.95.x). No
+`hostNetwork` change is needed — simply ensure `hostNetwork: false` (the default since
+v1.93.46) and pin the pod to the node with the hypervisor route using `nodeSelector`.
 
 ```yaml
 # k8s/helm/pf9-mngt/values.yaml
 monitoring:
-  hostNetwork: true    # uses node IP instead of pod-CIDR IP — required when hypervisor
-                       # firewalls allow node IPs but block pod-CIDR ranges
+  hostNetwork: false   # Flannel masquerade NATSs outbound to node IP; no hostNetwork needed
+  nodeSelector:
+    kubernetes.io/hostname: pf9-worker01   # node with route to 172.17.95.0/24
 ```
 
-With `hostNetwork: true` the pod inherits the node IP (e.g. `172.17.30.163`), which passes
-the hypervisor firewall, and the libvirt-exporter on port 9177 becomes reachable.
-
-> This setting is **enabled by default** in the chart's `values.yaml`. Only disable it if
-> your cluster's network policy explicitly allows pod-CIDR traffic to the hypervisors.
+> **Note:** `hostNetwork: true` was used prior to v1.93.46 but broke ClusterIP routing
+> cross-node. `hostNetwork: false` is the correct setting and is the chart default.
 
 ### SSH + virsh fallback for VM metrics
 
-When the libvirt-exporter is not installed on hypervisors, or is unreachable even with
-`hostNetwork: true`, the monitoring service can collect VM metrics directly via SSH:
+When the libvirt-exporter is not installed on hypervisors, or is unreachable, the
+monitoring service can collect VM metrics directly via SSH:
 
 ```yaml
 # k8s/helm/pf9-mngt/values.yaml — or set via Helm --set flags
@@ -1054,6 +1054,51 @@ are extracted from block device paths to correlate metrics with `servers` table 
 > **Note:** SSH fallback and the libvirt-exporter scraper are complementary — the service
 > tries the exporter first and falls back to SSH if the exporter is unreachable.
 
+### Tenant Portal "allocation-based usage" + cross-node metrics timeout
+
+**Symptom:** Tenant Portal Current Usage shows the "allocation-based usage" banner even though
+`pf9-worker01` has live libvirt metrics. Dashboard VM Hotspots Storage column shows N/A.
+API pod and tenant-portal pod cannot reach the monitoring service.
+
+**Root cause (v1.93.46):** `hostNetwork: true` on the monitoring pod caused its K8s Service
+endpoint to be registered as the physical node IP `172.17.30.164` instead of a pod-CIDR IP.
+When kube-proxy on `pf9-worker02` attempted to DNAT ClusterIP→monitoring traffic to that
+node IP, connections failed with errno=11 (timeout) — kube-proxy cannot DNAT to a
+host-network endpoint on a different node. All pods on `pf9-worker02` (including
+tenant-portal and API pod) timed out on all TCP connections to monitoring.
+
+An additional latent bug: three code locations in `main.py` and `dashboards.py` used
+`http://pf9_monitoring:8001` (underscore) as the default fallback for
+`MONITORING_SERVICE_URL`. Kubernetes DNS resolves hyphen names (`pf9-monitoring`) only, so
+the default never resolved.
+
+**Fix (v1.93.46):**
+
+1. Disable `hostNetwork` in `values.yaml`:
+   ```yaml
+   monitoring:
+     hostNetwork: false   # Flannel masquerades pod IP → node IP for non-pod-CIDR dests
+     nodeSelector:
+       kubernetes.io/hostname: pf9-worker01
+   ```
+   Flannel's masquerade rule NATs the monitoring pod's outbound connections to the node IP
+   when reaching non-pod-CIDR addresses (hypervisors at 172.17.95.x), so scraping continues.
+
+2. Tenant portal now routes all metrics through the main API:
+   ```
+   tenant-portal → pf9-api:8000/internal/monitoring/vm-metrics → pf9-monitoring:8001
+   ```
+   The API pod is the single gateway; no cross-node direct pod-to-pod routing.
+
+3. API→monitoring:8001 egress is added to the `pf9-api` NetworkPolicy.
+
+4. The default `MONITORING_SERVICE_URL` fallback is corrected to `http://pf9-monitoring:8001`
+   (hyphen) in all three locations.
+
+> **Note:** If you previously set `hostNetwork: true` to allow hypervisor scraping, that
+> setting is no longer needed. Remove it or set it to `false`; Flannel masquerade handles
+> the outbound NAT automatically.
+
 ### Monitoring pod scheduled to wrong node — all metrics N/A
 
 **Symptom:** All per-VM metrics (`storage_used_gb`, `memory_used_mb`, `network_rx_bytes`) are
@@ -1062,9 +1107,8 @@ Hotspots, Inventory VM bars, Monitoring Resource Metrics, and Tenant Portal Curr
 show allocation-based estimates.
 
 **Root cause:** The monitoring pod rescheduled to a K8s node that has no route to the
-hypervisor subnet (172.17.95.0/24). With `hostNetwork: true`, the pod uses the node IP for
-outbound traffic — if that node's routing table lacks a path to the hypervisors, all
-Prometheus scrapes time out silently.
+hypervisor subnet (172.17.95.0/24). Even with Flannel masquerade active, if the node's
+routing table lacks a path to the hypervisors, all Prometheus scrapes time out silently.
 
 **Fix (v1.93.45):** Add a `nodeSelector` to pin the monitoring pod to the specific node that
 has the route:

@@ -663,6 +663,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.93.46 — Tenant Portal live metrics + API gateway + hostNetwork fix (✅ Complete)
+
+- **Tenant Portal "allocation-based usage" banner (metrics N/A from worker02)** — Root cause: `hostNetwork: true` on the monitoring pod made the K8s Service endpoint resolve to the physical node IP `172.17.30.164`. kube-proxy on `pf9-worker02` could not DNAT ClusterIP traffic to a host-network endpoint on a different node — all TCP connections from tenant-portal and API pods (both on worker02) timed out with errno=11. Fixed: (1) `hostNetwork` disabled in `values.yaml` — Flannel masquerades pod source IPs to the node IP for non-pod-CIDR destinations so hypervisor scrapes still reach 172.17.95.x; (2) the tenant portal now proxies all metrics through the main API (`pf9-api:8000/internal/monitoring/vm-metrics`) — single gateway, no cross-node pod-to-pod routing; (3) added API→monitoring:8001 egress in the `pf9-api` NetworkPolicy.
+- **Wrong default `MONITORING_SERVICE_URL` fallback** — Three code locations used `http://pf9_monitoring:8001` (underscore) as the default, which never resolves in Kubernetes. Fixed to `http://pf9-monitoring:8001` (hyphen) in `api/main.py` (×2) and `api/dashboards.py`.
+
 ### v1.93.45 — Monitoring pod node placement (✅ Complete)
 
 - **Monitoring pod scheduled to wrong K8s node — all metrics N/A** — The monitoring pod rescheduled to `pf9-worker02` (172.17.30.165) which has no route to the hypervisor subnet (172.17.95.0/24). All Prometheus scrapes timed out; the cache stayed at `source: database` with storage/memory/network fields all `None`. Added `nodeSelector: kubernetes.io/hostname: pf9-worker01` to the monitoring Helm deployment to guarantee the pod always runs on the node that has the required route. All four data surfaces (Dashboard VM Hotspots, Inventory VM table, Monitoring Resource Metrics, Tenant Portal Current Usage) now receive live libvirt-sourced metrics.

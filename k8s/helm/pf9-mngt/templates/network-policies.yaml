@@ -122,6 +122,15 @@ spec:
           protocol: TCP
         - port: 5000
           protocol: TCP
+    # Monitoring service — API proxies VM metrics for tenant portal and dashboard
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: monitoring
+      ports:
+        - port: 8001
+          protocol: TCP
     # DNS (CoreDNS)
     - to:
         - namespaceSelector:

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.46] - 2026-04-30
+
+### Fixed
+- **Tenant Portal Current Usage showing allocation-based banner / metrics N/A in K8s**: Root cause was `hostNetwork: true` on the monitoring pod. With hostNetwork the pod's K8s Service endpoint becomes the physical node IP (`172.17.30.164`), and kube-proxy DNAT to a host-network endpoint breaks cross-node connectivity — every pod on `pf9-worker02` received `EAGAIN` (timeout) when trying to reach `pf9-monitoring:8001`, including both the tenant-portal pod and the API pod. Fixed by:
+  1. **Disabling `hostNetwork`** on the monitoring pod (`values.yaml`: `hostNetwork: false`). The pod now gets a pod-CIDR IP; the Flannel masquerade rule NATSs outbound pod traffic through the node IP for non-pod destinations, so hypervisor scrapes (172.17.95.x) continue to work. The `nodeSelector: pf9-worker01` is kept so the pod always runs on the node with a route to the hypervisor subnet.
+  2. **API gateway pattern for tenant-portal metrics**: `tenant_portal/metrics_routes.py` now routes all K8s metrics fetches through `pf9-api:8000/internal/monitoring/vm-metrics` (single gateway) instead of calling `pf9-monitoring:8001` directly. This removes the direct pod-to-pod dependency, centralises auth and enrichment in the API, and correctly propagates `source: "monitoring"` so the live-metrics banner shows instead of the allocation-based banner.
+  3. **API NetworkPolicy egress**: Added egress rule in `network-policies.yaml` allowing the API pod to call `pf9-monitoring:8001` so the proxy endpoint can fetch live Prometheus data.
+
+---
+
 ## [1.93.45] - 2026-04-29
 
 ### Fixed
