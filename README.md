@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.94.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.94.1-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### UI layout and dark mode fixes — v1.94.1
+
+**[v1.94.1](CHANGELOG.md)** — Bug fixes and dark mode polish: (1) **Sidebar scroll fixed** — body/root/app-shell locked to `height: 100vh`; only the page content area scrolls. (2) **Header/sidebar dividers aligned** — brand area corrected to 64 px to match the header height. (3) **GlobalHealthBar now loads** — corrected API URL to `/dashboard/health-summary` (was returning 404). (4) **Dark mode improvements** — metric bar tracks visible, minimum fill width on low-utilisation bars, health stat boxes have contrast, card-to-background separation improved, header and sidebar separator lines visible.
+
 ### Enterprise dashboard overhaul — v1.94.0
 
 **[v1.94.0](CHANGELOG.md)** — (1) **Grafana-class dark palette**: deep navy/slate background with cyan-sky primary accent, replacing the previous indigo palette. All CSS tokens are fully separated between light and dark themes. (2) **Inter font adopted**: Google Fonts Inter (weights 400–700) throughout the entire UI. (3) **GlobalHealthBar**: persistent 32 px top-of-page strip showing live VM counts, host count, critical/warning counts — refreshes every 30 s. (4) **Recharts charts**: VM Hotspots card now renders horizontal BarCharts with colour-coded cells; Top Hosts shows grouped CPU+Memory bars. (5) **7-day sparkline** in the System Health card using a new `dashboard_health_snapshots` table populated daily by the scheduler. (6) **`StatusBadge` component** for consistent status pill rendering across the UI. (7) **Skeleton loading states** replace spinner/text placeholders in the dashboard and Insights tab. (8) **Table density reduced** for a more compact information-dense layout.
@@ -1009,4 +1013,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.94.0 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.94.1 | **Last Updated**: April 2026

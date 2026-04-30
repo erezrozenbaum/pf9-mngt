@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.94.0  
-**Last Updated**: May 2, 2026  
+**Version**: 1.94.1  
+**Last Updated**: April 30, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -662,6 +662,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.94.1 — UI layout and dark mode fixes (✅ Complete)
+
+- **Sidebar scroll fixed** — `body`, `#root`, and `.pf9-app` use `height: 100vh; overflow: hidden`; only `.pf9-page-body` scrolls.
+- **Header/sidebar alignment** — `.pf9-sidebar-brand` height corrected to 64 px to match the header.
+- **GlobalHealthBar URL fix** — Component now calls the correct `/dashboard/health-summary` endpoint (was 404).
+- **Dark mode contrast improvements** — Metric bar tracks, health stat boxes, cards, header separator, and sidebar border all have improved contrast in dark mode.
 
 ### v1.94.0 — Enterprise dashboard overhaul (✅ Complete)
 

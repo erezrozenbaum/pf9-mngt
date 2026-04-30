@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.1] - 2026-04-30
+
+### Fixed
+- **Sidebar no longer scrolls with main content**: `body`, `#root`, and `.pf9-app` changed from `min-height: 100vh` to `height: 100vh; overflow: hidden`. Only `.pf9-page-body` scrolls — the sidebar and header remain fixed.
+- **Header and sidebar brand dividers now aligned**: `.pf9-sidebar-brand` height corrected from 56 px to 64 px to match the `.pf9-header` height, eliminating a visible 8 px gap between the two separator lines.
+- **GlobalHealthBar now shows live data**: The component was calling `/api/dashboard/health-summary` which returned 404 via nginx. Corrected to `/dashboard/health-summary` — the status bar now populates on load.
+- **Dark mode — metric bar tracks visible**: Track background changed from `var(--color-surface-elevated)` (invisible against dark cards) to `rgba(255, 255, 255, 0.12)`.
+- **Dark mode — metric fills always render as a bar**: Added `min-width: 4px` to `.metric-fill` so even very low utilisation values (e.g. 1–2 %) render as a visible line rather than a square dot.
+- **Dark mode — health stat boxes now have contrast**: `.health-item` dark background changed to a cyan-tinted surface (`rgba(56, 189, 248, 0.06)`) with a visible left accent border, replacing the previous card-colour that blended into the background.
+- **Dark mode — cards more distinct from page background**: Card border opacity increased from 0.08 to 0.14; card background opacity increased to 0.95 — cards are now visually separated from the deep-navy page.
+- **Dark mode — header separator and sidebar border visible**: Header `border-bottom` overridden in dark mode to a cyan-tinted rule (`rgba(56, 189, 248, 0.15)`) with a reinforced drop shadow. Sidebar right border increased from opacity 0.06 to 0.12. Sidebar brand area gains a matching inset bottom shadow.
+
+---
+
 ## [1.94.0] - 2026-05-02
 
 ### Changed

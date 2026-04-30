@@ -4,7 +4,7 @@
   background: var(--color-background);
   color: var(--color-text-primary);
   transition: background-color 0.3s ease, color 0.3s ease;
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: row;
   overflow: hidden;
@@ -19,8 +19,8 @@
   background: var(--color-sidebar-bg);
   /* Sidebar is always dark — force light text regardless of page theme */
   color: rgba(255,255,255,0.85);
-  /* Subtle cyan ghost border instead of hard separator */
-  border-right: 1px solid rgba(56, 189, 248, 0.06);
+  /* Separator between sidebar and content */
+  border-right: 1px solid rgba(56, 189, 248, 0.12);
   display: flex;
   flex-direction: column;
   position: sticky;
@@ -34,7 +34,7 @@
 }
 
 .pf9-sidebar-brand {
-  height: 56px;
+  height: 64px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -1408,5 +1408,17 @@ body,
 
 /* Sidebar brand separator aligns with header bottom border */
 .pf9-sidebar-brand {
-  /* Already has padding: 18px 16px 14px — keep it, height ~49px matches header ~48px */
+  /* height: 64px set above — matches pf9-header height exactly */
+}
+
+/* Header separator more visible in dark mode */
+:root[data-theme="dark"] .pf9-header {
+  border-bottom-color: rgba(56, 189, 248, 0.15);
+  background: var(--color-surface);
+  box-shadow: 0 1px 0 rgba(56, 189, 248, 0.08), 0 2px 8px rgba(0,0,0,0.4);
+}
+
+/* Sidebar brand separator visible in dark mode */
+:root[data-theme="dark"] .pf9-sidebar-brand {
+  box-shadow: inset 0 -1px 0 rgba(56, 189, 248, 0.15);
 }

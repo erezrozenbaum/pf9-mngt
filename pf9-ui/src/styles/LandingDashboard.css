@@ -232,18 +232,18 @@
 }
 
 [data-theme="dark"] .landing-dashboard .card {
-  background: rgba(22, 32, 50, 0.85);
+  background: rgba(22, 32, 55, 0.95);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   color: var(--color-text-primary);
-  border: 1px solid rgba(56, 189, 248, 0.08);
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 8px 32px rgba(0,0,0,0.45);
+  border: 1px solid rgba(56, 189, 248, 0.14);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 8px 32px rgba(0,0,0,0.5);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 [data-theme="dark"] .landing-dashboard .card:hover {
-  border-color: rgba(56, 189, 248, 0.18);
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.06), 0 12px 40px rgba(0,0,0,0.55);
+  border-color: rgba(56, 189, 248, 0.25);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.08), 0 12px 40px rgba(0,0,0,0.6);
 }
 
 .card h2 {
@@ -384,8 +384,10 @@
 }
 
 [data-theme="dark"] .landing-dashboard .health-item {
-  background: var(--color-card);
+  background: rgba(56, 189, 248, 0.06);
   border-left-color: var(--color-primary);
+  border: 1px solid rgba(56, 189, 248, 0.14);
+  border-left: 3px solid var(--color-primary);
 }
 
 .health-label {
@@ -467,7 +469,7 @@
 }
 
 [data-theme="dark"] .landing-dashboard .metric-bar {
-  background: var(--color-surface-elevated);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .metric-fill {
@@ -476,6 +478,7 @@
   align-items: center;
   transition: width 0.3s ease;
   border-radius: 6px;
+  min-width: 4px;
 }
 
 .metric-fill.cpu-fill {
