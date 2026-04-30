@@ -1298,6 +1298,189 @@ INTENTS: List[IntentDef] = [
                         WHERE type LIKE 'risk_%' AND status NOT IN ('resolved') {scope_and}
                         ORDER BY severity, entity_name LIMIT 30""",
     ),
+    # ── SLA & Compliance ────────────────────────────────────────────────────
+    IntentDef(
+        key="sla_compliance_status",
+        display_name="SLA compliance status",
+        keywords=["sla compliance", "sla status", "sla health", "compliance status",
+                  "sla breach", "sla violation", "uptime sla", "availability sla"],
+        patterns=[r"sla\s+(?:compliance|status|health|breach|violation)",
+                  r"(?:compliance|breached?|violation)\s+sla"],
+        sql="""SELECT d.name AS tenant, s.status, s.uptime_percent, s.target_uptime_percent,
+                      s.period_start, s.period_end, s.breach_minutes
+               FROM sla_records s
+               JOIN domains d ON d.id = s.domain_id
+               ORDER BY s.status DESC, d.name LIMIT 40""",
+        formatter=lambda rows: (
+            f"**SLA compliance — {len(rows)} record(s):**\n\n" +
+            _fmt_table(rows, ["tenant", "status", "uptime_percent", "target_uptime_percent", "breach_minutes"])
+            if rows else "No SLA records found."
+        ),
+        supports_scope=True,
+        sql_template="""SELECT d.name AS tenant, s.status, s.uptime_percent, s.target_uptime_percent,
+                               s.period_start, s.period_end, s.breach_minutes
+                        FROM sla_records s
+                        JOIN domains d ON d.id = s.domain_id
+                        WHERE 1=1 {scope_and}
+                        ORDER BY s.status DESC, d.name LIMIT 40""",
+    ),
+    IntentDef(
+        key="active_alerts",
+        display_name="Active alerts",
+        keywords=["active alerts", "open alerts", "current alerts", "alert status",
+                  "alerts now", "alerts today", "show alerts", "list alerts"],
+        patterns=[r"(?:active|open|current|show|list)\s+alerts?",
+                  r"alerts?\s+(?:now|today|status|open)"],
+        sql="""SELECT title, severity, entity_name, entity_type, status, created_at
+               FROM alerts
+               WHERE status NOT IN ('resolved', 'closed')
+               ORDER BY severity, created_at DESC LIMIT 50""",
+        formatter=lambda rows: (
+            f"**{len(rows)} active alert(s):**\n\n" +
+            _fmt_table(rows, ["title", "severity", "entity_name", "entity_type", "status", "created_at"])
+            if rows else "No active alerts. ✅"
+        ),
+        supports_scope=False,
+    ),
+    # ── Migration ────────────────────────────────────────────────────────────
+    IntentDef(
+        key="migration_project_summary",
+        display_name="Migration project summary",
+        keywords=["migration project", "migration summary", "active migrations",
+                  "migration status", "migrations running", "vm migration", "live migration"],
+        patterns=[r"migration\s+(?:project|summary|status|overview|running)",
+                  r"(?:active|current|running)\s+migrations?"],
+        sql="""SELECT mp.name AS project, mp.status, mp.source_env,
+                      COUNT(mt.id) AS total_vms,
+                      SUM(CASE WHEN mt.status = 'completed' THEN 1 ELSE 0 END) AS completed_vms,
+                      SUM(CASE WHEN mt.status = 'failed' THEN 1 ELSE 0 END) AS failed_vms,
+                      mp.created_at
+               FROM migration_projects mp
+               LEFT JOIN migration_tasks mt ON mt.project_id = mp.id
+               GROUP BY mp.id, mp.name, mp.status, mp.source_env, mp.created_at
+               ORDER BY mp.created_at DESC LIMIT 20""",
+        formatter=lambda rows: (
+            f"**{len(rows)} migration project(s):**\n\n" +
+            _fmt_table(rows, ["project", "status", "source_env", "total_vms", "completed_vms", "failed_vms"])
+            if rows else "No migration projects found."
+        ),
+        supports_scope=False,
+    ),
+    # ── Backup & Restore ─────────────────────────────────────────────────────
+    IntentDef(
+        key="restore_job_status",
+        display_name="Restore job status",
+        keywords=["restore job", "restore status", "restore jobs", "recent restores",
+                  "restore summary", "restoration status"],
+        patterns=[r"restore\s+(?:job|status|summary|jobs)",
+                  r"(?:recent|active|failed)\s+restores?"],
+        sql="""SELECT r.id, r.status, r.source_backup_id,
+                      COALESCE(s.name, r.server_id) AS vm_name,
+                      r.started_at, r.completed_at,
+                      EXTRACT(EPOCH FROM (COALESCE(r.completed_at, NOW()) - r.started_at))::int / 60 AS duration_min
+               FROM restore_jobs r
+               LEFT JOIN servers s ON s.id = r.server_id
+               ORDER BY r.started_at DESC LIMIT 25""",
+        formatter=lambda rows: (
+            f"**{len(rows)} restore job(s):**\n\n" +
+            _fmt_table(rows, ["vm_name", "status", "started_at", "completed_at", "duration_min"])
+            if rows else "No restore jobs found."
+        ),
+        supports_scope=False,
+    ),
+    IntentDef(
+        key="snapshot_policy_summary",
+        display_name="Snapshot policy summary",
+        keywords=["snapshot policy", "snapshot policies", "scheduled snapshots",
+                  "snapshot schedule", "auto snapshot", "snapshot retention"],
+        patterns=[r"snapshot\s+(?:polic(?:y|ies)|schedule|schedules?|retention)",
+                  r"(?:scheduled|auto(?:matic)?)\s+snapshots?"],
+        sql="""SELECT sp.name, sp.schedule_cron, sp.retention_count,
+                      sp.enabled, sp.last_run, sp.next_run,
+                      COUNT(sn.id) AS total_snapshots
+               FROM snapshot_policies sp
+               LEFT JOIN snapshots sn ON sn.policy_id = sp.id
+               GROUP BY sp.id, sp.name, sp.schedule_cron, sp.retention_count,
+                        sp.enabled, sp.last_run, sp.next_run
+               ORDER BY sp.name LIMIT 30""",
+        formatter=lambda rows: (
+            f"**{len(rows)} snapshot policy/policies:**\n\n" +
+            _fmt_table(rows, ["name", "schedule_cron", "retention_count", "enabled", "last_run", "total_snapshots"])
+            if rows else "No snapshot policies configured."
+        ),
+        supports_scope=False,
+    ),
+    # ── Intelligence / Optimization ─────────────────────────────────────────
+    IntentDef(
+        key="intelligence_waste_summary",
+        display_name="Waste & optimization summary",
+        keywords=["waste summary", "wasted resources", "idle vms", "idle resources",
+                  "resource waste", "optimization insights", "underutilized", "right-size"],
+        patterns=[r"(?:waste|wasted|idle|underutilized)\s+(?:summary|resources?|vms?|insights?)",
+                  r"(?:optimization|right.?siz(?:e|ing))\s+(?:summary|insights?|opportunities?)"],
+        sql="""SELECT entity_name, entity_id, title, description, severity,
+                      recommendations, detected_at
+               FROM operational_insights
+               WHERE type LIKE 'waste_%' AND status NOT IN ('resolved')
+               ORDER BY severity, entity_name LIMIT 30""",
+        formatter=lambda rows: (
+            f"**{len(rows)} waste/optimization insight(s):**\n\n" +
+            _fmt_table(rows, ["entity_name", "title", "severity", "detected_at"])
+            if rows else "No waste insights found — infrastructure appears well-optimized. ✅"
+        ),
+        supports_scope=True,
+        sql_template="""SELECT entity_name, entity_id, title, description, severity,
+                               recommendations, detected_at
+                        FROM operational_insights
+                        WHERE type LIKE 'waste_%' AND status NOT IN ('resolved') {scope_and}
+                        ORDER BY severity, entity_name LIMIT 30""",
+    ),
+    IntentDef(
+        key="capacity_forecast",
+        display_name="Capacity forecast",
+        keywords=["capacity forecast", "capacity prediction", "when will capacity run out",
+                  "future capacity", "capacity trend", "growth forecast", "runway"],
+        patterns=[r"capacity\s+(?:forecast|prediction|trend|runway|projection)",
+                  r"(?:when|how long)\s+(?:will|until)\s+capacity",
+                  r"(?:growth|resource)\s+forecast"],
+        sql="""SELECT cf.resource_type, cf.current_used_pct, cf.forecast_30d_pct,
+                      cf.forecast_90d_pct, cf.estimated_full_date, cf.host_count,
+                      cf.computed_at
+               FROM capacity_forecasts cf
+               ORDER BY cf.current_used_pct DESC LIMIT 20""",
+        formatter=lambda rows: (
+            f"**Capacity forecast ({len(rows)} resource type(s)):**\n\n" +
+            _fmt_table(rows, ["resource_type", "current_used_pct", "forecast_30d_pct", "forecast_90d_pct", "estimated_full_date"])
+            if rows else "No capacity forecast data available. Check if the intelligence worker is running."
+        ),
+        supports_scope=False,
+    ),
+    IntentDef(
+        key="intelligence_risk_summary",
+        display_name="Intelligence risk & anomaly summary",
+        keywords=["intelligence risk", "anomaly summary", "anomalies detected",
+                  "performance anomaly", "operational risk", "intelligence insights",
+                  "ai insights", "smart insights"],
+        patterns=[r"(?:intelligence|ai|smart)\s+(?:risk|insights?|anomal(?:y|ies))",
+                  r"anomal(?:y|ies)\s+(?:detected|summary|overview)",
+                  r"operational\s+(?:risk|anomal(?:y|ies))"],
+        sql="""SELECT entity_name, type, title, severity, status, detected_at
+               FROM operational_insights
+               WHERE type IN ('anomaly', 'risk_high', 'risk_medium', 'risk_low')
+                 AND status NOT IN ('resolved')
+               ORDER BY severity, detected_at DESC LIMIT 40""",
+        formatter=lambda rows: (
+            f"**{len(rows)} intelligence insight(s) (risks + anomalies):**\n\n" +
+            _fmt_table(rows, ["entity_name", "type", "title", "severity", "status", "detected_at"])
+            if rows else "No open intelligence insights. ✅"
+        ),
+        supports_scope=True,
+        sql_template="""SELECT entity_name, type, title, severity, status, detected_at
+                        FROM operational_insights
+                        WHERE type IN ('anomaly', 'risk_high', 'risk_medium', 'risk_low')
+                          AND status NOT IN ('resolved') {scope_and}
+                        ORDER BY severity, detected_at DESC LIMIT 40""",
+    ),
 ]
 
 
@@ -1542,6 +1725,34 @@ def get_suggestion_chips() -> List[dict]:
                     {"label": "Tenant health", "question": "Show tenant health"},
                     {"label": "Runbooks", "question": "Show runbook summary"},
                     {"label": "Notifications", "question": "Show notification summary"},
+                ],
+            },
+            {
+                "name": "Intelligence",
+                "icon": "🧠",
+                "chips": [
+                    {"label": "Waste summary", "question": "Show waste and optimization insights"},
+                    {"label": "Capacity forecast", "question": "Show capacity forecast"},
+                    {"label": "Intelligence risks", "question": "Show intelligence risk and anomaly summary"},
+                    {"label": "Active alerts", "question": "Show active alerts"},
+                ],
+            },
+            {
+                "name": "SLA & Compliance",
+                "icon": "📋",
+                "chips": [
+                    {"label": "SLA compliance", "question": "Show SLA compliance status"},
+                    {"label": "SLA breaches", "question": "Show SLA breaches"},
+                    {"label": "Snapshot policies", "question": "Show snapshot policy summary"},
+                    {"label": "Restore jobs", "question": "Show restore job status"},
+                ],
+            },
+            {
+                "name": "Migration",
+                "icon": "🚀",
+                "chips": [
+                    {"label": "Migration projects", "question": "Show migration project summary"},
+                    {"label": "Active migrations", "question": "Show active migrations"},
                 ],
             },
         ],

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.47] - 2026-04-30
+
+### Fixed
+- **Monitoring metrics N/A / allocation-based banner across all surfaces in Kubernetes**: The
+  monitoring service now proactively delivers its collected metrics to the API after each scrape
+  cycle via a new internal endpoint (`POST /internal/monitoring/push-cache`). The API stores the
+  payload in Redis (5-minute TTL) and reads from it first before falling back to the database.
+  This resolves live VM storage, CPU, memory, and network metrics showing N/A or allocation-based
+  estimates on the Dashboard VM Hotspots panel, Inventory VM table, Tenant Portal Current Usage,
+  and Monitoring Resource Metrics screens in Kubernetes deployments where the monitoring pod is not
+  directly reachable from the API pod over the cluster network.
+- **Host Resource Metrics — Network Throughput always N/A**: The `/monitoring/host-metrics`
+  endpoint now merges live network throughput from the monitoring push-cache into the hypervisor
+  rows returned from the database. Node-exporter cumulative byte counters are converted to MB for
+  display. Live CPU, memory, and storage values are also preferred from the push-cache over the
+  database allocation estimates when available.
+- **Duplicate "VM Provisioning" card in the Runbooks catalogue**: When a VM Provisioning runbook
+  also existed as a database-stored entry, it appeared twice in the catalogue grid. The Runbooks
+  tab now filters database runbooks to skip any whose slug or display name matches the built-in
+  hardcoded card.
+
+### Added
+- **Ops Copilot — 8 new query intents**: `sla_compliance_status`, `active_alerts`,
+  `migration_project_summary`, `restore_job_status`, `snapshot_policy_summary`,
+  `intelligence_waste_summary`, `capacity_forecast`, `intelligence_risk_summary`. Ask questions
+  like *"Show SLA compliance status"*, *"Show active alerts"*, *"Show capacity forecast"*, or
+  *"Show restore job status"* and get live SQL-backed answers. Four new quick-suggestion chip
+  categories added to the Copilot panel: **Intelligence**, **SLA & Compliance**, **Migration**.
+- **Dashboard visual polish — glassmorphism and animations**: Dark-mode dashboard cards now use
+  glassmorphism (`backdrop-filter: blur`) with translucent backgrounds and an indigo gradient
+  border highlight on hover. New CSS utility classes available for component authors:
+  `.card-glass` (stronger blur/saturation for KPI panels, light and dark variants),
+  `.gradient-header` (animated indigo→violet→cyan gradient text for card titles),
+  `.badge-pulse` (pulsing animation for live status indicators),
+  `.metric-value-animate` (fade-in-up entry animation for metric values).
+
+---
+
 ## [1.93.46] - 2026-04-30
 
 ### Fixed

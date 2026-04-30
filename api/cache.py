@@ -130,3 +130,40 @@ def cached(ttl: int = DEFAULT_TTL, key_prefix: str = ""):
         return wrapper
 
     return decorator
+
+
+# ── Monitoring push-cache helpers ────────────────────────────────────────────
+# The monitoring pod runs on a node that cannot be reached by the API pod
+# (asymmetric Flannel overlay).  The monitoring service therefore *pushes* its
+# collected metrics to the API after each scrape cycle.  These helpers store
+# and retrieve that pushed payload in Redis so it survives across requests.
+
+_MONITORING_CACHE_KEY = "pf9:monitoring:vm_cache"
+_MONITORING_CACHE_TTL = 300  # 5 minutes — slightly more than the 60 s scrape interval
+
+
+def store_monitoring_cache(payload: dict) -> bool:
+    """Persist a monitoring metrics payload in Redis (called by push-cache endpoint)."""
+    rc = _get_client()
+    if rc is None:
+        return False
+    try:
+        rc.setex(_MONITORING_CACHE_KEY, _MONITORING_CACHE_TTL, json.dumps(payload, default=str))
+        return True
+    except Exception as exc:
+        logger.warning("store_monitoring_cache: Redis write failed: %s", exc)
+        return False
+
+
+def get_monitoring_cache() -> "dict | None":
+    """Return the most recently pushed monitoring metrics, or None if stale/absent."""
+    rc = _get_client()
+    if rc is None:
+        return None
+    try:
+        raw = rc.get(_MONITORING_CACHE_KEY)
+        if raw:
+            return json.loads(raw)
+    except Exception as exc:
+        logger.debug("get_monitoring_cache: Redis read failed: %s", exc)
+    return None

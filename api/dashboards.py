@@ -1815,7 +1815,16 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
 
             return max(candidates, key=score_candidate)
 
-        # No local cache file — try the monitoring service HTTP API (K8s path)
+        # No local cache file — try Redis push-cache (monitoring→API push model)
+        try:
+            from cache import get_monitoring_cache as _get_mc
+            _mc = _get_mc()
+            if _mc and _mc.get("source") == "monitoring" and (_mc.get("vms") or _mc.get("hosts")):
+                return _mc
+        except Exception:
+            pass
+
+        # Redis unavailable or empty — try the monitoring service HTTP API (K8s path)
         try:
             import httpx as _httpx
             _monitoring_url = os.getenv("MONITORING_SERVICE_URL", "http://pf9-monitoring:8001")

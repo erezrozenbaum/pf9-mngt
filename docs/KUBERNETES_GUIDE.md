@@ -1054,6 +1054,42 @@ are extracted from block device paths to correlate metrics with `servers` table 
 > **Note:** SSH fallback and the libvirt-exporter scraper are complementary — the service
 > tries the exporter first and falls back to SSH if the exporter is unreachable.
 
+### Monitoring push-cache: live metrics delivery for disconnected pods *(v1.93.47+)*
+
+If the monitoring pod and API pod are on different Kubernetes nodes and cross-node pod-to-pod
+connectivity is unreliable, configure the monitoring service to push its metrics cache directly
+to the API after each scrape cycle rather than waiting to be polled.
+
+**How it works:**
+- After each scrape cycle `monitoring/prometheus_client.py` POSTs the full metrics payload to
+  `{API_BASE_URL}/internal/monitoring/push-cache`.
+- The API stores it in Redis (`pf9:monitoring:vm_cache`, TTL 300 s).
+- All consumers (`/monitoring/vm-metrics`, `/monitoring/host-metrics`, `dashboards.py`) read
+  from this Redis key before falling back to the database.
+
+**Required env vars** (both already present in the Helm chart defaults):
+
+| Pod | Env var | Value |
+|-----|---------|-------|
+| `pf9-monitoring` | `API_BASE_URL` | `http://pf9-api:8000` |
+| `pf9-monitoring` | `INTERNAL_SERVICE_SECRET` | value from `pf9-secrets` |
+
+**Verify push is working** after the monitoring pod completes one scrape cycle (~60 s):
+
+```bash
+# 1. Redis key present
+kubectl exec -n pf9-mngt <redis-pod> -- redis-cli EXISTS pf9:monitoring:vm_cache
+# → (integer) 1
+
+# 2. Monitoring pod logged a push
+kubectl logs -n pf9-mngt -l app=pf9-monitoring --tail=20 | grep "Pushed metrics cache"
+# → INFO: Pushed metrics cache to API: 12 VMs, 3 hosts
+```
+
+**Symptom if push is NOT working:** Live metrics revert to N/A / allocation-based data after
+the Redis key expires. Check `pf9-monitoring` pod logs for `Could not push metrics cache to API`
+warnings and verify `API_BASE_URL` resolves from within the monitoring pod.
+
 ### Tenant Portal "allocation-based usage" + cross-node metrics timeout
 
 **Symptom:** Tenant Portal Current Usage shows the "allocation-based usage" banner even though

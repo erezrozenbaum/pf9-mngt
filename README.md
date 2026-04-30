@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.93.46-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.93.47-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -637,6 +637,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### Monitoring push-cache, host network throughput, Copilot intents, dashboard polish — v1.93.47
+
+**[v1.93.47](CHANGELOG.md)** — (1) **Live metrics delivered via push-cache**: the monitoring service now proactively delivers collected metrics to the API after each scrape cycle (stored in Redis, 5-minute TTL). Fixes live VM storage, CPU, memory, and network showing N/A or allocation-based estimates on Dashboard VM Hotspots, Inventory, Tenant Portal Current Usage, and Host Resource Metrics in Kubernetes. (2) **Host Network Throughput N/A fixed**: host-metrics endpoint now merges live network throughput from the monitoring cache into hypervisor rows. (3) **Duplicate VM Provisioning runbook card removed** from the Runbooks catalogue. (4) **8 new Ops Copilot intents**: SLA compliance, active alerts, migration projects, restore jobs, snapshot policies, waste/optimization insights, capacity forecast, intelligence risk. Four new quick-suggestion chip categories. (5) **Dashboard glassmorphism**: dark-mode cards use `backdrop-filter: blur`, gradient border highlights on hover; new `.card-glass`, `.gradient-header`, `.badge-pulse`, `.metric-value-animate` CSS classes.
+
 ### Tenant Portal live metrics + dashboard storage N/A — v1.93.46
 
 **[v1.93.46](CHANGELOG.md)** — Fixed the root cause of several "allocation-based usage" and N/A metric issues across all surfaces. The monitoring pod ran with `hostNetwork: true`, making its K8s Service endpoint resolve to a physical node IP (`172.17.30.164`). When kube-proxy on `pf9-worker02` tried to DNAT ClusterIP traffic to that node IP it timed out, making the monitoring service unreachable from every pod on worker02 (tenant-portal, API pod, all workers). Fixed by: (1) disabling `hostNetwork` — the CNI masquerade rule NATSs pod traffic through the node IP for non-pod destinations, so hypervisor scrapes continue to work without `hostNetwork`; (2) making the tenant portal proxy all metrics through the main API (`pf9-api:8000`) instead of calling `pf9-monitoring:8001` directly — the API is the single gateway for live metrics; (3) adding API→monitoring egress in the NetworkPolicy; (4) fixing three wrong default `MONITORING_SERVICE_URL` fallbacks (`pf9_monitoring` with underscore → `pf9-monitoring` with hyphen) in `main.py` and `dashboards.py`.
@@ -1005,4 +1009,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.93.46 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.93.47 | **Last Updated**: April 2026

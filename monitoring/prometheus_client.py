@@ -178,6 +178,32 @@ class PrometheusClient:
         except Exception as exc:
             logger.error(f"Failed to write metrics cache to disk: {exc}")
 
+        # Push cache to the API so it can serve live metrics even when the API pod cannot
+        # reach this pod (asymmetric Flannel overlay: monitoring→API works; API→monitoring fails).
+        _api_url = os.getenv("API_BASE_URL", "").rstrip("/")
+        _secret = os.getenv("INTERNAL_SERVICE_SECRET", "")
+        if _api_url:
+            try:
+                import urllib.request as _ureq
+                _push_bytes = _json.dumps(cache_payload, default=_default).encode()
+                _push_req = _ureq.Request(
+                    f"{_api_url}/internal/monitoring/push-cache",
+                    data=_push_bytes,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Internal-Secret": _secret,
+                    },
+                    method="POST",
+                )
+                _ureq.urlopen(_push_req, timeout=5)  # nosec B310 — internal trusted endpoint
+                logger.info(
+                    "Pushed metrics cache to API: %d VMs, %d hosts",
+                    len(vm_list),
+                    len(host_list),
+                )
+            except Exception as _push_exc:
+                logger.warning("Could not push metrics cache to API: %s", _push_exc)
+
         logger.info(f"Updated cache: {len(vm_metrics)} VMs, {len(host_metrics)} hosts")
 
     async def _collect_host_metrics(self, host: str) -> tuple:

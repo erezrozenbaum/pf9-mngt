@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.93.39  
-**Last Updated**: April 28, 2026  
+**Version**: 1.93.47  
+**Last Updated**: April 30, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -662,6 +662,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.93.47 — Monitoring push-cache, host network throughput, Copilot intents, dashboard polish (✅ Complete)
+
+- **Live metrics N/A / allocation-based banner in Kubernetes** — The monitoring service now proactively delivers its collected metrics to the API after each scrape cycle via `POST /internal/monitoring/push-cache` (authenticated by `X-Internal-Secret`). The API stores the payload in Redis under `pf9:monitoring:vm_cache` with a 5-minute TTL. All consumers (`/monitoring/vm-metrics`, `/monitoring/host-metrics`, and `dashboards.py`) read from this Redis cache before falling back to the database. Fixes live VM storage, CPU, memory, and network metrics showing N/A or allocation-based estimates across all surfaces (Dashboard VM Hotspots, Inventory VM table, Tenant Portal Current Usage, Host Resource Metrics) in Kubernetes deployments where the monitoring pod cannot be reached directly from the API pod over the cluster network.
+- **Host Resource Metrics — Network Throughput always N/A** — `/monitoring/host-metrics` now merges live `network_rx_mb` and `network_tx_mb` values (converted from cumulative node-exporter byte counters) from the monitoring push-cache into the hypervisor rows returned from the database. Live CPU, memory, and storage values from the push-cache are also preferred over database allocation estimates.
+- **Duplicate VM Provisioning runbook card** — When the VM Provisioning runbook also existed as a database-stored entry it appeared twice in the Runbooks catalogue. The Runbooks tab now filters database runbooks to exclude any whose slug (`name`) or display name matches the built-in hardcoded card.
+- **Ops Copilot — 8 new intent patterns** — `sla_compliance_status`, `active_alerts`, `migration_project_summary`, `restore_job_status`, `snapshot_policy_summary`, `intelligence_waste_summary`, `capacity_forecast`, `intelligence_risk_summary`. Four new quick-suggestion chip categories added: Intelligence, SLA & Compliance, Migration.
+- **Dashboard visual polish** — Dark-mode `.card` elements now use glassmorphism (`backdrop-filter: blur(12px)`) with translucent backgrounds and an indigo gradient border highlight on hover. New CSS utility classes: `.card-glass` (stronger blur/saturation for KPI panels), `.gradient-header` (animated gradient text), `.badge-pulse` (live status pulse animation), `.metric-value-animate` (fade-in-up entry animation).
 
 ### v1.93.46 — Tenant Portal live metrics + API gateway + hostNetwork fix (✅ Complete)
 

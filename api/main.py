@@ -4658,7 +4658,14 @@ def list_hypervisors(
 
 @app.get("/monitoring/host-metrics")
 def monitoring_host_metrics():
-    """Return host resource utilization from hypervisors table (DB fallback for monitoring)."""
+    """Return host resource utilization.
+
+    Data priority:
+    1. Monitoring push-cache (Redis) — contains live CPU/RAM/storage/network from node-exporter.
+    2. DB inventory — always run to get canonical hostnames; network fields are NULL from DB.
+    Live host network metrics (network_rx_mb / network_tx_mb) are merged from the push-cache
+    where available; DB rows that have no matching push-cache entry keep NULL network values.
+    """
     sql = """
     SELECT 
         COALESCE(raw_json->>'hypervisor_hostname', hostname) AS hostname,
@@ -4692,8 +4699,6 @@ def monitoring_host_metrics():
             ELSE 0
         END AS storage_usage_percent,
         COALESCE((raw_json->>'running_vms')::integer, 0) AS running_vms,
-        -- Network throughput not available from DB inventory; explicit nulls let the
-        -- UI distinguish "no live data" from "live data reporting 0".
         NULL::numeric AS network_rx_mb,
         NULL::numeric AS network_tx_mb
     FROM hypervisors
@@ -4701,7 +4706,44 @@ def monitoring_host_metrics():
     ORDER BY hostname;
     """
     rows = run_query(sql)
-    return {"data": rows, "timestamp": str(datetime.now()), "source": "database"}
+
+    # Attempt to enrich network throughput from monitoring push-cache
+    try:
+        from cache import get_monitoring_cache as _get_mc
+        _mc = _get_mc()
+        if _mc and _mc.get("hosts"):
+            # Build lookup: hostname (or IP) → host entry from monitoring
+            _host_lookup: dict = {}
+            for _h in _mc["hosts"]:
+                _hn = _h.get("hostname") or ""
+                if _hn:
+                    _host_lookup[_hn] = _h
+            for row in rows:
+                _hn = row.get("hostname") or ""
+                _entry = _host_lookup.get(_hn)
+                if _entry:
+                    # network_rx_throughput / network_tx_throughput are cumulative bytes from
+                    # node_network_receive_bytes_total — convert to MB for the UI display.
+                    _rx = _entry.get("network_rx_throughput")
+                    _tx = _entry.get("network_tx_throughput")
+                    if _rx is not None:
+                        row["network_rx_mb"] = round(_rx / 1_048_576, 0)
+                    if _tx is not None:
+                        row["network_tx_mb"] = round(_tx / 1_048_576, 0)
+                    # Also prefer live CPU/memory/storage from push-cache if available
+                    if _entry.get("cpu_usage_percent") is not None:
+                        row["cpu_usage_percent"] = _entry["cpu_usage_percent"]
+                    if _entry.get("memory_usage_percent") is not None:
+                        row["memory_usage_percent"] = _entry["memory_usage_percent"]
+                    if _entry.get("memory_used_mb") is not None:
+                        row["memory_used_mb"] = _entry["memory_used_mb"]
+                    if _entry.get("storage_usage_percent") is not None:
+                        row["storage_usage_percent"] = _entry["storage_usage_percent"]
+    except Exception:
+        pass  # Fall through with DB-only data; never fail the endpoint
+
+    source = "monitoring" if any(r.get("network_rx_mb") is not None for r in rows) else "database"
+    return {"data": rows, "timestamp": str(datetime.now()), "source": source}
 
 
 @app.get("/monitoring/vm-metrics")
@@ -4797,7 +4839,17 @@ def monitoring_vm_metrics():
             except Exception:
                 pass
 
-    # 2b. monitoring HTTP API (K8s)
+    # 2b. Redis cache (monitoring pod pushes here after each scrape cycle)
+    if live_vms is None:
+        try:
+            from cache import get_monitoring_cache as _get_mc
+            _mc = _get_mc()
+            if _mc and _mc.get("source") == "monitoring" and _mc.get("vms"):
+                live_vms = _mc["vms"]
+        except Exception:
+            pass
+
+    # 2c. monitoring HTTP API (K8s — only works when pods are on the same node or overlay is symmetric)
     if live_vms is None:
         try:
             with _httpx.Client(timeout=4.0) as _c:
@@ -4866,6 +4918,31 @@ def monitoring_vm_metrics():
 def internal_monitoring_vm_metrics():
     """Same as /monitoring/vm-metrics but callable with X-Internal-Secret by worker pods."""
     return monitoring_vm_metrics()
+
+
+@app.post("/internal/monitoring/push-cache", include_in_schema=False)
+async def push_monitoring_cache(request: Request):
+    """Called by the monitoring pod after each scrape cycle to push its metrics cache.
+
+    The monitoring pod runs on a node whose pod CIDR cannot be reached from the API
+    pod (asymmetric Flannel overlay).  By pushing in the monitoring→API direction
+    (which works) we avoid the unreachable HTTP pull.
+
+    The payload is stored in Redis with a 5-minute TTL and served by
+    /monitoring/vm-metrics and /monitoring/host-metrics as source="monitoring".
+    Authentication is enforced by rbac_middleware (X-Internal-Secret header).
+    """
+    from cache import store_monitoring_cache as _store_mc
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    stored = _store_mc(payload)
+    return {
+        "status": "ok" if stored else "redis_unavailable",
+        "vms": len(payload.get("vms", [])),
+        "hosts": len(payload.get("hosts", [])),
+    }
 
 
 @app.get("/monitoring/summary")

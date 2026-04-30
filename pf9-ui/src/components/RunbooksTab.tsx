@@ -1492,7 +1492,10 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
             </div>
           </div>
 
-          {runbooks.map((rb) => {
+          {runbooks.filter(rb =>
+            rb.name !== "vm_provisioning" &&
+            rb.display_name?.toLowerCase() !== "vm provisioning"
+          ).map((rb) => {
             const st = getStatsFor(rb.name);
             return (
               <div className="rb-card" key={rb.name}>

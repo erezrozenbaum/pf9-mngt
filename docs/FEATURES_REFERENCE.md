@@ -164,7 +164,7 @@
 
 ### 🤖 Ops Copilot — AI Infrastructure Assistant *(v1.24)*
 - **Three-Tier Architecture**: Built-in intent engine (zero setup) → Ollama (local LLM) → OpenAI/Anthropic (external LLM)
-- **40+ Built-in Intents**: Inventory counts, VM power states, capacity metrics, error VMs, down hosts, networking (networks, subnets, routers, floating IPs), snapshot/drift/compliance summaries, user lists, role assignments, activity logs, runbook status, and full infrastructure overview — all powered by live SQL queries
+- **48+ Built-in Intents**: Inventory counts, VM power states, capacity metrics, error VMs, down hosts, networking (networks, subnets, routers, floating IPs), snapshot/drift/compliance summaries, user lists, role assignments, activity logs, runbook status, SLA compliance status, active alerts, migration project status, restore job status, snapshot policy summary, waste & optimization insights, capacity forecast, intelligence risk/anomaly summary, and full infrastructure overview — all powered by live SQL queries. Quick-suggestion chip categories: Inventory, Operations, Networking, Intelligence, SLA & Compliance, Migration.
 - **Tenant / Project / Host Scoping**: Add "on tenant X", "for project X", or "on host Y" to any question for filtered results. Synonym expansion ensures natural phrasing always matches.
 - **LLM Integration**: Free-form questions answered via Ollama (local, no data leaves your network) or OpenAI/Anthropic (with automatic sensitive data redaction)
 - **Labeled FAB + Welcome Screen**: Prominent pill-shaped "🤖 Ask Copilot" button with pulse animation on first visit, welcome screen with examples, and a dedicated help view with 8 categorized question groups and usage tips
@@ -237,7 +237,7 @@ The `intelligence_worker` runs 6 detection engines every 5 minutes and writes st
 
 **Intelligence Settings Panel** (admin-only, `⚙️ Settings` tab in InsightsTab): Labor rates editor (8 types, cost-per-hour), PSA Webhook CRUD with test-fire, Contract Entitlements CSV importer.
 
-**Insights Feed UI** *(v1.86.0 → v1.91.0)*: Department workspace selector (operations, risk, capacity, general), severity badges, per-insight acknowledge/snooze/resolve, bulk actions, recommendation panel, per-insight recommendations with dismiss. Type filter optgroup: Waste, Risk, SLA, Capacity, Anomaly, Cross-Region, Revenue Leakage. Sort by: severity, detected, last seen, type, entity, tenant, status (7 options). Copilot intents: critical_insights, capacity_warnings, waste_insights, unacknowledged_insights_count, risk_summary.
+**Insights Feed UI** *(v1.86.0 → v1.91.0)*: Department workspace selector (operations, risk, capacity, general), severity badges, per-insight acknowledge/snooze/resolve, bulk actions, recommendation panel, per-insight recommendations with dismiss. Type filter optgroup: Waste, Risk, SLA, Capacity, Anomaly, Cross-Region, Revenue Leakage. Sort by: severity, detected, last seen, type, entity, tenant, status (7 options). Copilot intents: critical_insights, capacity_warnings, waste_insights, unacknowledged_insights_count, risk_summary, intelligence_waste_summary *(v1.93.47)*, capacity_forecast *(v1.93.47)*, intelligence_risk_summary *(v1.93.47)*.
 
 **Insights History tab** *(v1.91.0)*: “🕐 History” sub-tab in the Insights Dashboard showing resolved insights with detected/resolved timestamps, paginated at 50 per page.
 
