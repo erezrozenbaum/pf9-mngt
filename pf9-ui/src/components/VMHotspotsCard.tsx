@@ -53,8 +53,8 @@ const HotspotChart: React.FC<{ vms: HotspotVm[]; dataKey: 'cpu_usage_percent' | 
         <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--color-text-secondary)' }} width={120} />
         <Tooltip
           contentStyle={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: 11 }}
-          formatter={(val: number) => [`${val}%`, label]}
-          labelFormatter={(label: string) => label}
+          formatter={(val) => [`${Number(val)}%`, label]}
+          labelFormatter={(lbl) => String(lbl)}
         />
         <Bar dataKey="value" radius={[0, 4, 4, 0]}>
           {chartData.map((entry, idx) => (

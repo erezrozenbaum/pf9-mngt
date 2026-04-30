@@ -101,8 +101,8 @@ export const HealthSummaryCard: React.FC<Props> = ({ data, trendData = [] }) => 
               />
               <Tooltip
                 contentStyle={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: 11 }}
-                labelFormatter={(label: string) => new Date(label).toLocaleDateString()}
-                formatter={(val: number) => [val, 'Running VMs']}
+                labelFormatter={(label) => new Date(String(label)).toLocaleDateString()}
+                formatter={(val) => [val, 'Running VMs']}
               />
             </AreaChart>
           </ResponsiveContainer>

@@ -17,7 +17,7 @@ export function GlobalHealthBar() {
 
   const fetchHealth = useCallback(async () => {
     try {
-      const result = await apiFetch('/api/dashboard/health-summary');
+      const result = await apiFetch<HealthSummary>('/api/dashboard/health-summary');
       setData(result);
       setLastUpdate(new Date());
     } catch {

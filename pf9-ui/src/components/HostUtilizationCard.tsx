@@ -84,7 +84,7 @@ export const HostUtilizationCard: React.FC<Props> = ({ data }) => {
             <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--color-text-secondary)' }} width={130} />
             <Tooltip
               contentStyle={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: 11 }}
-              formatter={(val: number, name: string) => [`${val}%`, name]}
+              formatter={(val, name) => [`${Number(val)}%`, String(name)]}  
             />
             <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
             <Bar dataKey="CPU" radius={[0, 4, 4, 0]}>
