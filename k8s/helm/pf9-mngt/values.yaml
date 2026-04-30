@@ -198,6 +198,11 @@ monitoring:
   # Enable when the hypervisor firewall permits node IPs but not pod IPs.
   # K8s nodes: 172.17.30.x  |  Hypervisors: 172.17.95.x  |  Pod CIDR: 192.168.x.x
   hostNetwork: true
+  # nodeSelector: pin the monitoring pod to a specific node.
+  # Only pf9-worker01 (172.17.30.164) has a route to the hypervisor subnet 172.17.95.0/24.
+  # pf9-worker02 (172.17.30.165) lacks this route, causing all scrapes to time out.
+  nodeSelector:
+    kubernetes.io/hostname: pf9-worker01
   resources:
     limits:
       cpu: "500m"

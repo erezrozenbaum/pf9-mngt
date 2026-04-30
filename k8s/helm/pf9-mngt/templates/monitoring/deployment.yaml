@@ -26,6 +26,10 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       {{- end }}
+      {{- if .Values.monitoring.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.monitoring.nodeSelector | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

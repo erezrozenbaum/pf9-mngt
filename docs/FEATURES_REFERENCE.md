@@ -295,11 +295,11 @@ A single engineering console covering every operational surface:
 
 - **Health Summary Card**: System-wide metrics (VMs, volumes, networks, resource utilization)
 - **Snapshot SLA Compliance**: Tenant-level compliance tracking with warning/critical alerting
-- **Top Host Utilization**: Real-time CPU/memory usage across compute nodes (live Prometheus data via monitoring service HTTP API in K8s — v1.93.44)
+- **Top Host Utilization**: Real-time CPU/memory usage across compute nodes (live Prometheus data via monitoring service HTTP API in K8s — v1.93.44; monitoring pod pinned to correct node v1.93.45)
 - **Recent Activity Widget**: Last 24 hours of infrastructure changes
 - **Coverage Risk Analysis**: Volumes without snapshot protection
 - **Capacity Pressure Indicators**: Storage and compute capacity warnings
-- **VM Hotspots**: Top resource consumers (CPU/memory/storage) sourced from live Prometheus metrics in K8s (v1.93.44)
+- **VM Hotspots**: Top resource consumers (CPU/memory/storage) sourced from live Prometheus metrics in K8s (v1.93.44; node placement fix v1.93.45)
 - **Tenant Risk Scores**: Multi-factor risk assessments per tenant
 - **Compliance Drift Tracking**: Policy adherence trending
 - **Capacity Trends**: 7-day resource utilization forecasting

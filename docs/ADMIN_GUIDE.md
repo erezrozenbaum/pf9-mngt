@@ -663,6 +663,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v1.93.45 — Monitoring pod node placement (✅ Complete)
+
+- **Monitoring pod scheduled to wrong K8s node — all metrics N/A** — The monitoring pod rescheduled to `pf9-worker02` (172.17.30.165) which has no route to the hypervisor subnet (172.17.95.0/24). All Prometheus scrapes timed out; the cache stayed at `source: database` with storage/memory/network fields all `None`. Added `nodeSelector: kubernetes.io/hostname: pf9-worker01` to the monitoring Helm deployment to guarantee the pod always runs on the node that has the required route. All four data surfaces (Dashboard VM Hotspots, Inventory VM table, Monitoring Resource Metrics, Tenant Portal Current Usage) now receive live libvirt-sourced metrics.
+
 ### v1.93.44 — Dashboard live metrics in K8s (✅ Complete)
 
 - **Dashboard VM Hotspots / Host Utilization / Health Summary avg CPU — always showing DB allocation in K8s** — `_load_metrics_cache()` in `dashboards.py` searched for a shared-volume cache file that only exists in Docker Compose. In Kubernetes the API pod and monitoring pod share no filesystem, so the function always returned `None` and all three dashboard widgets fell back to DB allocation estimates. Fixed by adding an HTTP fallback: when no local file is found, the function calls `GET /metrics/vms` and `GET /metrics/hosts` on the monitoring service (same `MONITORING_SERVICE_URL` env var pattern used by the tenant portal and `/monitoring/vm-metrics`). Added `MONITORING_SERVICE_URL=http://pf9-monitoring:8001` env var to the API pod Helm deployment template (`k8s/helm/pf9-mngt/templates/api/deployment.yaml`) — it was already present on the tenant-portal pod but was missing from the API pod.

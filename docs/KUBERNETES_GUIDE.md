@@ -1054,6 +1054,31 @@ are extracted from block device paths to correlate metrics with `servers` table 
 > **Note:** SSH fallback and the libvirt-exporter scraper are complementary — the service
 > tries the exporter first and falls back to SSH if the exporter is unreachable.
 
+### Monitoring pod scheduled to wrong node — all metrics N/A
+
+**Symptom:** All per-VM metrics (`storage_used_gb`, `memory_used_mb`, `network_rx_bytes`) are
+`None`. The monitoring cache reports `source: database` and `total_hosts: 0`. Dashboard VM
+Hotspots, Inventory VM bars, Monitoring Resource Metrics, and Tenant Portal Current Usage all
+show allocation-based estimates.
+
+**Root cause:** The monitoring pod rescheduled to a K8s node that has no route to the
+hypervisor subnet (172.17.95.0/24). With `hostNetwork: true`, the pod uses the node IP for
+outbound traffic — if that node's routing table lacks a path to the hypervisors, all
+Prometheus scrapes time out silently.
+
+**Fix (v1.93.45):** Add a `nodeSelector` to pin the monitoring pod to the specific node that
+has the route:
+
+```yaml
+# k8s/helm/pf9-mngt/values.yaml
+monitoring:
+  nodeSelector:
+    kubernetes.io/hostname: pf9-worker01   # the node with a route to 172.17.95.0/24
+```
+
+This is set by default in `values.yaml`. Verify the node name with `kubectl get nodes -o wide`
+and confirm it can reach the hypervisors before changing it.
+
 ### Dashboard VM Hotspots / Host Utilization / Health Summary showing allocation data
 
 **Symptom:** The Dashboard shows allocation-based estimates (vCPU count, provisioned GB)

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.93.45] - 2026-04-29
+
+### Fixed
+- **Monitoring pod landing on wrong node — all metrics N/A**: When the monitoring pod scheduled to `pf9-worker02` (172.17.30.165), every Prometheus scrape to hypervisors (172.17.95.x) timed out because worker02 has no route to that subnet. Only `pf9-worker01` (172.17.30.164) has the required route. Added `nodeSelector: kubernetes.io/hostname: pf9-worker01` to the monitoring Helm deployment so the pod always runs on the node that can reach the hypervisors. This restores live libvirt metrics (storage, memory, network) to all surfaces: Dashboard VM Hotspots, Inventory VM table, Monitoring Resource Metrics, and Tenant Portal Current Usage.
+
+---
+
 ## [1.93.44] - 2026-04-29
 
 ### Fixed
