@@ -1333,13 +1333,13 @@ async def get_chargeback_summary(
             compute_cost_per_hour = fp["cost_per_hour"]
             cost_breakdown = {"flavor": compute_cost_per_hour, "vcpu": 0.0, "ram": 0.0}
         else:
-            vcpu_cost = (vm.get("vcpus") or 0) * fb_vcpu
-            ram_cost = ((vm.get("ram_mb") or 0) / 1024) * fb_ram
+            vcpu_cost = float(vm.get("vcpus") or 0) * fb_vcpu
+            ram_cost = (float(vm.get("ram_mb") or 0) / 1024) * fb_ram
             compute_cost_per_hour = vcpu_cost + ram_cost
             cost_breakdown = {"flavor": 0.0, "vcpu": vcpu_cost, "ram": ram_cost}
 
         # Calculate VM storage costs (allocated disk)
-        vm_disk_gb = vm.get("disk_allocated_gb") or 0
+        vm_disk_gb = float(vm.get("disk_allocated_gb") or 0)
         vm_storage_cost = vm_disk_gb * storage_pricing["storage_per_gb_month"] * period_months
         
         total_vm_cost = (compute_cost_per_hour * hours) + vm_storage_cost
@@ -1375,8 +1375,8 @@ async def get_chargeback_summary(
             "estimated_cost": 0.0,
         })
         entry["vm_count"] += 1
-        entry["total_vcpus"] += vm.get("vcpus") or 0
-        entry["total_ram_gb"] += round((vm.get("ram_mb") or 0) / 1024, 2)
+        entry["total_vcpus"] += float(vm.get("vcpus") or 0)
+        entry["total_ram_gb"] += round(float(vm.get("ram_mb") or 0) / 1024, 2)
         entry["total_disk_gb"] += vm_disk_gb
         entry["compute_cost"] += compute_cost_per_hour * hours
         entry["storage_cost"] += vm_storage_cost
@@ -1386,7 +1386,7 @@ async def get_chargeback_summary(
     for key, entry in tenant_totals.items():
         # Snapshot costs from storage data
         storage_info = storage_data.get(key, {})
-        snapshot_gb = storage_info.get("total_storage_gb") or 0
+        snapshot_gb = float(storage_info.get("total_storage_gb") or 0)  # Convert to float
         snapshot_cost = snapshot_gb * storage_pricing["snapshot_per_gb_month"] * period_months
         entry["snapshot_cost"] = round(snapshot_cost, 2)
         

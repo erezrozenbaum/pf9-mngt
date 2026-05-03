@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.7] - 2026-05-03
+
+### Fixed
+- **Critical Hotfix**: Fixed TypeError in chargeback calculations due to decimal.Decimal and float type mismatch
+- Resolved database decimal values multiplication errors in snapshot cost calculations
+- Added proper type conversion for all database numeric values in chargeback endpoints
+
 ## [1.94.6] - 2026-05-03
 
 ### Fixed
