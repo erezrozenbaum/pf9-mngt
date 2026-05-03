@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.2] - 2026-05-03
+
+### Added
+- **Tenant Portal Theme Toggle**: New theme toggle component in tenant-ui with modern styling and accessibility features
+- **Enhanced Dark Mode Support**: Comprehensive theme system with CSS custom properties for both admin and tenant UIs
+
+### Fixed
+- **Docs Layout Optimization**: Removed unnecessary right details panel from documentation page, allowing full-width content display
+- **Dependency Graph Dark Mode**: Fixed edge visibility issues in dependency graphs by using theme-aware CSS variables instead of hard-coded colors
+- **TypeScript Build Errors**: Resolved import syntax issues in tenant-ui with proper type-only imports for React 19.2+ and verbatimModuleSyntax
+- **Line Separator Consistency**: Standardized border styling across admin UI components for consistent visual hierarchy
+
+### Changed
+- **Theme System Architecture**: Unified theme management between admin and tenant portals with shared CSS custom properties
+- **Dependency Graph Styling**: Enhanced edge markers and label backgrounds for better readability in both light and dark modes
+
+---
+
 ## [1.94.1] - 2026-04-30
 
 ### Fixed

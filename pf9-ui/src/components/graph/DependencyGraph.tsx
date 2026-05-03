@@ -292,7 +292,7 @@ function ResourceNode({ data }: NodeProps) {
           >
             {data.label}
           </div>
-          <div style={{ color: "#94a3b8", fontSize: 10, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
+          <div style={{ color: "var(--color-text-secondary, #94a3b8)", fontSize: 10, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
             {data.ntype}
             {data.status ? ` · ${data.status}` : ""}
           </div>
@@ -356,11 +356,11 @@ function TenantHealthPanel({ summary, graphHealthScore, topIssues, orphanSummary
   const hc = healthColor(hs);
   return (
     <div style={{
-      background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8,
+      background: "var(--color-surface, #0f172a)", border: "1px solid var(--color-border, #334155)", borderRadius: 8,
       padding: "8px 12px", margin: "6px 8px 0", fontSize: 11,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-        <span style={{ color: "#94a3b8", fontWeight: 600 }}>Environment Health</span>
+        <span style={{ color: "var(--color-text-secondary, #94a3b8)", fontWeight: 600 }}>Environment Health</span>
         {hs !== null && (
           <span style={{
             background: `${hc}22`, border: `1px solid ${hc}`, borderRadius: 12,
@@ -387,7 +387,7 @@ function TenantHealthPanel({ summary, graphHealthScore, topIssues, orphanSummary
       </div>
       {topIssues.length > 0 && (
         <details style={{ marginTop: 6 }}>
-          <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: 10 }}>Top issues ({topIssues.length})</summary>
+          <summary style={{ cursor: "pointer", color: "var(--color-text-secondary, #94a3b8)", fontSize: 10 }}>Top issues ({topIssues.length})</summary>
           <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
             {topIssues.slice(0, 5).map(i => (
               <div key={i.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -481,10 +481,10 @@ function toFlowGraph(
         target:       e.target,
         label:        e.label,
         animated:     inImpact,
-        style:        { stroke: inImpact ? "#ef444480" : "#475569", strokeWidth: inImpact ? 2 : 1.5 },
-        labelStyle:   { fill: "#94a3b8", fontSize: 9 },
-        labelBgStyle: { fill: "#1e293b", fillOpacity: 0.85 },
-        markerEnd:    { type: MarkerType.ArrowClosed, color: inImpact ? "#ef4444" : "#475569" },
+        style:        { stroke: inImpact ? "#ef444480" : "var(--color-text-secondary, #64748b)", strokeWidth: inImpact ? 2 : 1.5 },
+        labelStyle:   { fill: "var(--color-text-secondary, #94a3b8)", fontSize: 9 },
+        labelBgStyle: { fill: "var(--color-surface-elevated, #1e293b)", fillOpacity: 0.85 },
+        markerEnd:    { type: MarkerType.ArrowClosed, color: inImpact ? "#ef4444" : "var(--color-text-secondary, #64748b)" },
       };
     });
 
@@ -754,7 +754,7 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
         {/* Migration overlay legend */}
         {(migrationProjectId != null || graphUrl != null) && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginRight: 8 }}>
-            <span style={{ fontSize: 10, color: "#94a3b8" }}>Migration:</span>
+            <span style={{ fontSize: 10, color: "var(--color-text-secondary, #94a3b8)" }}>Migration:</span>
             {(["confirmed", "pending", "missing"] as const).map((s) => {
               const label = graphUrl
                 ? { confirmed: "complete", pending: "in progress", missing: "failed" }[s]
@@ -895,11 +895,11 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
 
         {/* Node detail sidebar */}
         {selectedNode && (
-          <div className="graph-node-sidebar" style={{ background: "#1e293b", color: "#f1f5f9" }}>
+          <div className="graph-node-sidebar" style={{ background: "var(--color-surface-elevated, #1e293b)", color: "var(--color-text-primary, #f1f5f9)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <span style={{ fontWeight: 600, fontSize: 13, color: "#f1f5f9" }}>{NODE_ICONS[selectedNode.type]} {selectedNode.label}</span>
               <button
-                style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 16 }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-secondary, #94a3b8)", fontSize: 16 }}
                 onClick={() => setSelectedNode(null)}
               >✕</button>
             </div>
@@ -1086,7 +1086,7 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
 function SidebarRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <tr>
-      <td style={{ color: "#94a3b8", paddingBottom: 6, paddingRight: 8, whiteSpace: "nowrap", verticalAlign: "top" }}>{label}</td>
+      <td style={{ color: "var(--color-text-secondary, #94a3b8)", paddingBottom: 6, paddingRight: 8, whiteSpace: "nowrap", verticalAlign: "top" }}>{label}</td>
       <td style={{ color: "#e2e8f0", paddingBottom: 6 }}>{value}</td>
     </tr>
   );

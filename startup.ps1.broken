@@ -23,9 +23,7 @@ if ($StopOnly) {
         try {
             schtasks /delete /tn $_ /f 2>$null | Out-Null
             Write-Host "Removed legacy scheduled task: $_" -ForegroundColor Green
-        } catch {
-            # Ignore errors for non-existent tasks
-        }
+        } catch {}
     }
     
     # Stop any lingering background python collectors (legacy)
@@ -131,9 +129,7 @@ if ($backupEnabled) {
                 $nfsOk = $true
             }
             $tcpClient.Close()
-        } catch {
-            # NFS connection failed
-        }
+        } catch {}
     }
 
     if ($nfsOk) {
@@ -227,7 +223,7 @@ if ($allGood) {
     if ($isDemoMode) {
         Write-Host "✓ Demo mode — scheduler worker uses static cache" -ForegroundColor Green
     } else {
-        Write-Host "✓ Metrics collection `& RVTools inventory run inside pf9_scheduler_worker" -ForegroundColor Green
+        Write-Host "✓ Metrics collection & RVTools inventory run inside pf9_scheduler_worker" -ForegroundColor Green
         $metricsInterval = $envCheckMap['METRICS_INTERVAL_SECONDS']
         if (-not $metricsInterval) { $metricsInterval = '60' }
         Write-Host "  Interval : $metricsInterval s" -ForegroundColor Gray

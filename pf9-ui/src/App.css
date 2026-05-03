@@ -39,7 +39,7 @@
   display: flex;
   align-items: center;
   padding: 0 16px;
-  box-shadow: inset 0 -1px 0 var(--color-border);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
   flex-shrink: 0;
 }
 
@@ -1415,10 +1415,9 @@ body,
 :root[data-theme="dark"] .pf9-header {
   border-bottom-color: rgba(56, 189, 248, 0.15);
   background: var(--color-surface);
-  box-shadow: 0 1px 0 rgba(56, 189, 248, 0.08), 0 2px 8px rgba(0,0,0,0.4);
 }
 
 /* Sidebar brand separator visible in dark mode */
 :root[data-theme="dark"] .pf9-sidebar-brand {
-  box-shadow: inset 0 -1px 0 rgba(56, 189, 248, 0.15);
+  border-bottom-color: rgba(56, 189, 248, 0.15);
 }

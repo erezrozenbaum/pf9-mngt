@@ -66,6 +66,13 @@
   min-height: 600px;
 }
 
+/* ─── Full-width admin layout ─────────────────────────────────── */
+
+.docs-admin-layout {
+  width: 100%;
+  max-width: none;
+}
+
 /* ─── Sidebar ─────────────────────────────────────────────────── */
 
 .docs-sidebar {

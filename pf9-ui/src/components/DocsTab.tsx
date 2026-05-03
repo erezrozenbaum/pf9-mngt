@@ -371,7 +371,7 @@ export default function DocsTab({ isAdmin }: DocsTabProps) {
 
       {/* ── Visibility Admin tab ─────────────────────────────────────────── */}
       {subTab === "visibility" && isAdmin && (
-        <div>
+        <div className="docs-admin-layout">
           {visLoading && <div className="docs-loading">Loading visibility settings…</div>}
           {visError && <div className="docs-error">{visError}</div>}
 

@@ -3149,6 +3149,7 @@ const App: React.FC = () => {
     "resource_management",
     "runbooks",
     "insights",
+    "docs",
     "system_metadata",
     "tickets",
     "my_queue",

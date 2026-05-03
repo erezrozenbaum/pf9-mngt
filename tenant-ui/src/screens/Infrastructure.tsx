@@ -628,7 +628,7 @@ function DependencyGraphView({ graph }: { graph: ResourceGraph }) {
             const sub = posMap[e.subnet_id]; const net = posMap[e.network_id];
             if (!sub || !net) return null;
             return <line key={`sn${i}`} x1={sub.x + R} y1={sub.y} x2={net.x - R} y2={net.y}
-              stroke={GRAPH_COLORS.subnet} strokeWidth={1.2} strokeOpacity={0.35} strokeDasharray="3 3" />;
+              stroke={GRAPH_COLORS.subnet} strokeWidth={1.2} strokeOpacity={0.7} strokeDasharray="3 3" />;
           })}
 
           {/* Edges: vm → network */}
@@ -636,7 +636,7 @@ function DependencyGraphView({ graph }: { graph: ResourceGraph }) {
             const vm = posMap[e.vm_id]; const net = posMap[e.network_id];
             if (!vm || !net) return null;
             return <line key={`vn${i}`} x1={net.x + R} y1={net.y} x2={vm.x - R} y2={vm.y}
-              stroke={GRAPH_COLORS.net} strokeWidth={1.5} strokeOpacity={0.4} strokeDasharray="4 3" />;
+              stroke={GRAPH_COLORS.net} strokeWidth={1.5} strokeOpacity={0.75} strokeDasharray="4 3" />;
           })}
 
           {/* Edges: vm → sg */}
@@ -644,7 +644,7 @@ function DependencyGraphView({ graph }: { graph: ResourceGraph }) {
             const vm = posMap[e.vm_id]; const sg = posMap[e.sg_id];
             if (!vm || !sg) return null;
             return <line key={`vs${i}`} x1={vm.x + R} y1={vm.y} x2={sg.x - R} y2={sg.y}
-              stroke={GRAPH_COLORS.sg} strokeWidth={1.5} strokeOpacity={0.4} strokeDasharray="4 3" />;
+              stroke={GRAPH_COLORS.sg} strokeWidth={1.5} strokeOpacity={0.75} strokeDasharray="4 3" />;
           })}
 
           {/* Edges: vm → volume */}
@@ -652,7 +652,7 @@ function DependencyGraphView({ graph }: { graph: ResourceGraph }) {
             const vm = posMap[e.vm_id]; const vol = posMap[e.volume_id];
             if (!vm || !vol) return null;
             return <line key={`vv${i}`} x1={vm.x + R} y1={vm.y} x2={vol.x - R} y2={vol.y}
-              stroke={GRAPH_COLORS.vol} strokeWidth={1.2} strokeOpacity={0.35} strokeDasharray="4 3" />;
+              stroke={GRAPH_COLORS.vol} strokeWidth={1.2} strokeOpacity={0.7} strokeDasharray="4 3" />;
           })}
 
           {/* Nodes */}

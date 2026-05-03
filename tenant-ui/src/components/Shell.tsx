@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import type { Branding, MeResponse, InventoryStatus } from "../lib/api";
 import { apiInventoryStatus } from "../lib/api";
 import type { Screen } from "../App";
+import { ThemeToggle } from "./ThemeToggle";
 import { Overview } from "../screens/Overview";
 import { Dashboard } from "../screens/Dashboard";
 import { Infrastructure } from "../screens/Infrastructure";
@@ -86,6 +87,8 @@ export function Shell({ branding, me, screen, onNavigate, onLogout }: Props) {
 
   return (
     <div className="shell">
+      <ThemeToggle />
+      
       {/* ── Sidebar ── */}
       <nav className="sidebar" aria-label="Main navigation">
         <div className="sidebar-brand">
