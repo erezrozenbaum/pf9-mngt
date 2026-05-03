@@ -283,7 +283,16 @@ def collect_resource_metrics(conn, region_id: str) -> int:
         resp = requests.get(f"{MONITORING_URL}/metrics/vms", params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
-        vms = data.get("data", [])
+        monitoring_vms = data.get("data", [])
+        
+        # Check if monitoring service returned VMs with flavor information
+        has_flavors = any(vm.get("flavor") for vm in monitoring_vms)
+        if monitoring_vms and has_flavors:
+            vms = monitoring_vms
+        else:
+            if monitoring_vms and not has_flavors:
+                log.info("VM metrics: monitoring service has %d VMs but no flavor data, using fallback", len(monitoring_vms))
+            # Will use fallback methods below
     except Exception as exc:
         log.warning("Could not fetch VM metrics from monitoring service: %s", exc)
 

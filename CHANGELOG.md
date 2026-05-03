@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.5] - 2026-05-03
+
+### Added
+- **Comprehensive Chargeback System**: Complete overhaul of cost calculations with support for all resource types (VMs, Storage, Network, Snapshots) and period-based analysis (7d, 30d, 90d, 12m, custom date ranges)
+- **Multi-Currency Support**: Enhanced chargeback API with proper currency conversion and ILS pricing configuration for accurate cost reporting
+- **Flavor-Based VM Pricing**: Implemented tiered VM pricing system (Silver/Gold/Kryptonite) with per-hour cost calculations based on actual VM flavors
+- **Database Fallback Logic**: Smart metering worker that automatically falls back to database queries when monitoring service lacks flavor information
+
+### Fixed
+- **Critical Chargeback Bug**: Resolved zero-cost calculations by fixing metering worker to capture VM flavor data when monitoring service returns incomplete information
+- **VM Resource Matching**: Fixed flavor-to-pricing JOIN operations ensuring accurate cost attribution for all VM instances
+- **Metering Data Collection**: Enhanced worker to collect metrics for all VM states (ACTIVE, SHUTOFF, SUSPENDED, PAUSED, ERROR, BUILDING) providing complete resource utilization data
+- **Currency Consistency**: Aligned pricing configuration (ILS) with chargeback display currency for accurate cost reporting
+
+### Enhanced
+- **Cost Breakdown API**: Expanded `/api/chargeback` endpoint with detailed resource type breakdown and enhanced filtering capabilities
+- **Period-Based Calculations**: Added comprehensive time period support for historical cost analysis and reporting
+- **Monitoring Integration**: Improved monitoring service integration with proper fallback mechanisms for reliable data collection
+
 ## [1.94.4] - 2026-05-03
 
 ### Fixed

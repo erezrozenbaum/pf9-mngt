@@ -30,6 +30,38 @@ import "reactflow/dist/style.css";
 import { apiFetch } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
+// CSS Variable Resolution for ReactFlow SVG Context
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves CSS custom property values to actual color strings.
+ * ReactFlow SVG elements don't always inherit CSS variables properly,
+ * so we need to compute the actual values.
+ */
+function getCSSVariableValue(variableName: string, fallback: string): string {
+  if (typeof window === 'undefined') return fallback;
+  
+  try {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(variableName).trim();
+    return value || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Get theme-aware colors for dependency graph edges
+ */
+function getEdgeColors() {
+  return {
+    normal: getCSSVariableValue('--color-text-secondary', '#94A3B8'),
+    impact: '#ef4444',
+    impactFaded: '#ef444480',
+    surfaceElevated: getCSSVariableValue('--color-surface-elevated', '#1E2A3B'),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -427,6 +459,7 @@ function toFlowGraph(
   data: GraphResponse,
   hiddenTypes: Set<string>,
   mode: GraphMode,
+  edgeColors = getEdgeColors() // Allow passing in resolved colors
 ): { nodes: Node[]; edges: Edge[] } {
   const visibleNodes = data.nodes.filter((n) => !hiddenTypes.has(n.type));
   const visibleIds   = new Set(visibleNodes.map((n) => n.id));
@@ -467,6 +500,9 @@ function toFlowGraph(
     };
   });
 
+  // Get resolved colors for SVG rendering
+  const colors = edgeColors;
+  
   const rfEdges: Edge[] = data.edges
     .filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
     .map((e) => {
@@ -481,10 +517,14 @@ function toFlowGraph(
         target:       e.target,
         label:        e.label,
         animated:     inImpact,
-        style:        { stroke: inImpact ? "#ef444480" : "var(--color-text-secondary, #94A3B8)", strokeWidth: inImpact ? 2 : 1.5 },
-        labelStyle:   { fill: "var(--color-text-secondary, #94A3B8)", fontSize: 9 },
-        labelBgStyle: { fill: "var(--color-surface-elevated, #1E2A3B)", fillOpacity: 0.85 },
-        markerEnd:    { type: MarkerType.ArrowClosed, color: inImpact ? "#ef4444" : "var(--color-text-secondary, #94A3B8)" },
+        style:        { 
+          stroke: inImpact ? colors.impactFaded : colors.normal, 
+          strokeWidth: inImpact ? 2 : 1.5,
+          strokeOpacity: 1 // Ensure edges are fully opaque
+        },
+        labelStyle:   { fill: colors.normal, fontSize: 9 },
+        labelBgStyle: { fill: colors.surfaceElevated, fillOpacity: 0.85 },
+        markerEnd:    { type: MarkerType.ArrowClosed, color: inImpact ? colors.impact : colors.normal },
       };
     });
 
@@ -561,9 +601,34 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
   // T3.3 — Delete-gate ticket state
   const [deleteTicketLoading, setDeleteTicketLoading] = useState(false);
   const [deleteTicketResult,  setDeleteTicketResult]  = useState<{ ticket_ref: string; created: boolean } | null>(null);
+  const [edgeColors, setEdgeColors] = useState(getEdgeColors());
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
+  // Theme change detection for edge color updates
+  useEffect(() => {
+    const updateColors = () => setEdgeColors(getEdgeColors());
+    
+    // Listen for theme changes via mutation observer
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+          updateColors();
+        }
+      });
+    });
+    
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    });
+    
+    // Also update on mount in case theme was set before component loaded
+    updateColors();
+    
+    return () => observer.disconnect();
+  }, []);
 
   // Mobile detection
   useEffect(() => {
@@ -596,13 +661,13 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
 
   useEffect(() => { load(); }, [load]);
 
-  // Re-layout when data or hidden types change
+  // Re-layout when data, hidden types, or theme colors change
   useEffect(() => {
     if (!graphData) return;
-    const { nodes: n, edges: e } = toFlowGraph(graphData, hiddenTypes, mode);
+    const { nodes: n, edges: e } = toFlowGraph(graphData, hiddenTypes, mode, edgeColors);
     setNodes(n);
     setEdges(e);
-  }, [graphData, hiddenTypes, mode, setNodes, setEdges]);
+  }, [graphData, hiddenTypes, mode, edgeColors, setNodes, setEdges]);
 
   const toggleType = (t: string) => {
     setHiddenTypes((prev) => {
@@ -883,12 +948,18 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
             maxZoom={2}
             proOptions={{ hideAttribution: true }}
           >
-            <Background color="#334155" gap={24} />
+            <Background 
+              color={getCSSVariableValue('--color-border', '#334155')} 
+              gap={24} 
+            />
             <Controls />
             <MiniMap
-              nodeColor={(n) => NODE_COLORS[n.data?.ntype as string] ?? "#64748b"}
+              nodeColor={(n) => NODE_COLORS[n.data?.ntype as string] ?? getCSSVariableValue('--color-text-secondary', '#64748b')}
               nodeStrokeWidth={2}
-              style={{ background: "#0f172a" }}
+              style={{ 
+                background: getCSSVariableValue('--color-surface', '#0f172a'),
+                border: `1px solid ${getCSSVariableValue('--color-border', '#334155')}` 
+              }}
             />
           </ReactFlow>
         </div>
