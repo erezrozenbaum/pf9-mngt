@@ -1228,6 +1228,8 @@ async def get_chargeback_summary(
     Supports custom date ranges and predefined periods (24h, 7d, 30d).
     Returns one row per (domain, project_name) sorted by cost descending.
     """
+    from datetime import datetime
+    
     # Handle period and date range logic
     if period == "24h":
         hours = 24
@@ -1238,7 +1240,6 @@ async def get_chargeback_summary(
     
     # Custom date range overrides hours parameter
     if start_date and end_date:
-        from datetime import datetime
         start = datetime.fromisoformat(start_date + "T00:00:00")
         end = datetime.fromisoformat(end_date + "T23:59:59")
         hours = int((end - start).total_seconds() / 3600)

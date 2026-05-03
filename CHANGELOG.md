@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.6] - 2026-05-03
+
+### Fixed
+- **Critical Hotfix**: Fixed UnboundLocalError in chargeback-summary endpoint due to missing datetime import
+- Resolved 500 internal server error when accessing metering chargeback functionality in Kubernetes environments
+- Improved error handling in chargeback date range calculations
+
 ## [1.94.5] - 2026-05-03
 
 ### Added
