@@ -514,10 +514,12 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     }
   }, []);
 
-  const loadChargebackSummary = useCallback(async (currency: string, hours: number) => {
+  const loadChargebackSummary = useCallback(async (currency: string, period: string, startDate?: string, endDate?: string) => {
     try {
       setLoading(true);
-      const params = new URLSearchParams({ currency, hours: String(hours) });
+      const params = new URLSearchParams({ currency, period });
+      if (startDate) params.set("start_date", startDate);
+      if (endDate) params.set("end_date", endDate);
       if (domainFilter) params.set("domain", domainFilter);
       const data = await apiFetch<any>(`/api/metering/chargeback-summary?${params}`);
       setChargebackData(data);
