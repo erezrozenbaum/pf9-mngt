@@ -334,7 +334,7 @@ def collect_resource_metrics(conn, region_id: str) -> int:
                     LEFT JOIN projects p ON p.id = s.project_id
                     LEFT JOIN domains d ON d.id = p.domain_id
                     LEFT JOIN flavors fl ON fl.id = s.flavor_id
-                    WHERE s.status = 'ACTIVE'
+                    WHERE s.status IN ('ACTIVE', 'SHUTOFF', 'SUSPENDED', 'PAUSED', 'ERROR')
                     ORDER BY s.name
                 """)
                 db_rows = cur.fetchall()

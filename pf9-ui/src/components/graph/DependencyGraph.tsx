@@ -481,10 +481,10 @@ function toFlowGraph(
         target:       e.target,
         label:        e.label,
         animated:     inImpact,
-        style:        { stroke: inImpact ? "#ef444480" : "var(--color-text-secondary, #64748b)", strokeWidth: inImpact ? 2 : 1.5 },
-        labelStyle:   { fill: "var(--color-text-secondary, #94a3b8)", fontSize: 9 },
+        style:        { stroke: inImpact ? "#ef444480" : "var(--color-text-secondary, #cbd5e1)", strokeWidth: inImpact ? 2 : 1.5 },
+        labelStyle:   { fill: "var(--color-text-secondary, #e2e8f0)", fontSize: 9 },
         labelBgStyle: { fill: "var(--color-surface-elevated, #1e293b)", fillOpacity: 0.85 },
-        markerEnd:    { type: MarkerType.ArrowClosed, color: inImpact ? "#ef4444" : "var(--color-text-secondary, #64748b)" },
+        markerEnd:    { type: MarkerType.ArrowClosed, color: inImpact ? "#ef4444" : "var(--color-text-secondary, #cbd5e1)" },
       };
     });
 

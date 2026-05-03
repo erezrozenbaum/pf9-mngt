@@ -1270,15 +1270,34 @@ async def get_chargeback_summary(
             vms = cur.fetchall()
 
     tenant_totals: dict = {}
+    vm_details: list = []
     for vm in vms:
         key = (vm.get("domain") or "unknown", vm.get("project_name") or "unknown")
         fp = flavor_pricing.get(vm.get("flavor_name") or "")
         if fp and fp["cost_per_hour"] > 0:
             cost_per_hour = fp["cost_per_hour"]
+            cost_breakdown = {"flavor": cost_per_hour, "vcpu": 0.0, "ram": 0.0}
         else:
             vcpu_cost = (vm.get("vcpus") or 0) * fb_vcpu
             ram_cost = ((vm.get("ram_mb") or 0) / 1024) * fb_ram
             cost_per_hour = vcpu_cost + ram_cost
+            cost_breakdown = {"flavor": 0.0, "vcpu": vcpu_cost, "ram": ram_cost}
+
+        total_cost = cost_per_hour * hours
+        
+        # Add VM details for per-VM breakdown
+        vm_details.append({
+            "vm_id": vm.get("vm_id"),
+            "vm_name": vm.get("vm_name"),
+            "domain": vm.get("domain") or "unknown",
+            "project_name": vm.get("project_name") or "unknown",
+            "flavor_name": vm.get("flavor_name"),
+            "vcpus": vm.get("vcpus") or 0,
+            "ram_gb": round((vm.get("ram_mb") or 0) / 1024, 2),
+            "cost_per_hour": round(cost_per_hour, 4),
+            "total_cost": round(total_cost, 2),
+            "cost_breakdown": cost_breakdown,
+        })
 
         entry = tenant_totals.setdefault(key, {
             "domain": key[0],
@@ -1291,7 +1310,7 @@ async def get_chargeback_summary(
         entry["vm_count"] += 1
         entry["total_vcpus"] += vm.get("vcpus") or 0
         entry["total_ram_gb"] += round((vm.get("ram_mb") or 0) / 1024, 2)
-        entry["estimated_cost"] += cost_per_hour * hours
+        entry["estimated_cost"] += total_cost
 
     rows = sorted(tenant_totals.values(), key=lambda x: x["estimated_cost"], reverse=True)
     for r in rows:
@@ -1301,9 +1320,181 @@ async def get_chargeback_summary(
         "currency": currency,
         "period_hours": hours,
         "tenants": rows,
+        "vm_details": vm_details,
         "total_cost": round(sum(r["estimated_cost"] for r in rows), 2),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-VM Chargeback Details (JSON — detailed breakdown per VM)
+# ---------------------------------------------------------------------------
+
+@router.get("/chargeback-details")
+async def get_chargeback_details(
+    hours: int = Query(720, ge=1, le=8760, description="Lookback hours (default 30 days)"),
+    currency: Optional[str] = Query(None, description="Override display currency"),
+    domain: Optional[str] = Query(None, description="Filter by domain"),
+    project: Optional[str] = Query(None, description="Filter by project"),
+    user: User = Depends(require_permission("metering", "read")),
+):
+    """
+    Detailed per-VM chargeback breakdown with cost attribution by usage type
+    (compute, storage, snapshots, etc.) and currency selection.
+    """
+    with get_connection() as conn:
+        # Get config and pricing
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM metering_config WHERE id = 1")
+            cfg = cur.fetchone()
+        fb_vcpu = float(cfg["cost_per_vcpu_hour"]) if cfg else 0
+        fb_ram = float(cfg["cost_per_gb_ram_hour"]) if cfg else 0
+        config_currency = cfg["cost_currency"] if cfg else "USD"
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM metering_pricing ORDER BY id")
+            pricing_rows = cur.fetchall()
+
+        # Determine currency
+        if not currency:
+            currency = pricing_rows[0].get("currency") if pricing_rows else config_currency
+
+        # Build pricing lookup
+        flavor_pricing = {}
+        storage_pricing = {"storage_per_gb_month": 0.0, "snapshot_per_gb_month": 0.0}
+        for p in pricing_rows:
+            if p["category"] == "flavor":
+                flavor_pricing[p["item_name"]] = {
+                    "cost_per_hour": float(p.get("cost_per_hour") or 0),
+                }
+            elif p["category"] == "storage" and p["item_name"] == "storage":
+                storage_pricing["storage_per_gb_month"] = float(p.get("cost_per_month") or 0)
+            elif p["category"] == "storage" and p["item_name"] == "snapshot":
+                storage_pricing["snapshot_per_gb_month"] = float(p.get("cost_per_month") or 0)
+
+        # Get VM data
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        where_parts = ["mr.collected_at > %s"]
+        params: list = [since]
+        if domain:
+            where_parts.append("mr.domain = %s")
+            params.append(domain)
+        if project:
+            where_parts.append("mr.project_name = %s")
+            params.append(project)
+
+        sql = f"""
+            SELECT DISTINCT ON (mr.vm_id)
+                mr.vm_id, mr.vm_name, mr.project_name, mr.domain,
+                mr.vcpus_allocated AS vcpus, mr.ram_allocated_mb AS ram_mb, 
+                mr.flavor AS flavor_name, mr.storage_allocated_gb,
+                mr.collected_at, s.status AS vm_status
+            FROM metering_resources mr
+            LEFT JOIN servers s ON s.id = mr.vm_id
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY mr.vm_id, mr.collected_at DESC
+        """
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, params)
+            vms = cur.fetchall()
+
+        # Get storage and snapshot data per VM
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT 
+                    v.server_id AS vm_id,
+                    SUM(v.size_gb) AS total_volume_gb,
+                    COUNT(v.id) AS volume_count
+                FROM volumes v 
+                WHERE v.server_id IS NOT NULL
+                GROUP BY v.server_id
+            """)
+            storage_by_vm = {r["vm_id"]: r for r in cur.fetchall()}
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT 
+                    v.server_id AS vm_id,
+                    COUNT(s.id) AS snapshot_count,
+                    SUM(s.size_gb) AS total_snapshot_gb
+                FROM volumes v
+                LEFT JOIN snapshots s ON s.volume_id = v.id
+                WHERE v.server_id IS NOT NULL AND s.id IS NOT NULL
+                GROUP BY v.server_id
+            """)
+            snapshots_by_vm = {r["vm_id"]: r for r in cur.fetchall()}
+
+        # Calculate detailed breakdown per VM
+        vm_details = []
+        period_months = hours / 730.0  # 730 hours ≈ 1 month
+
+        for vm in vms:
+            vm_id = vm.get("vm_id")
+            storage_info = storage_by_vm.get(vm_id, {})
+            snapshot_info = snapshots_by_vm.get(vm_id, {})
+            
+            # Compute costs
+            fp = flavor_pricing.get(vm.get("flavor_name") or "")
+            if fp and fp["cost_per_hour"] > 0:
+                compute_cost_per_hour = fp["cost_per_hour"]
+                cost_attribution = {"compute": "flavor"}
+            else:
+                vcpu_cost = (vm.get("vcpus") or 0) * fb_vcpu
+                ram_cost = ((vm.get("ram_mb") or 0) / 1024) * fb_ram
+                compute_cost_per_hour = vcpu_cost + ram_cost
+                cost_attribution = {"compute": "vcpu_ram"}
+
+            # Storage costs
+            volume_gb = storage_info.get("total_volume_gb") or vm.get("storage_allocated_gb") or 0
+            storage_cost = volume_gb * storage_pricing["storage_per_gb_month"] * period_months
+            
+            # Snapshot costs
+            snapshot_gb = snapshot_info.get("total_snapshot_gb") or 0
+            snapshot_cost = snapshot_gb * storage_pricing["snapshot_per_gb_month"] * period_months
+            
+            # Total costs
+            total_compute_cost = compute_cost_per_hour * hours
+            total_cost = total_compute_cost + storage_cost + snapshot_cost
+
+            vm_details.append({
+                "vm_id": vm_id,
+                "vm_name": vm.get("vm_name"),
+                "vm_status": vm.get("vm_status"),
+                "domain": vm.get("domain") or "unknown",
+                "project_name": vm.get("project_name") or "unknown",
+                "flavor_name": vm.get("flavor_name"),
+                "vcpus": vm.get("vcpus") or 0,
+                "ram_gb": round((vm.get("ram_mb") or 0) / 1024, 2),
+                "storage_gb": round(volume_gb, 2),
+                "volume_count": storage_info.get("volume_count") or 0,
+                "snapshot_gb": round(snapshot_gb, 2),
+                "snapshot_count": snapshot_info.get("snapshot_count") or 0,
+                "costs": {
+                    "compute_per_hour": round(compute_cost_per_hour, 4),
+                    "compute_total": round(total_compute_cost, 2),
+                    "storage_total": round(storage_cost, 2),
+                    "snapshot_total": round(snapshot_cost, 2),
+                    "total": round(total_cost, 2),
+                },
+                "cost_attribution": cost_attribution,
+            })
+
+        # Sort by total cost descending
+        vm_details.sort(key=lambda x: x["costs"]["total"], reverse=True)
+
+        return {
+            "currency": currency,
+            "period_hours": hours,
+            "period_months": round(period_months, 2),
+            "vm_details": vm_details,
+            "total_cost": round(sum(vm["costs"]["total"] for vm in vm_details), 2),
+            "breakdown_totals": {
+                "compute": round(sum(vm["costs"]["compute_total"] for vm in vm_details), 2),
+                "storage": round(sum(vm["costs"]["storage_total"] for vm in vm_details), 2),
+                "snapshots": round(sum(vm["costs"]["snapshot_total"] for vm in vm_details), 2),
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -26,16 +26,61 @@ export function Overview() {
 
   if (loading) {
     return (
-      <div style={{ padding: "2rem", color: "rgba(255,255,255,0.6)" }}>
-        Loading health overview…
+      <div style={{ 
+        padding: "2rem", 
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        minHeight: "50vh",
+      }}>
+        <div style={{
+          color: "var(--color-text-secondary)",
+          fontSize: "1rem",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+        }}>
+          <div className="loading-spinner"></div>
+          Loading health overview…
+        </div>
       </div>
     );
   }
 
   if (error || !health) {
     return (
-      <div style={{ padding: "2rem", color: "#f87171" }}>
-        Unable to load health overview{error ? `: ${error}` : ""}.
+      <div style={{ 
+        padding: "2rem",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        minHeight: "50vh",
+      }}>
+        <div style={{
+          background: "var(--color-surface)",
+          border: "1px solid var(--color-error)",
+          borderRadius: "var(--radius-lg)",
+          padding: "2rem",
+          textAlign: "center",
+          maxWidth: "400px",
+        }}>
+          <div style={{
+            color: "var(--color-error)",
+            fontSize: "1.125rem",
+            fontWeight: "600",
+            marginBottom: "0.5rem",
+          }}>
+            Unable to Load Health Overview
+          </div>
+          {error && (
+            <div style={{
+              color: "var(--color-text-secondary)",
+              fontSize: "0.875rem",
+            }}>
+              {error}
+            </div>
+          )}
+        </div>
       </div>
     );
   }

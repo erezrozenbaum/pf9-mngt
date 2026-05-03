@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.3] - 2026-05-03
+
+### Added
+- **Per-VM Chargeback Details**: New `/api/metering/chargeback-details` endpoint providing detailed cost breakdown per VM with storage, snapshot, and compute attribution
+- **Currency Selection Support**: Enhanced chargeback export endpoints with currency parameter for multi-currency reporting
+- **Enhanced VM Collection**: Metering worker now includes all VM states (ACTIVE, SHUTOFF, SUSPENDED, PAUSED, ERROR) for comprehensive chargeback calculations
+
+### Fixed
+- **Dark Mode Dependency Graph**: Improved edge visibility in Kubernetes dependency graphs by using lighter CSS custom property values (`#cbd5e1` and `#e2e8f0`) for better contrast in dark mode
+- **Tenant Portal UI Enhancement**: Modernized Dashboard and Overview screens with enhanced card layouts, loading states, and error handling matching admin UI styling
+- **CI Package Lock Synchronization**: Resolved `npm ci` failures by regenerating package-lock.json to include missing `react-is@19.2.5` transitive dependency
+- **Chargeback VM Coverage**: Fixed incomplete VM counting in chargeback calculations by expanding status filter beyond just ACTIVE VMs
+
+### Changed
+- **Chargeback Summary Response**: Added `vm_details` array to chargeback-summary endpoint for detailed per-VM cost breakdown
+- **Tenant Portal Theme System**: Enhanced loading and error states with consistent theme-aware styling using CSS custom properties
+
 ## [1.94.2] - 2026-05-03
 
 ### Added
