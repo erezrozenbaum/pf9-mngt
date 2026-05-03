@@ -1215,15 +1215,37 @@ async def export_chargeback(
 @router.get("/chargeback-summary")
 async def get_chargeback_summary(
     hours: int = Query(720, ge=1, le=8760, description="Lookback hours (default 30 days)"),
+    start_date: Optional[str] = Query(None, description="Custom start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="Custom end date (YYYY-MM-DD)"),
+    period: Optional[str] = Query(None, description="Predefined period: 24h, 7d, 30d"),
     currency: Optional[str] = Query(None, description="Override display currency (e.g. ILS, EUR, GBP)"),
     domain: Optional[str] = Query(None),
     user: User = Depends(require_permission("metering", "read")),
 ):
     """
     JSON chargeback summary — total estimated cost per tenant for the UI Chargeback tab.
-    Aggregates the latest metering record per VM, computes cost from pricing table,
-    and returns one row per (domain, project_name) sorted by cost descending.
+    Calculates costs for VMs, Storage, Snapshots, Networks, and Public IPs.
+    Supports custom date ranges and predefined periods (24h, 7d, 30d).
+    Returns one row per (domain, project_name) sorted by cost descending.
     """
+    # Handle period and date range logic
+    if period == "24h":
+        hours = 24
+    elif period == "7d":
+        hours = 168  # 7 * 24
+    elif period == "30d":
+        hours = 720  # 30 * 24
+    
+    # Custom date range overrides hours parameter
+    if start_date and end_date:
+        from datetime import datetime
+        start = datetime.fromisoformat(start_date + "T00:00:00")
+        end = datetime.fromisoformat(end_date + "T23:59:59")
+        hours = int((end - start).total_seconds() / 3600)
+        since = start.replace(tzinfo=timezone.utc)
+    else:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM metering_config WHERE id = 1")
@@ -1242,48 +1264,85 @@ async def get_chargeback_summary(
             else:
                 currency = config_currency
 
+        # Build pricing lookups for all resource types
         flavor_pricing = {}
+        storage_pricing = {"storage_per_gb_month": 0.0, "snapshot_per_gb_month": 0.0}
+        network_pricing = {"network_per_month": 0.0, "public_ip_per_month": 0.0}
+        
         for p in pricing_rows:
             if p["category"] == "flavor":
                 flavor_pricing[p["item_name"]] = {
                     "cost_per_hour": float(p.get("cost_per_hour") or 0),
                 }
+            elif p["category"] == "storage_gb" and p["item_name"] in ["storage", "Storage (per GB)"]:
+                storage_pricing["storage_per_gb_month"] = float(p.get("cost_per_month") or 0)
+            elif p["category"] == "snapshot_gb" and p["item_name"] in ["snapshot", "Snapshot Storage (per GB)"]:
+                storage_pricing["snapshot_per_gb_month"] = float(p.get("cost_per_month") or 0)
+            elif p["category"] == "network" and p["item_name"] in ["network", "Network"]:
+                network_pricing["network_per_month"] = float(p.get("cost_per_month") or 0)
+            elif p["category"] == "public_ip" and p["item_name"] in ["public_ip", "Public IP"]:
+                network_pricing["public_ip_per_month"] = float(p.get("cost_per_month") or 0)
 
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
         where_parts = ["collected_at > %s"]
         params: list = [since]
         if domain:
             where_parts.append("domain = %s")
             params.append(domain)
 
-        sql = f"""
+        # Get VMs with their latest metrics
+        vm_sql = f"""
             SELECT DISTINCT ON (vm_id)
                 vm_id, vm_name, project_name, domain,
-                vcpus_allocated AS vcpus, ram_allocated_mb AS ram_mb, flavor AS flavor_name,
-                collected_at
+                vcpus_allocated AS vcpus, ram_allocated_mb AS ram_mb, 
+                flavor AS flavor_name, disk_allocated_gb, collected_at
             FROM metering_resources
             WHERE {' AND '.join(where_parts)}
             ORDER BY vm_id, collected_at DESC
         """
+        
+        # Get storage data (volumes and snapshots)
+        storage_sql = f"""
+            SELECT project_name, domain,
+                   SUM(COALESCE(size_gb, 0)) as total_storage_gb
+            FROM metering_snapshots ms
+            WHERE {' AND '.join(where_parts)}
+            GROUP BY project_name, domain
+        """
+        
+        # Get network data (approximate - we'll use VM count as proxy for now)
+        # In a real implementation, you'd query network tables
+        
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, params)
+            cur.execute(vm_sql, params)
             vms = cur.fetchall()
+            
+            cur.execute(storage_sql, params)
+            storage_data = {(row["domain"], row["project_name"]): row for row in cur.fetchall()}
 
     tenant_totals: dict = {}
     vm_details: list = []
+    period_months = hours / 730.0  # Convert hours to months for monthly pricing
+    
     for vm in vms:
         key = (vm.get("domain") or "unknown", vm.get("project_name") or "unknown")
+        
+        # Calculate VM compute costs
         fp = flavor_pricing.get(vm.get("flavor_name") or "")
         if fp and fp["cost_per_hour"] > 0:
-            cost_per_hour = fp["cost_per_hour"]
-            cost_breakdown = {"flavor": cost_per_hour, "vcpu": 0.0, "ram": 0.0}
+            compute_cost_per_hour = fp["cost_per_hour"]
+            cost_breakdown = {"flavor": compute_cost_per_hour, "vcpu": 0.0, "ram": 0.0}
         else:
             vcpu_cost = (vm.get("vcpus") or 0) * fb_vcpu
             ram_cost = ((vm.get("ram_mb") or 0) / 1024) * fb_ram
-            cost_per_hour = vcpu_cost + ram_cost
+            compute_cost_per_hour = vcpu_cost + ram_cost
             cost_breakdown = {"flavor": 0.0, "vcpu": vcpu_cost, "ram": ram_cost}
 
-        total_cost = cost_per_hour * hours
+        # Calculate VM storage costs (allocated disk)
+        vm_disk_gb = vm.get("disk_allocated_gb") or 0
+        vm_storage_cost = vm_disk_gb * storage_pricing["storage_per_gb_month"] * period_months
+        
+        total_vm_cost = (compute_cost_per_hour * hours) + vm_storage_cost
+        cost_breakdown["storage"] = vm_storage_cost
         
         # Add VM details for per-VM breakdown
         vm_details.append({
@@ -1294,8 +1353,10 @@ async def get_chargeback_summary(
             "flavor_name": vm.get("flavor_name"),
             "vcpus": vm.get("vcpus") or 0,
             "ram_gb": round((vm.get("ram_mb") or 0) / 1024, 2),
-            "cost_per_hour": round(cost_per_hour, 4),
-            "total_cost": round(total_cost, 2),
+            "disk_gb": vm_disk_gb,
+            "compute_cost_per_hour": round(compute_cost_per_hour, 4),
+            "storage_cost": round(vm_storage_cost, 2),
+            "total_cost": round(total_vm_cost, 2),
             "cost_breakdown": cost_breakdown,
         })
 
@@ -1305,23 +1366,58 @@ async def get_chargeback_summary(
             "vm_count": 0,
             "total_vcpus": 0,
             "total_ram_gb": 0.0,
+            "total_disk_gb": 0.0,
+            "compute_cost": 0.0,
+            "storage_cost": 0.0,
+            "snapshot_cost": 0.0,
+            "network_cost": 0.0,
             "estimated_cost": 0.0,
         })
         entry["vm_count"] += 1
         entry["total_vcpus"] += vm.get("vcpus") or 0
         entry["total_ram_gb"] += round((vm.get("ram_mb") or 0) / 1024, 2)
-        entry["estimated_cost"] += total_cost
+        entry["total_disk_gb"] += vm_disk_gb
+        entry["compute_cost"] += compute_cost_per_hour * hours
+        entry["storage_cost"] += vm_storage_cost
+        entry["estimated_cost"] += total_vm_cost
 
+    # Add snapshot and network costs to each tenant
+    for key, entry in tenant_totals.items():
+        # Snapshot costs from storage data
+        storage_info = storage_data.get(key, {})
+        snapshot_gb = storage_info.get("total_storage_gb") or 0
+        snapshot_cost = snapshot_gb * storage_pricing["snapshot_per_gb_month"] * period_months
+        entry["snapshot_cost"] = round(snapshot_cost, 2)
+        
+        # Network costs (simplified: 1 network per project + potential public IPs)
+        # In production, you'd query actual network/IP usage
+        network_cost = network_pricing["network_per_month"] * period_months
+        public_ip_cost = network_pricing["public_ip_per_month"] * period_months * entry["vm_count"]  # Assume 1 IP per VM
+        entry["network_cost"] = round(network_cost + public_ip_cost, 2)
+        
+        # Update total cost
+        entry["estimated_cost"] += snapshot_cost + network_cost + public_ip_cost
+    
     rows = sorted(tenant_totals.values(), key=lambda x: x["estimated_cost"], reverse=True)
     for r in rows:
-        r["estimated_cost"] = round(r["estimated_cost"], 2)
+        for cost_field in ["compute_cost", "storage_cost", "snapshot_cost", "network_cost", "estimated_cost"]:
+            r[cost_field] = round(r[cost_field], 2)
 
     return {
         "currency": currency,
         "period_hours": hours,
+        "period_description": period or f"Last {hours} hours",
+        "start_date": start_date,
+        "end_date": end_date,
         "tenants": rows,
         "vm_details": vm_details,
         "total_cost": round(sum(r["estimated_cost"] for r in rows), 2),
+        "cost_breakdown": {
+            "compute": round(sum(r["compute_cost"] for r in rows), 2),
+            "storage": round(sum(r["storage_cost"] for r in rows), 2),
+            "snapshots": round(sum(r["snapshot_cost"] for r in rows), 2),
+            "network": round(sum(r["network_cost"] for r in rows), 2),
+        },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -366,7 +366,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
   // Chargeback summary
   const [chargebackData, setChargebackData] = useState<any | null>(null);
   const [chargebackCurrency, setChargebackCurrency] = useState("USD");
-  const [chargebackHours, setChargebackHours] = useState(720);
+  const [chargebackPeriod, setChargebackPeriod] = useState("7d");
+  const [chargebackStartDate, setChargebackStartDate] = useState("");
+  const [chargebackEndDate, setChargebackEndDate] = useState("");
 
   // Tenant growth
   const [growthData, setGrowthData] = useState<any | null>(null);
@@ -564,9 +566,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     else if (subTab === "api_usage") loadApiUsage();
     else if (subTab === "efficiency") loadEfficiency();
     else if (subTab === "pricing") loadPricing();
-    else if (subTab === "chargeback") loadChargebackSummary(chargebackCurrency, chargebackHours);
+    else if (subTab === "chargeback") loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined);
     else if (subTab === "growth") loadGrowth(growthMonths);
-  }, [subTab, loadOverview, loadResources, loadSnapshots, loadRestores, loadApiUsage, loadEfficiency, loadPricing, loadChargebackSummary, loadGrowth, chargebackCurrency, chargebackHours, growthMonths]);
+  }, [subTab, loadOverview, loadResources, loadSnapshots, loadRestores, loadApiUsage, loadEfficiency, loadPricing, loadChargebackSummary, loadGrowth, chargebackCurrency, chargebackPeriod, chargebackStartDate, chargebackEndDate, growthMonths]);
 
   // ─── Sorted data ──────────────────────────────────────────────────────
 
@@ -679,7 +681,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     else if (subTab === "api_usage") loadApiUsage();
     else if (subTab === "efficiency") loadEfficiency();
     else if (subTab === "pricing") loadPricing();
-    else if (subTab === "chargeback") loadChargebackSummary(chargebackCurrency, chargebackHours);
+    else if (subTab === "chargeback") loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined);
     else if (subTab === "growth") loadGrowth(growthMonths);
   };
 
@@ -1429,20 +1431,69 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
           <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
             <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
               Currency:
-              <select value={chargebackCurrency} onChange={e => { setChargebackCurrency(e.target.value); loadChargebackSummary(e.target.value, chargebackHours); }} style={selectStyle}>
+              <select value={chargebackCurrency} onChange={e => { 
+                setChargebackCurrency(e.target.value); 
+                loadChargebackSummary(e.target.value, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined); 
+              }} style={selectStyle}>
                 {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
             <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
               Period:
-              <select value={chargebackHours} onChange={e => { setChargebackHours(Number(e.target.value)); loadChargebackSummary(chargebackCurrency, Number(e.target.value)); }} style={selectStyle}>
-                <option value={168}>Last 7 days</option>
-                <option value={720}>Last 30 days</option>
-                <option value={2160}>Last 90 days</option>
-                <option value={8760}>Last 12 months</option>
+              <select value={chargebackPeriod} onChange={e => { 
+                const period = e.target.value;
+                setChargebackPeriod(period);
+                if (period !== 'custom') {
+                  setChargebackStartDate('');
+                  setChargebackEndDate('');
+                  loadChargebackSummary(chargebackCurrency, period);
+                }
+              }} style={selectStyle}>
+                <option value="24h">Last 24 hours</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="custom">Custom Range</option>
               </select>
             </label>
-            <button onClick={() => loadChargebackSummary(chargebackCurrency, chargebackHours)} style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid #ccc", cursor: "pointer", fontSize: "0.85em" }}>
+            {chargebackPeriod === 'custom' && (
+              <>
+                <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
+                  Start Date:
+                  <input 
+                    type="date" 
+                    value={chargebackStartDate} 
+                    onChange={e => setChargebackStartDate(e.target.value)}
+                    style={{ padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: "0.85em" }}
+                  />
+                </label>
+                <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
+                  End Date:
+                  <input 
+                    type="date" 
+                    value={chargebackEndDate} 
+                    onChange={e => setChargebackEndDate(e.target.value)}
+                    style={{ padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: "0.85em" }}
+                  />
+                </label>
+                <button 
+                  onClick={() => loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate, chargebackEndDate)}
+                  disabled={!chargebackStartDate || !chargebackEndDate}
+                  style={{ 
+                    padding: "4px 12px", 
+                    borderRadius: 4, 
+                    border: "1px solid #007acc", 
+                    background: "#007acc",
+                    color: "white",
+                    cursor: chargebackStartDate && chargebackEndDate ? "pointer" : "not-allowed", 
+                    fontSize: "0.85em",
+                    opacity: chargebackStartDate && chargebackEndDate ? 1 : 0.5
+                  }}
+                >
+                  Apply Range
+                </button>
+              </>
+            )}
+            <button onClick={() => loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined)} style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid #ccc", cursor: "pointer", fontSize: "0.85em" }}>
               🔄 Refresh
             </button>
           </div>
@@ -1455,22 +1506,43 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                 <span style={{ fontSize: "1.2em", fontWeight: 700, color: "#1d4ed8" }}>
                   {chargebackData.total_cost?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {chargebackData.currency}
                 </span>
-                &nbsp;<span style={{ color: "#888", fontSize: "0.8em" }}>({chargebackHours / 24} days)</span>
+                &nbsp;<span style={{ color: "#888", fontSize: "0.8em" }}>({chargebackData.period_description})</span>
               </div>
+              
+              {/* Cost Breakdown Summary */}
+              {chargebackData.cost_breakdown && (
+                <div style={{ marginBottom: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: "0.85em", padding: "4px 8px", background: "#e3f2fd", borderRadius: 4 }}>
+                    💻 Compute: {chargebackData.cost_breakdown.compute?.toFixed(2)} {chargebackData.currency}
+                  </div>
+                  <div style={{ fontSize: "0.85em", padding: "4px 8px", background: "#f3e5f5", borderRadius: 4 }}>
+                    💾 Storage: {chargebackData.cost_breakdown.storage?.toFixed(2)} {chargebackData.currency}
+                  </div>
+                  <div style={{ fontSize: "0.85em", padding: "4px 8px", background: "#e8f5e8", borderRadius: 4 }}>
+                    📸 Snapshots: {chargebackData.cost_breakdown.snapshots?.toFixed(2)} {chargebackData.currency}
+                  </div>
+                  <div style={{ fontSize: "0.85em", padding: "4px 8px", background: "#fff3e0", borderRadius: 4 }}>
+                    🌐 Network: {chargebackData.cost_breakdown.network?.toFixed(2)} {chargebackData.currency}
+                  </div>
+                </div>
+              )}
               <table className="pf9-table" style={{ width: "100%" }}>
                 <thead>
                   <tr>
                     <th>Domain</th>
                     <th>Project / Tenant</th>
                     <th>VMs</th>
-                    <th>Total vCPUs</th>
-                    <th>Total RAM (GB)</th>
-                    <th>Estimated Cost ({chargebackData.currency})</th>
+                    <th>vCPUs</th>
+                    <th>RAM (GB)</th>
+                    <th>Disk (GB)</th>
+                    <th>Compute Cost</th>
+                    <th>Storage Cost</th>
+                    <th>Total Cost</th>
                   </tr>
                 </thead>
                 <tbody>
                   {chargebackData.tenants?.length === 0 && (
-                    <tr><td colSpan={6} style={{ textAlign: "center", padding: 20 }}>No data available for this period.</td></tr>
+                    <tr><td colSpan={9} style={{ textAlign: "center", padding: 20 }}>No data available for this period.</td></tr>
                   )}
                   {chargebackData.tenants?.map((t: any, i: number) => (
                     <tr key={i}>
@@ -1479,6 +1551,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                       <td>{t.vm_count}</td>
                       <td>{t.total_vcpus}</td>
                       <td>{t.total_ram_gb.toFixed(1)}</td>
+                      <td>{t.total_disk_gb?.toFixed(1) || '0.0'}</td>
+                      <td>{t.compute_cost?.toFixed(2) || '0.00'}</td>
+                      <td>{((t.storage_cost || 0) + (t.snapshot_cost || 0) + (t.network_cost || 0)).toFixed(2)}</td>
                       <td style={{ fontWeight: 600 }}>{t.estimated_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     </tr>
                   ))}

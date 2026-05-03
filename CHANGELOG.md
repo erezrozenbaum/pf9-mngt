@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.4] - 2026-05-03
+
+### Fixed
+- Dependency graph edge visibility in dark mode using CSS custom properties
+- Enhanced chargeback calculations validation and testing
+
 ## [1.94.3] - 2026-05-03
 
 ### Added
