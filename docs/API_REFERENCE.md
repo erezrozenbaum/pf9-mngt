@@ -1783,7 +1783,7 @@ Response includes:
 ---
 
 **API Version**: 1.11  
-**Last Updated**: March 2026  
+**Last Updated**: May 2026  
 **Base URL**: http://localhost:8000  
 **Documentation**: http://localhost:8000/docs
 

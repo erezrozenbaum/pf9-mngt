@@ -1,7 +1,7 @@
 # Platform9 Management System - Snapshot Restore Guide
 
 **Version**: 1.2  
-**Last Updated**: February 2026  
+**Last Updated**: May 2026  
 **Status**: Production Ready (boot-from-volume VMs)  
 **Feature Toggle**: Disabled by default — set `RESTORE_ENABLED=true` to activate
 

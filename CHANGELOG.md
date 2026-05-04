@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.11] - 2026-05-04
+
+### Documentation
+- **Comprehensive Documentation Update**: Updated all documentation to v1.94.11 with consistent versioning
+- **Enterprise Features Documentation**: Added comprehensive documentation for v1.94.0+ enterprise dashboard overhaul
+- **Chargeback System Documentation**: Added documentation for v1.94.5+ comprehensive chargeback system with multi-currency support
+- **Tenant Portal Parity**: Updated tenant portal documentation for v1.94.8+ chargeback functionality parity
+- **Date Consistency**: Updated all documentation dates to May 2026 for version alignment
+- **Security Review**: Completed security scan ensuring no sensitive information exposed in public documentation
+
 ## [1.94.10] - 2026-05-04
 
 ### Fixed

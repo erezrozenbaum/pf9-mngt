@@ -84,13 +84,16 @@
 - **HTML Templates**: Professional Jinja2 email templates for each event type
 - **Notification History**: Full delivery log with status tracking and retry information
 
-### 💰 Metering & Chargeback
+### 💰 Metering & Chargeback *(v1.94.5+ Comprehensive System)*
+- **Multi-Currency Support**: Full ILS pricing with currency conversion and localized formatting
+- **Enhanced VM Pricing**: Flavor-based pricing tiers (Silver/Gold/Kryptonite) with auto-sync from system
+- **Period-Based Analysis**: 7d, 30d, 90d, 12m, custom date ranges for comprehensive cost analysis
+- **All Resource Type Costing**: VMs, Storage, Network, Snapshots with detailed per-category breakdown
 - **Per-VM Resource Tracking**: vCPU, RAM, disk allocation + actual usage, network I/O
 - **Snapshot & Restore Metering**: Count, size, compliance, operation tracking
 - **API Usage Metering**: Endpoint-level call counts, error rates, latency percentiles (avg/p95/p99)
 - **Efficiency Scoring**: Per-VM classification (excellent/good/fair/poor/idle)
-- **Multi-Category Pricing**: Compute, storage, snapshot, restore, volume, network — hourly + monthly rates
-- **Chargeback Export**: Per-tenant cost breakdown with one-click CSV export
+- **Advanced Chargeback Export**: Multi-currency, period-selectable CSV with per-category cost breakdown
 - **8 Sub-Tab UI**: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, Pricing, Export
 - **Accurate VM Count in Overview**: Overview counts active VMs from the live `servers` table (excluding `DELETED`/`SOFT_DELETED` status) with domain/project filter support — not inflated by historical metering records for deleted VMs
 
@@ -285,8 +288,15 @@ A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolat
 - **Kubernetes**: dedicated `nginx-ingress-tenant` Helm release on separate MetalLB IP *(v1.84.8)*; `NetworkPolicy` blocks tenant portal from reaching admin API, LDAP, and SMTP.
 - **Security test suite** *(v1.84.9, P8)*: 27 tests (S01–S27) covering unauthenticated access control, token segregation, CSRF resistance, rate limiting, input validation, session invalidation, MFA bypass resistance, and cross-tenant data isolation.
 
-### 📈 30+ Tab Management Dashboard
-A single engineering console covering every operational surface:
+### 📈 30+ Tab Management Dashboard *(v1.94.0+ Enterprise Overhaul)*
+A single engineering console covering every operational surface with enterprise-grade design:
+
+**🎨 Enterprise Design System (v1.94.0+)**:
+- **Inter Font Adoption**: Professional typography across entire UI
+- **Glassmorphism Design**: Cyan-ghost borders with modern glass effects
+- **GlobalHealthBar**: 32px persistent status strip across all application screens
+- **Recharts Integration**: Advanced charting components replacing CSS bars
+- **7-day Health Trend**: Fleet health sparkline charts with historical analysis
 
 > Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks** · **Ops Copilot** · **Tickets** · **Dependency Graph** · **Operational Intelligence** · **SLA Compliance** · **Business Review (QBR)** · **My Portfolio (Account Manager)** · **Portfolio Health (Executive)**
 

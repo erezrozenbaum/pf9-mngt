@@ -1,7 +1,7 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.85.12  
-**Last Updated**: April 19, 2026  
+**Version**: 1.94.11  
+**Last Updated**: May 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 
 ---
@@ -17,6 +17,11 @@ The tenant self-service portal is a completely isolated web application that let
 - Explore resource relationships via the SVG Dependency Graph (VM ↔ Network ↔ SG)
 - Provision new VMs (1–10 at a time): select flavor, image, network, security groups, cloud-init data
 - Monitor availability and resource metrics scoped to their projects
+- **View comprehensive chargeback analysis** *(v1.94.8+ Parity)*: Full cost analysis matching admin UI functionality
+  - **Multi-currency support**: ILS pricing with currency conversion
+  - **Per-VM detailed breakdown**: Expandable rows showing compute, storage, network costs
+  - **Period-based analysis**: 7d, 30d, 90d, 12m cost analysis
+  - **Storage/snapshot/network costing**: Complete resource type coverage
 - Initiate side-by-side VM restores (non-destructive — always creates a new VM)
 - View operational runbooks that you have explicitly published to them
 - See their own restore job history and audit activity

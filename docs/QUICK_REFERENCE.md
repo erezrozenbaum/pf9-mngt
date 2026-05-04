@@ -1,6 +1,6 @@
 # Platform9 Management System - Quick Reference
 
-## System Overview (April 2026)
+## System Overview (May 2026)
 
 ### Comprehensive OpenStack Management Platform
 The Platform9 Management System is a enterprise-grade infrastructure management solution providing:
@@ -18,7 +18,11 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Role Inference System**: Intelligent role assignment detection when API access is limited
 
 #### Modern React UI Features (30+ Comprehensive Tabs)
-- **Dashboard Tab** (NEW ✨): Landing Dashboard with 14 real-time analytics endpoints
+- **Dashboard Tab** (NEW ✨ | v1.94.0+ Enterprise Overhaul): Landing Dashboard with 14 real-time analytics endpoints
+  - **Enterprise Design**: Inter font adoption, glassmorphism design with cyan-ghost borders
+  - **GlobalHealthBar**: 32px persistent status strip across all screens
+  - **Advanced Components**: Recharts integration replacing CSS bars, StatusBadge & Skeleton components
+  - **7-day Health Trend**: Sparkline charts showing fleet health over time
   - Health Summary, Snapshot SLA Compliance, Host Utilization, Recent Activity
   - Coverage Risks, Capacity Pressure, VM Hotspots, Tenant Risk Scores
   - Compliance Drift, Capacity Trends, Trendlines, Change Compliance
@@ -70,13 +74,16 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Most frequently changed resources with direct history navigation
   - Configurable timeframe: 1 hour, 24 hours, 3 days, 1 week
 - **Admin Tabs**: API Metrics, System Logs (Admin/Superadmin only)
-- **Metering Tab** (v1.15 + v1.15.1 Pricing ✨):
+- **Metering Tab** (v1.15 + v1.15.1 Pricing ✨ | v1.94.5+ Comprehensive Chargeback ✨):
   - "📊 Metering" tab with 8 sub-tabs: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, **Pricing**, Export
+  - **Multi-Currency Chargeback**: Full ILS pricing support with currency conversion
+  - **Enhanced VM Pricing**: Flavor-based pricing tiers (Silver/Gold/Kryptonite) with auto-sync
+  - **Period-Based Analysis**: 7d, 30d, 90d, 12m, custom date ranges for cost analysis
+  - **All Resource Costing**: VMs, Storage, Network, Snapshots with detailed breakdown
   - Per-VM resource tracking (vCPUs, RAM, disk allocation + actual usage, network I/O) — deduplicated to latest per VM
   - Snapshot and restore operation metering with compliance tracking
   - API usage tracking (call counts, error rates, latency percentiles)
   - VM efficiency scoring with classification (excellent/good/fair/poor/idle)
-  - **Multi-category pricing**: Flavor (auto-synced from system), storage/GB, snapshot/GB, restore, volume, network — hourly + monthly rates
   - **Filter dropdowns**: Project/domain selectors populated from actual tenant data
   - Chargeback export with per-category cost breakdown (compute, storage, snapshot, restore, volume, network, TOTAL)
   - RBAC: `metering:read` (Admin/Superadmin), `metering:write` (Superadmin)

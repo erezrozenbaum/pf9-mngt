@@ -1,7 +1,7 @@
 # Platform9 Management System — Kubernetes Deployment Guide
 
 **Version**: 4.0
-**Last Updated**: March 2026
+**Last Updated**: May 2026
 **Status**: Production Ready (v1.82.31)
 **Minimum Kubernetes**: 1.28
 
