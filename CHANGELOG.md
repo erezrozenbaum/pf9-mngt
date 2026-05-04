@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.10] - 2026-05-04
+
+### Fixed
+- **Critical Bugfix**: Fixed tenant portal permissions error accessing snapshot data for chargeback calculations
+- Resolved "permission denied for table metering_snapshots" error in tenant chargeback endpoint
+- Changed snapshot query to use tenant-accessible "snapshots" table instead of restricted "metering_snapshots" table
+- Maintained comprehensive cost calculations while respecting tenant role-based access controls
+- Restored full tenant portal chargeback functionality in multi-tenant Kubernetes environments
+
 ## [1.94.9] - 2026-05-04
 
 ### Fixed

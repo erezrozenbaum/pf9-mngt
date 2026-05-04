@@ -558,15 +558,14 @@ async def tenant_chargeback(
             # Get snapshot storage data for this tenant (aggregated by project)
             cur.execute(
                 """
-                SELECT project_name,
-                       SUM(COALESCE(size_gb, 0)) as total_snapshot_gb,
+                SELECT p.name as project_name,
+                       SUM(COALESCE(s.size_gb, 0)) as total_snapshot_gb,
                        COUNT(*) as snapshot_count
-                FROM metering_snapshots ms
-                WHERE ms.project_name IN (
-                    SELECT name FROM projects WHERE id = ANY(%s)
-                )
-                  AND ms.collected_at > %s
-                GROUP BY project_name
+                FROM snapshots s
+                JOIN projects p ON p.id = s.project_id
+                WHERE s.project_id = ANY(%s)
+                  AND s.created_at > %s
+                GROUP BY p.name
                 """,
                 (ctx.project_ids, since),
             )
