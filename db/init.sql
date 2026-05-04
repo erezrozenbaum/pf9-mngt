@@ -4282,11 +4282,6 @@ GRANT INSERT ON notification_log TO tenant_portal_role;
 GRANT SELECT, INSERT, UPDATE ON tenant_portal_mfa TO tenant_portal_role;
 GRANT USAGE, SELECT ON SEQUENCE tenant_portal_mfa_id_seq TO tenant_portal_role;
 GRANT SELECT ON metering_resources, metering_config, metering_pricing TO tenant_portal_role;
--- Enhanced billing system permissions for tenant portal
-GRANT SELECT ON tenant_billing_config TO tenant_portal_role;
-GRANT SELECT ON prepaid_accounts TO tenant_portal_role;
-GRANT SELECT ON regional_pricing_overrides TO tenant_portal_role;
-GRANT SELECT ON resource_lifecycle_events TO tenant_portal_role;
 
 -- Tenant role permissions
 INSERT INTO role_permissions (role, resource, action) VALUES
@@ -4439,6 +4434,12 @@ CREATE INDEX IF NOT EXISTS idx_data_archival_table
     ON data_archival_log(table_name);
 CREATE INDEX IF NOT EXISTS idx_data_archival_date 
     ON data_archival_log(archive_date);
+
+-- Enhanced billing system permissions for tenant portal (tables now exist)
+GRANT SELECT ON tenant_billing_config TO tenant_portal_role;
+GRANT SELECT ON prepaid_accounts TO tenant_portal_role;
+GRANT SELECT ON regional_pricing_overrides TO tenant_portal_role;
+GRANT SELECT ON resource_lifecycle_events TO tenant_portal_role;
 
 
 -- Dashboard health trend snapshots (daily aggregate for sparklines)
