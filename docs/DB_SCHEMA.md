@@ -379,6 +379,158 @@ CREATE TABLE inventory_runs (
 
 ## Operational Features
 
+### Billing System (v1.95) ⭐
+
+Complete enterprise billing management with tenant configuration, prepaid accounts, regional pricing, and webhook integration.
+
+#### Tenant Billing Configuration
+Comprehensive billing parameters and credit management for each tenant.
+
+```sql
+CREATE TABLE tenant_billing_config (
+    id                     SERIAL PRIMARY KEY,
+    tenant_id              TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+    billing_model          TEXT NOT NULL DEFAULT 'Standard',  -- Standard, Enterprise, Custom
+    credit_limit_usd       DECIMAL(10,2) DEFAULT 0.00,       -- 0 = unlimited credit
+    payment_terms_days     INTEGER NOT NULL DEFAULT 30,       -- Net payment terms (15, 30, 45)
+    sales_person_id        TEXT REFERENCES users(id),         -- Assigned account manager
+    auto_suspend_enabled   BOOLEAN NOT NULL DEFAULT true,     -- Auto-suspend on credit breach
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Indexes for billing config management
+CREATE INDEX idx_tenant_billing_config_tenant_id ON tenant_billing_config(tenant_id);
+CREATE INDEX idx_tenant_billing_config_sales_person ON tenant_billing_config(sales_person_id);
+CREATE INDEX idx_tenant_billing_config_billing_model ON tenant_billing_config(billing_model);
+```
+
+#### Prepaid Accounts  
+Prepaid balance management with automated alerts and transaction history.
+
+```sql
+CREATE TABLE prepaid_accounts (
+    id                     SERIAL PRIMARY KEY,
+    account_id             TEXT NOT NULL UNIQUE,              -- Unique prepaid account identifier
+    tenant_id              TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    current_balance_usd    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    threshold_alert_usd    DECIMAL(10,2) DEFAULT 100.00,      -- Alert threshold for low balance
+    last_adjustment_date   TIMESTAMPTZ,                       -- Last balance change
+    last_adjustment_amount DECIMAL(10,2),                     -- Last adjustment amount
+    adjustment_reason      TEXT,                              -- Reason for last adjustment
+    reference_id           TEXT,                              -- External transaction reference
+    notify_on_threshold    BOOLEAN NOT NULL DEFAULT true,     -- Enable low balance alerts
+    account_status         TEXT NOT NULL DEFAULT 'active',    -- active, suspended, closed
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Indexes for prepaid account management
+CREATE INDEX idx_prepaid_accounts_account_id ON prepaid_accounts(account_id);
+CREATE INDEX idx_prepaid_accounts_tenant_id ON prepaid_accounts(tenant_id);
+CREATE INDEX idx_prepaid_accounts_status ON prepaid_accounts(account_status);
+CREATE INDEX idx_prepaid_accounts_balance ON prepaid_accounts(current_balance_usd);
+```
+
+#### Regional Pricing Overrides
+Multi-region pricing with currency support and markup calculations.
+
+```sql  
+CREATE TABLE regional_pricing_overrides (
+    id                     SERIAL PRIMARY KEY,
+    region_name            TEXT NOT NULL,                     -- Geographic region (us-east, eu-west, etc.)
+    resource_type          TEXT NOT NULL,                     -- compute, storage, network, snapshot
+    currency_code          TEXT NOT NULL DEFAULT 'USD',      -- ISO currency code
+    markup_percentage      DECIMAL(5,2) NOT NULL DEFAULT 0.00, -- Regional markup (+/-%)
+    base_price_per_unit    DECIMAL(10,4),                     -- Override base pricing
+    effective_date         DATE NOT NULL DEFAULT CURRENT_DATE,
+    expiration_date        DATE,                              -- Optional pricing expiration
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Indexes for regional pricing lookups  
+CREATE INDEX idx_regional_pricing_region_resource ON regional_pricing_overrides(region_name, resource_type);
+CREATE INDEX idx_regional_pricing_effective_date ON regional_pricing_overrides(effective_date);
+CREATE INDEX idx_regional_pricing_currency ON regional_pricing_overrides(currency_code);
+```
+
+#### Webhook Registrations
+Real-time billing event webhook management with retry logic.
+
+```sql
+CREATE TABLE webhook_registrations (
+    id                     SERIAL PRIMARY KEY,
+    webhook_url            TEXT NOT NULL,                     -- Target webhook endpoint
+    event_types            TEXT[] NOT NULL,                   -- Subscribed event types array
+    auth_header_name       TEXT,                              -- Optional auth header name
+    auth_header_value      TEXT,                              -- Optional auth header value  
+    retry_attempts         INTEGER NOT NULL DEFAULT 3,       -- Number of retry attempts
+    retry_backoff_seconds  INTEGER NOT NULL DEFAULT 30,      -- Retry delay (exponential backoff)
+    is_active              BOOLEAN NOT NULL DEFAULT true,    -- Enable/disable webhook
+    last_success_at        TIMESTAMPTZ,                       -- Last successful delivery
+    last_failure_at        TIMESTAMPTZ,                       -- Last failure timestamp
+    failure_count          INTEGER NOT NULL DEFAULT 0,       -- Consecutive failure count
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Indexes for webhook management
+CREATE INDEX idx_webhook_registrations_active ON webhook_registrations(is_active);
+CREATE INDEX idx_webhook_registrations_event_types ON webhook_registrations USING GIN(event_types);
+CREATE INDEX idx_webhook_registrations_failure_count ON webhook_registrations(failure_count);
+```
+
+#### Resource Lifecycle Events  
+Complete resource event audit trail for accurate cost attribution.
+
+```sql
+CREATE TABLE resource_lifecycle_events (
+    id                     SERIAL PRIMARY KEY,
+    event_type             TEXT NOT NULL,                     -- created, modified, deleted, suspended
+    resource_type          TEXT NOT NULL,                     -- vm, volume, snapshot, network, etc.
+    resource_id            TEXT NOT NULL,                     -- Resource UUID
+    tenant_id              TEXT NOT NULL REFERENCES projects(id),
+    old_state              JSONB,                             -- Previous resource state
+    new_state              JSONB,                             -- Current resource state
+    cost_impact_usd        DECIMAL(10,2),                     -- Cost change from this event
+    billing_period         TEXT,                              -- Billing period affected (YYYY-MM)
+    processed_at           TIMESTAMPTZ,                       -- When billing was calculated
+    event_timestamp        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Indexes for lifecycle event tracking
+CREATE INDEX idx_resource_lifecycle_events_resource ON resource_lifecycle_events(resource_type, resource_id);
+CREATE INDEX idx_resource_lifecycle_events_tenant ON resource_lifecycle_events(tenant_id);
+CREATE INDEX idx_resource_lifecycle_events_billing_period ON resource_lifecycle_events(billing_period);
+CREATE INDEX idx_resource_lifecycle_events_processed ON resource_lifecycle_events(processed_at);
+```
+
+#### Data Archival Log
+Automated billing data archival with configurable retention policies.
+
+```sql
+CREATE TABLE data_archival_log (
+    id                     SERIAL PRIMARY KEY,
+    table_name             TEXT NOT NULL,                     -- Source table name
+    archive_criteria       TEXT NOT NULL,                     -- Archival criteria (e.g., "older than 2 years")
+    records_archived       INTEGER NOT NULL DEFAULT 0,       -- Number of records moved
+    archive_location       TEXT,                              -- Archive storage location/path
+    retention_policy       TEXT NOT NULL,                     -- Retention policy description
+    archive_status         TEXT NOT NULL DEFAULT 'pending',  -- pending, in_progress, completed, failed
+    started_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at           TIMESTAMPTZ,                       -- Archive completion timestamp
+    error_message          TEXT,                              -- Error details if failed
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Indexes for archival tracking
+CREATE INDEX idx_data_archival_log_table_name ON data_archival_log(table_name);
+CREATE INDEX idx_data_archival_log_status ON data_archival_log(archive_status);
+CREATE INDEX idx_data_archival_log_started_at ON data_archival_log(started_at);
+```
+
 ### Backup Config
 Database backup schedule and retention policy.
 

@@ -12,7 +12,7 @@ import { RestoreCenter } from "../screens/RestoreCenter";
 import { Runbooks } from "../screens/Runbooks";
 import { ActivityLog } from "../screens/ActivityLog";
 import { Reports } from "../screens/Reports";
-import { Chargeback } from "../screens/Chargeback";
+import { BillingAwareChargeback } from "../screens/BillingAwareChargeback";
 import { Provision } from "../screens/Provision";
 
 interface Props {
@@ -32,7 +32,7 @@ const NAV_ITEMS: Array<{ id: Screen; label: string; icon: string }> = [
   { id: "restore",        label: "Restore Center",       icon: "↺" },
   { id: "runbooks",       label: "Runbooks",             icon: "📖" },
   { id: "reports",        label: "Reports",              icon: "📄" },
-  { id: "chargeback",     label: "Chargeback",            icon: "💰" },
+  { id: "chargeback",     label: "Usage & Billing",      icon: "💰" },
   { id: "provision",      label: "New VM",               icon: "🚀" },
   { id: "activity",       label: "Activity Log",         icon: "📋" },
 ];
@@ -46,7 +46,7 @@ const SCREEN_TITLES: Record<Screen, string> = {
   restore:        "Restore Center",
   runbooks:       "Runbooks",
   reports:        "Reports",
-  chargeback:     "Chargeback (Estimation)",
+  chargeback:     "Usage & Billing Management",
   provision:      "New VM",
   activity:       "Activity Log",
 };
@@ -77,7 +77,7 @@ export function Shell({ branding, me, screen, onNavigate, onLogout }: Props) {
       case "restore":        return <RestoreCenter  key={refreshTick} />;
       case "runbooks":       return <Runbooks       key={refreshTick} />;
       case "reports":        return <Reports        key={refreshTick} />;
-      case "chargeback":     return <Chargeback     key={refreshTick} />;
+      case "chargeback":     return <BillingAwareChargeback key={refreshTick} />;
       case "provision":      return <Provision      key={refreshTick} />;
       case "activity":       return <ActivityLog    key={refreshTick} />;
     }

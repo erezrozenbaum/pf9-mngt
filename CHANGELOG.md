@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.0] - 2026-05-04
+
+### ⭐ Major Release: Advanced Billing & Metering System
+- **Enterprise Billing Management**: Complete tenant billing configuration system with automated lifecycle management
+- **Prepaid Account System**: Full prepaid balance tracking with automated alerts and threshold management 
+- **Regional Pricing Engine**: Multi-region pricing overrides with currency support and cost optimization
+- **Webhook Integration Hub**: Real-time billing event notifications with retry logic and failure handling
+- **Resource Lifecycle Tracking**: Comprehensive resource event auditing for accurate cost attribution
+- **Data Archival Framework**: Automated billing data archival with configurable retention policies
+
+### Added
+- **Database Schema Enhancements (6 New Tables)**:
+  - `tenant_billing_config`: Complete tenant billing configuration with credit limits and sales person assignment
+  - `prepaid_accounts`: Prepaid balance management with automated threshold alerts and transaction history
+  - `regional_pricing_overrides`: Region-specific pricing with multi-currency support and markup calculations
+  - `webhook_registrations`: Webhook endpoint management with authentication and retry configuration
+  - `resource_lifecycle_events`: Complete resource event audit trail for billing accuracy
+  - `data_archival_log`: Automated data lifecycle management with configurable retention periods
+
+- **Advanced API Endpoints (5 New Routes)**:
+  - `GET/POST/PUT/DELETE /api/billing/config`: Tenant billing configuration management with admin-only access
+  - `POST /api/billing/prepaid/adjust`: Prepaid balance adjustments with transaction logging and alerts
+  - `GET /api/billing/overview`: Comprehensive billing dashboard with multi-tenant cost breakdown
+  - `GET /api/billing/regional-pricing`: Regional pricing management with currency conversion support
+  - `GET /api/billing/webhook-events`: Real-time billing event tracking with webhook delivery status
+
+- **Admin UI Enhancements**:
+  - **Billing Configuration Tab**: Complete tenant billing setup with credit limits and payment terms
+  - **Prepaid Management Tab**: Prepaid account administration with balance alerts and transaction history
+  - **Regional Pricing Tab**: Multi-region pricing configuration with currency markup management
+  - **Webhook Hub Tab**: Billing event webhook registration and delivery monitoring
+  - **Admin-Only Access Controls**: Role-based security with `require_permission("billing", "read/write")` enforcement
+
+- **Tenant UI Billing Integration**:
+  - **Billing Overview Dashboard**: Real-time cost tracking with prepaid balance display
+  - **Usage Analytics**: Detailed resource consumption analytics with cost attribution
+  - **Payment History**: Complete transaction history with prepaid balance adjustments
+  - **Alert Management**: Configurable billing alerts and threshold notifications
+
+### Enhanced
+- **Security Framework**: Admin-only billing access with comprehensive permission validation
+- **Multi-Currency Support**: Regional pricing with automatic currency conversion and markup calculations  
+- **Automated Lifecycle Management**: Resource provisioning/deprovisioning event tracking for accurate billing
+- **Real-Time Notifications**: Webhook-based billing event delivery with retry logic and failure handling
+- **Data Retention Compliance**: Automated archival system with configurable retention policies
+- **MSP Business Intelligence**: Enhanced ROI tracking with quantified business impact metrics
+
+### Technical
+- **Database Migrations**: Automated schema updates with foreign key integrity and indexing optimization
+- **API Security**: Comprehensive admin-only endpoints with proper authentication and authorization
+- **UI Architecture**: Modular billing components with role-based rendering and access control
+- **Webhook Framework**: Reliable event delivery system with exponential backoff and dead letter queues
+- **Performance Optimization**: Indexed billing queries with efficient aggregation and caching strategies
+
 ## [1.94.11] - 2026-05-04
 
 ### Documentation

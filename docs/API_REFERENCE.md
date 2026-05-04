@@ -1,5 +1,7 @@
 # Platform9 Management API Reference
 
+> **Version**: v1.95.0 - Added comprehensive billing API endpoints
+
 ## Base URL
 ```
 http://localhost:8000
@@ -577,6 +579,141 @@ Returns activity summary for all users.
 
 **POST** `/admin/user-access-log` (Admin only)  
 Logs user access events for monitoring.
+
+---
+
+## Billing Endpoints (v1.95) ⭐
+
+> **NEW in v1.95**: Complete enterprise billing management system with admin-only access controls.
+
+### Tenant Billing Configuration
+**GET** `/api/billing/config` (Admin only, `billing:read`)  
+Retrieves all tenant billing configurations or a specific tenant's configuration.
+
+**Query Parameters:**
+- `tenant_id` (optional): Filter by specific tenant ID
+
+**Response:**
+```json
+{
+  "configs": [
+    {
+      "id": 1,
+      "tenant_id": "tenant-uuid",
+      "billing_model": "Enterprise",
+      "credit_limit_usd": 5000.00,
+      "payment_terms_days": 30,
+      "sales_person_id": "user-uuid",
+      "auto_suspend_enabled": true,
+      "created_at": "2026-05-04T10:00:00Z",
+      "updated_at": "2026-05-04T10:00:00Z"
+    }
+  ]
+}
+```
+
+**POST** `/api/billing/config` (Admin only, `billing:write`)  
+Creates a new tenant billing configuration.
+
+**Request Body:**
+```json
+{
+  "tenant_id": "tenant-uuid",
+  "billing_model": "Enterprise",
+  "credit_limit_usd": 5000.00,
+  "payment_terms_days": 30,
+  "sales_person_id": "user-uuid",
+  "auto_suspend_enabled": true
+}
+```
+
+**PUT** `/api/billing/config/{config_id}` (Admin only, `billing:write`)  
+Updates an existing billing configuration.
+
+**DELETE** `/api/billing/config/{config_id}` (Admin only, `billing:write`)  
+Deletes a billing configuration.
+
+### Prepaid Account Management  
+**POST** `/api/billing/prepaid/adjust` (Admin only, `billing:write`)  
+Adjusts prepaid account balance with transaction logging.
+
+**Request Body:**
+```json
+{
+  "account_id": "prepaid-account-uuid",
+  "adjustment_amount": 1000.00,
+  "reason_code": "credit",
+  "reference_id": "INV-2026-001",
+  "notify_on_threshold": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "new_balance": 5500.00,
+  "adjustment_id": "adj-uuid",
+  "alert_sent": false
+}
+```
+
+### Billing Overview
+**GET** `/api/billing/overview` (Admin only, `billing:read`)  
+Comprehensive billing dashboard with multi-tenant metrics.
+
+**Response:**
+```json
+{
+  "summary": {
+    "total_mrr_usd": 45000.00,
+    "total_prepaid_balance": 125000.00,
+    "total_credit_utilization_pct": 32.5,
+    "active_tenants": 28,
+    "overdue_accounts": 3
+  },
+  "top_consumers": [
+    {
+      "tenant_id": "tenant-uuid",
+      "tenant_name": "Acme Corp",
+      "monthly_cost_usd": 12500.00,
+      "credit_utilization_pct": 85.2
+    }
+  ],
+  "regional_breakdown": {
+    "us-east": 28000.00,
+    "eu-west": 17000.00
+  }
+}
+```
+
+### Regional Pricing
+**GET** `/api/billing/regional-pricing` (Admin only, `billing:read`)  
+Retrieves regional pricing overrides and currency configurations.
+
+**Query Parameters:**
+- `region_name` (optional): Filter by region
+- `resource_type` (optional): Filter by resource type
+
+### Webhook Events
+**GET** `/api/billing/webhook-events` (Admin only, `billing:read`)  
+Monitors billing event webhook delivery status and history.
+
+**Response:**
+```json
+{
+  "events": [
+    {
+      "event_id": "evt-uuid",
+      "event_type": "billing_config_created",
+      "webhook_url": "https://api.client.com/webhooks/billing",
+      "delivery_status": "delivered",
+      "retry_count": 0,
+      "last_attempt": "2026-05-04T10:15:00Z"
+    }
+  ]
+}
+```
 
 ---
 

@@ -1,5 +1,6 @@
-# Features Reference — Technical Deep Dive
+# Features Reference — Technical Deep Dive (v1.95)
 
+> **v1.95 NEW**: Advanced billing & metering system with enterprise tenant management
 > Complete technical reference for all pf9-mngt features.
 > For a high-level overview and quick start see [README.md](../README.md).
 

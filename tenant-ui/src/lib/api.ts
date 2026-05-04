@@ -572,6 +572,62 @@ export async function apiChargeback(hours = 720, currency?: string): Promise<Cha
 }
 
 // ---------------------------------------------------------------------------
+// Billing-aware metering (v1.95)
+// ---------------------------------------------------------------------------
+
+export interface TenantBillingStatus {
+  tenant_id: string;
+  billing_model: "prepaid" | "pay_as_you_go";
+  currency_code: string;
+  onboarding_date: string;
+  billing_start_date: string | null;
+  billing_cycle_day: number;
+  current_balance?: number; // Only present for prepaid
+  last_charge_date?: string | null; // Only present for prepaid
+  next_billing_date?: string | null; // Only present for prepaid
+  quota_enforcement?: boolean; // Only present for prepaid
+  sales_person?: string | null;
+  status_message?: string;
+}
+
+export interface BillingAwareChargeback {
+  // Base chargeback data
+  currency: string;
+  period_hours: number;
+  period_label: string;
+  vms: ChargebackVm[];
+  total_estimated_cost: number;
+  total_vms: number;
+  cost_breakdown: {
+    compute: number;
+    storage: number;
+    snapshots: number;
+    network: number;
+  };
+  disclaimer: string;
+  pricing_basis_note: string;
+  timestamp: string;
+  
+  // Enhanced billing-aware data
+  billing_status: TenantBillingStatus;
+  billing_explanation: string;
+  cost_projection?: {
+    monthly_estimate: number;
+    next_bill_amount?: number; // For prepaid
+    days_until_next_bill?: number; // For prepaid
+  };
+}
+
+export async function apiTenantBillingStatus(): Promise<TenantBillingStatus> {
+  return tenantFetch<TenantBillingStatus>("/tenant/billing/status");
+}
+
+export async function apiBillingAwareChargeback(hours = 720, currency?: string): Promise<BillingAwareChargeback> {
+  const qs = `?hours=${hours}${currency ? `&currency=${encodeURIComponent(currency)}` : ""}`;
+  return tenantFetch<BillingAwareChargeback>(`/tenant/metering/billing-aware${qs}`);
+}
+
+// ---------------------------------------------------------------------------
 // Restore center
 // ---------------------------------------------------------------------------
 

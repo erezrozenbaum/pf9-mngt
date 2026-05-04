@@ -49,7 +49,7 @@ function fmtDuration(sec: number | null | undefined): string {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type SubTab = "overview" | "resources" | "snapshots" | "restores" | "api_usage" | "efficiency" | "pricing" | "chargeback" | "growth" | "export";
+type SubTab = "overview" | "resources" | "snapshots" | "restores" | "api_usage" | "efficiency" | "pricing" | "chargeback" | "growth" | "export" | "billing_config" | "prepaid_accounts";
 
 interface MeteringConfig {
   enabled: boolean;
@@ -225,6 +225,58 @@ interface FiltersData {
   flavors: { name: string; vcpus: number; ram_mb: number; disk_gb: number }[];
 }
 
+interface TenantBillingConfig {
+  tenant_id: string;
+  billing_model: "prepaid" | "pay_as_you_go";
+  currency_code: string;
+  onboarding_date: string;
+  billing_start_date?: string;
+  billing_cycle_day: number;
+  sales_person_id?: string;
+  sales_person_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PrepaidAccount {
+  tenant_id: string;
+  current_balance: number;
+  last_charge_date?: string;
+  next_billing_date?: string;
+  currency_code: string;
+  quota_enforcement: boolean;
+  status: "active" | "suspended" | "low_balance";
+  created_at: string;
+  updated_at: string;
+}
+
+interface User {
+  id: string;
+  username: string;
+  email: string;
+  full_name?: string;
+  role: string;
+}
+
+interface BillingOverview {
+  billing_summary: {
+    total_tenants: number;
+    prepaid_tenants: number;
+    payg_tenants: number;
+  };
+  prepaid_summary: {
+    total_accounts: number;
+    suspended_accounts: number;
+    low_balance_accounts: number;
+    total_balance: number;
+  };
+  recent_events: Array<{
+    event_type: string;
+    count: number;
+  }>;
+  generated_at: string;
+}
+
 // ─── Shared Styles ───────────────────────────────────────────────────────────
 
 const inputStyle: React.CSSProperties = {
@@ -264,12 +316,34 @@ const btnOutline: React.CSSProperties = {
   fontSize: "0.85em",
 };
 
+const btnSecondary: React.CSSProperties = {
+  padding: "4px 12px",
+  borderRadius: 4,
+  border: "1px solid var(--color-border, #ddd)",
+  background: "var(--color-surface, #fff)",
+  color: "var(--color-text-primary, #212121)",
+  cursor: "pointer",
+  fontWeight: 500,
+  fontSize: "0.8em",
+};
+
 const cardStyle: React.CSSProperties = {
   padding: "14px 18px",
   background: "var(--color-surface, #fff)",
   borderRadius: 8,
   border: "1px solid var(--color-border, #e0e0e0)",
   boxShadow: "var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.08))",
+};
+
+const tableStyle: React.CSSProperties = {
+  width: "100%",
+  borderCollapse: "collapse",
+  fontSize: "0.85em",
+  background: "var(--color-surface, #fff)",
+};
+
+const rowEvenStyle: React.CSSProperties = {
+  background: "var(--color-surface-accent, #f9f9f9)",
 };
 
 // ─── Sortable header helper ─────────────────────────────────────────────────
@@ -321,7 +395,7 @@ interface MeteringTabProps {
   isAdmin: boolean;
 }
 
-const SUB_TABS: { id: SubTab; label: string }[] = [
+const SUB_TABS: { id: SubTab; label: string; adminOnly?: boolean }[] = [
   { id: "overview", label: "📊 Overview" },
   { id: "resources", label: "🖥 Resources" },
   { id: "snapshots", label: "📸 Snapshots" },
@@ -330,6 +404,8 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "efficiency", label: "⚡ Efficiency" },
   { id: "pricing", label: "💰 Pricing" },
   { id: "chargeback", label: "🧾 Chargeback" },
+  { id: "billing_config", label: "🏦 Billing Config", adminOnly: true },
+  { id: "prepaid_accounts", label: "💳 Prepaid Accounts", adminOnly: true },
   { id: "growth", label: "📈 Tenant Growth" },
   { id: "export", label: "📥 Export" },
 ];
@@ -338,6 +414,11 @@ const CURRENCIES = ["USD", "EUR", "GBP", "ILS", "JPY", "CAD", "AUD", "CHF", "INR
 
 export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
   const { selectedRegionId } = useClusterContext();
+  const isAdmin = _isAdmin; // Use the admin status for tab filtering
+  
+  // Filter tabs based on admin status
+  const availableTabs = SUB_TABS.filter(tab => !tab.adminOnly || isAdmin);
+  
   const [subTab, setSubTab] = useState<SubTab>("overview");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -382,6 +463,15 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
 
   // Flavor pricing edit
   const [editingPricing, setEditingPricing] = useState<Partial<PricingItem> | null>(null);
+
+  // Billing data state
+  const [billingOverview, setBillingOverview] = useState<BillingOverview | null>(null);
+  const [billingConfigs, setBillingConfigs] = useState<TenantBillingConfig[]>([]);
+  const [prepaidAccounts, setPrepaidAccounts] = useState<PrepaidAccount[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
+  const [selectedTenantId, setSelectedTenantId] = useState("");
+  const [editingBilling, setEditingBilling] = useState<Partial<TenantBillingConfig> | null>(null);
+  const [balanceAdjustment, setBalanceAdjustment] = useState(0);
   const [pricingCategoryFilter, setPricingCategoryFilter] = useState<string>("all");
   const [pricingSearchQuery, setPricingSearchQuery] = useState("");
   const [pricingSortField, setPricingSortField] = useState<string>("category");
@@ -553,6 +643,73 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     }
   }, []);
 
+  // ─── Billing load functions ──────────────────────────────────────────────
+
+  const loadBillingOverview = useCallback(async () => {
+    try {
+      const data = await apiFetch<BillingOverview>("/api/billing/overview", {
+        headers: authHeaders()
+      });
+      setBillingOverview(data);
+    } catch (err) {
+      setError(`Failed to load billing overview: ${err}`);
+    }
+  }, []);
+
+  const loadBillingConfigs = useCallback(async () => {
+    try {
+      // Get all domains first
+      if (!filtersData?.domains?.length) return;
+      
+      const configs: TenantBillingConfig[] = [];
+      for (const domain of filtersData.domains) {
+        try {
+          const config = await apiFetch<TenantBillingConfig>(`/api/billing/config/${domain}`, {
+            headers: authHeaders()
+          });
+          configs.push(config);
+        } catch {
+          // Domain may not have billing config yet
+        }
+      }
+      setBillingConfigs(configs);
+    } catch (err) {
+      setError(`Failed to load billing configurations: ${err}`);
+    }
+  }, [filtersData]);
+
+  const loadPrepaidAccounts = useCallback(async () => {
+    try {
+      if (!filtersData?.domains?.length) return;
+      
+      const accounts: PrepaidAccount[] = [];
+      for (const domain of filtersData.domains) {
+        try {
+          const account = await apiFetch<PrepaidAccount>(`/api/billing/prepaid/${domain}`, {
+            headers: authHeaders()
+          });
+          accounts.push(account);
+        } catch {
+          // Domain may not have prepaid account
+        }
+      }
+      setPrepaidAccounts(accounts);
+    } catch (err) {
+      setError(`Failed to load prepaid accounts: ${err}`);
+    }
+  }, [filtersData]);
+
+  const loadUsers = useCallback(async () => {
+    try {
+      const userData = await apiFetch<User[]>("/api/users", {
+        headers: authHeaders()
+      });
+      setUsers(userData);
+    } catch (err) {
+      setError(`Failed to load users: ${err}`);
+    }
+  }, []);
+
   // ─── Load data on tab change ───────────────────────────────────────────
 
   useEffect(() => {
@@ -570,7 +727,16 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     else if (subTab === "pricing") loadPricing();
     else if (subTab === "chargeback") loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined);
     else if (subTab === "growth") loadGrowth(growthMonths);
-  }, [subTab, loadOverview, loadResources, loadSnapshots, loadRestores, loadApiUsage, loadEfficiency, loadPricing, loadChargebackSummary, loadGrowth, chargebackCurrency, chargebackPeriod, chargebackStartDate, chargebackEndDate, growthMonths]);
+    else if (subTab === "billing_config") {
+      loadBillingOverview();
+      loadBillingConfigs();
+      loadUsers();
+    }
+    else if (subTab === "prepaid_accounts") {
+      loadBillingOverview();
+      loadPrepaidAccounts();
+    }
+  }, [subTab, loadOverview, loadResources, loadSnapshots, loadRestores, loadApiUsage, loadEfficiency, loadPricing, loadChargebackSummary, loadGrowth, loadBillingOverview, loadBillingConfigs, loadPrepaidAccounts, chargebackCurrency, chargebackPeriod, chargebackStartDate, chargebackEndDate, growthMonths]);
 
   // ─── Sorted data ──────────────────────────────────────────────────────
 
@@ -733,7 +899,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     <div style={{ padding: "0 16px 24px" }}>
       {/* Sub-tab bar */}
       <div style={{ display: "flex", gap: 4, borderBottom: "2px solid var(--color-border, #e0e0e0)", marginBottom: 16, flexWrap: "wrap" }}>
-        {SUB_TABS.map((t) => (
+        {availableTabs.map((t) => (
           <button
             key={t.id}
             onClick={() => { setSubTab(t.id); setSortField("collected_at"); setSortDir("desc"); setDomainFilter(""); setProjectFilter(""); }}
@@ -1715,6 +1881,387 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             The Chargeback Report uses per-flavor pricing when configured; otherwise fallback rates from Metering Configuration apply.
             Volumes, networks, subnets, routers, and floating IPs are counted from actual inventory — not approximated.
             Currency is taken from the pricing configuration; override with the dropdown above.
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════ BILLING CONFIG ═══════════════════════════ */}
+      {subTab === "billing_config" && !loading && (
+        <div>
+          {!isAdmin ? (
+            <div style={{
+              textAlign: "center",
+              padding: "40px 20px",
+              background: "var(--color-surface-raised, #f5f5f5)",
+              borderRadius: 8,
+              border: "1px solid var(--color-border, #e0e0e0)"
+            }}>
+              <h3 style={{ color: "var(--color-error, #d32f2f)", margin: "0 0 12px" }}>🔒 Access Restricted</h3>
+              <p style={{ color: "var(--color-text-secondary, #666)" }}>
+                Billing configuration is only available to administrators. Please contact your system administrator for access.
+              </p>
+            </div>
+          ) : (
+            <div>
+          {/* Billing Overview Cards */}
+          {billingOverview && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginBottom: 20 }}>
+              <div style={{ ...cardStyle, textAlign: "center" }}>
+                <h3 style={{ margin: "0 0 12px", color: "var(--color-primary, #1976D2)" }}>🏢 Tenant Overview</h3>
+                <div style={{ display: "flex", justifyContent: "space-around", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "var(--color-text-primary, #212121)" }}>
+                      {billingOverview.billing_summary.total_tenants}
+                    </div>
+                    <div style={{ fontSize: "0.8em", opacity: 0.7 }}>Total</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "#059669" }}>
+                      {billingOverview.billing_summary.prepaid_tenants}
+                    </div>
+                    <div style={{ fontSize: "0.8em", opacity: 0.7 }}>Prepaid</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "#7C3AED" }}>
+                      {billingOverview.billing_summary.payg_tenants}
+                    </div>
+                    <div style={{ fontSize: "0.8em", opacity: 0.7 }}>Pay-as-You-Go</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ ...cardStyle, textAlign: "center" }}>
+                <h3 style={{ margin: "0 0 12px", color: "var(--color-primary, #1976D2)" }}>💳 Prepaid Accounts</h3>
+                <div style={{ display: "flex", justifyContent: "space-around", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "#059669" }}>
+                      {billingOverview.prepaid_summary.total_accounts}
+                    </div>
+                    <div style={{ fontSize: "0.8em", opacity: 0.7 }}>Active</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "#DC2626" }}>
+                      {billingOverview.prepaid_summary.suspended_accounts}
+                    </div>
+                    <div style={{ fontSize: "0.8em", opacity: 0.7 }}>Suspended</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "#D97706" }}>
+                      ${fmtNum(billingOverview.prepaid_summary.total_balance, 0)}
+                    </div>
+                    <div style={{ fontSize: "0.8em", opacity: 0.7 }}>Total Balance</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Billing Configuration Table */}
+          <div style={{ ...cardStyle, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0 }}>🏦 Tenant Billing Configuration</h3>
+              <button
+                onClick={() => setEditingBilling({ 
+                  tenant_id: "", 
+                  billing_model: "pay_as_you_go", 
+                  currency_code: "USD",
+                  onboarding_date: new Date().toISOString().split('T')[0]
+                })}
+                style={btnPrimary}
+              >
+                ➕ Add Configuration
+              </button>
+            </div>
+
+            {billingConfigs.length > 0 ? (
+              <div style={{ overflowX: "auto" }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th>Tenant</th>
+                      <th>Billing Model</th>
+                      <th>Currency</th>
+                      <th>Onboarding Date</th>
+                      <th>Billing Cycle</th>
+                      <th>Sales Person</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {billingConfigs.map((config, i) => (
+                      <tr key={i} style={i % 2 === 0 ? rowEvenStyle : {}}>
+                        <td>{config.tenant_id}</td>
+                        <td>
+                          <span style={{
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            fontSize: "0.8em",
+                            fontWeight: "bold",
+                            color: "#fff",
+                            background: config.billing_model === "prepaid" ? "#059669" : "#7C3AED"
+                          }}>
+                            {config.billing_model === "prepaid" ? "💳 Prepaid" : "🔄 Pay-as-You-Go"}
+                          </span>
+                        </td>
+                        <td>{config.currency_code}</td>
+                        <td>{new Date(config.onboarding_date).toLocaleDateString()}</td>
+                        <td>Day {config.billing_cycle_day}</td>
+                        <td>{config.sales_person_name || "—"}</td>
+                        <td>
+                          <button
+                            onClick={() => setEditingBilling(config)}
+                            style={{ ...btnSecondary, marginRight: 8 }}
+                          >
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary, #666)" }}>
+                No billing configurations found. Add configurations for your tenants to enable enhanced billing features.
+              </div>
+            )}
+          </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════ PREPAID ACCOUNTS ═══════════════════════════ */}
+      {subTab === "prepaid_accounts" && !loading && (
+        <div>
+          {!isAdmin ? (
+            <div style={{
+              textAlign: "center",
+              padding: "40px 20px",
+              background: "var(--color-surface-raised, #f5f5f5)",
+              borderRadius: 8,
+              border: "1px solid var(--color-border, #e0e0e0)"
+            }}>
+              <h3 style={{ color: "var(--color-error, #d32f2f)", margin: "0 0 12px" }}>🔒 Access Restricted</h3>
+              <p style={{ color: "var(--color-text-secondary, #666)" }}>
+                Prepaid account management is only available to administrators. Please contact your system administrator for access.
+              </p>
+            </div>
+          ) : (
+            <div>
+              {/* Prepaid Account Controls */}
+              <div style={{ ...cardStyle, marginBottom: 20 }}>
+            <h3 style={{ margin: "0 0 16px" }}>💰 Balance Adjustment</h3>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ fontSize: "0.85em", color: "var(--color-text-primary, #212121)" }}>
+                Tenant:
+                <select 
+                  value={selectedTenantId} 
+                  onChange={(e) => setSelectedTenantId(e.target.value)}
+                  style={selectStyle}
+                >
+                  <option value="">Select Tenant</option>
+                  {prepaidAccounts.map(acc => (
+                    <option key={acc.tenant_id} value={acc.tenant_id}>
+                      {acc.tenant_id} (${fmtNum(acc.current_balance, 2)})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              
+              <label style={{ fontSize: "0.85em", color: "var(--color-text-primary, #212121)" }}>
+                Amount:
+                <input
+                  type="number"
+                  step="0.01"
+                  value={balanceAdjustment}
+                  onChange={(e) => setBalanceAdjustment(Number(e.target.value))}
+                  placeholder="100.00"
+                  style={inputStyle}
+                />
+              </label>
+
+              <button
+                onClick={async () => {
+                  if (!selectedTenantId || balanceAdjustment === 0) return;
+                  try {
+                    await apiFetch(`/api/billing/prepaid/adjust`, {
+                      method: "POST",
+                      headers: authHeaders(),
+                      body: JSON.stringify({
+                        tenant_id: selectedTenantId,
+                        balance_adjustment: balanceAdjustment,
+                        currency_code: "USD"
+                      })
+                    });
+                    setBalanceAdjustment(0);
+                    loadPrepaidAccounts(); // Reload data
+                  } catch (err) {
+                    setError(`Failed to adjust balance: ${err}`);
+                  }
+                }}
+                disabled={!selectedTenantId || balanceAdjustment === 0}
+                style={btnPrimary}
+              >
+                {balanceAdjustment > 0 ? "💰 Add Funds" : "💸 Charge Usage"}
+              </button>
+            </div>
+          </div>
+
+          {/* Prepaid Accounts Table */}
+          <div style={{ ...cardStyle }}>
+            <h3 style={{ margin: "0 0 16px" }}>💳 Prepaid Account Status</h3>
+            
+            {prepaidAccounts.length > 0 ? (
+              <div style={{ overflowX: "auto" }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th>Tenant</th>
+                      <th>Current Balance</th>
+                      <th>Status</th>
+                      <th>Currency</th>
+                      <th>Quota Enforcement</th>
+                      <th>Last Charge</th>
+                      <th>Next Billing</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {prepaidAccounts.map((account, i) => (
+                      <tr key={i} style={i % 2 === 0 ? rowEvenStyle : {}}>
+                        <td>{account.tenant_id}</td>
+                        <td style={{ fontWeight: "bold" }}>
+                          ${fmtNum(account.current_balance, 2)}
+                        </td>
+                        <td>
+                          <span style={{
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            fontSize: "0.8em",
+                            fontWeight: "bold",
+                            color: "#fff",
+                            background: account.status === "active" ? "#059669" : 
+                                       account.status === "suspended" ? "#DC2626" : "#D97706"
+                          }}>
+                            {account.status === "active" ? "✅ Active" :
+                             account.status === "suspended" ? "🚫 Suspended" : "⚠️ Low Balance"}
+                          </span>
+                        </td>
+                        <td>{account.currency_code}</td>
+                        <td>{account.quota_enforcement ? "✅ Enabled" : "❌ Disabled"}</td>
+                        <td>{account.last_charge_date ? fmtDate(account.last_charge_date) : "—"}</td>
+                        <td>{account.next_billing_date ? fmtDate(account.next_billing_date) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary, #666)" }}>
+                No prepaid accounts found. Configure tenants with prepaid billing model to see accounts here.
+              </div>
+            )}
+          </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Billing Configuration Edit Modal */}
+      {editingBilling && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onClick={() => setEditingBilling(null)}>
+          <div style={{background:"var(--color-surface,#fff)",borderRadius:10,padding:24,minWidth:480,maxWidth:600,boxShadow:"0 8px 32px rgba(0,0,0,0.24)"}}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{margin:"0 0 16px"}}>🏦 {editingBilling.tenant_id ? "Edit" : "Add"} Billing Configuration</h3>
+            
+            <div style={{display:"grid",gap:12,marginBottom:20}}>
+              <label>
+                Tenant ID:
+                <input
+                  type="text"
+                  value={editingBilling.tenant_id || ""}
+                  onChange={(e) => setEditingBilling({...editingBilling, tenant_id: e.target.value})}
+                  style={inputStyle}
+                  disabled={!!editingBilling.tenant_id} // Disable editing existing tenant_id
+                />
+              </label>
+              
+              <label>
+                Billing Model:
+                <select
+                  value={editingBilling.billing_model || "pay_as_you_go"}
+                  onChange={(e) => setEditingBilling({...editingBilling, billing_model: e.target.value as "prepaid" | "pay_as_you_go"})}
+                  style={selectStyle}
+                >
+                  <option value="pay_as_you_go">Pay-as-You-Go</option>
+                  <option value="prepaid">Prepaid</option>
+                </select>
+              </label>
+              
+              <label>
+                Currency:
+                <select
+                  value={editingBilling.currency_code || "USD"}
+                  onChange={(e) => setEditingBilling({...editingBilling, currency_code: e.target.value})}
+                  style={selectStyle}
+                >
+                  {["USD", "EUR", "GBP", "CAD", "AUD", "JPY"].map(curr => (
+                    <option key={curr} value={curr}>{curr}</option>
+                  ))}
+                </select>
+              </label>
+              
+              <label>
+                Onboarding Date:
+                <input
+                  type="date"
+                  value={editingBilling.onboarding_date || new Date().toISOString().split('T')[0]}
+                  onChange={(e) => setEditingBilling({...editingBilling, onboarding_date: e.target.value})}
+                  style={inputStyle}
+                />
+              </label>
+              
+              <label>
+                Sales Person:
+                <select
+                  value={editingBilling.sales_person_id || ""}
+                  onChange={(e) => setEditingBilling({...editingBilling, sales_person_id: e.target.value || undefined})}
+                  style={selectStyle}
+                >
+                  <option value="">— No Sales Person Assigned —</option>
+                  {users.map(user => (
+                    <option key={user.id} value={user.id}>
+                      {user.full_name || user.email} ({user.username})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
+              <button onClick={() => setEditingBilling(null)} style={btnSecondary}>
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await apiFetch(`/api/billing/config?tenant_id=${editingBilling.tenant_id}`, {
+                      method: "POST",
+                      headers: authHeaders(),
+                      body: JSON.stringify(editingBilling)
+                    });
+                    setEditingBilling(null);
+                    loadBillingConfigs(); // Reload data
+                  } catch (err) {
+                    setError(`Failed to save billing configuration: ${err}`);
+                  }
+                }}
+                style={btnPrimary}
+              >
+                Save
+              </button>
+            </div>
           </div>
         </div>
       )}

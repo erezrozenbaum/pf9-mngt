@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.94.11  
-**Last Updated**: May 3, 2026  
+**Version**: 1.95.0  
+**Last Updated**: May 4, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -45,15 +45,16 @@ For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.
 6. [Restore Operations](#6-restore-operations)
 7. [Migration Planner Operations](#7-migration-planner-operations)
 8. [Monitoring and Metrics](#8-monitoring-and-metrics)
-9. [Notifications](#9-notifications)
-10. [Backup and Recovery](#10-backup-and-recovery)
-11. [Audit Review](#11-audit-review)
-12. [Tenant Portal Management](#12-tenant-portal-management)
-13. [Troubleshooting](#13-troubleshooting)
-14. [Reference: Authentication & Authorization](#authentication--authorization)
-15. [Reference: Monitoring System](#real-time-monitoring-system)
-16. [Appendix: Feature History by Version](#appendix-feature-history-by-version)
-17. [External LDAP Sync Guide](LDAP_SYNC_GUIDE.md) ↗
+9. [Billing Administration](#9-billing-administration) **NEW in v1.95** ⭐
+10. [Notifications](#10-notifications)
+11. [Backup and Recovery](#11-backup-and-recovery)
+12. [Audit Review](#12-audit-review)
+13. [Tenant Portal Management](#13-tenant-portal-management)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Reference: Authentication & Authorization](#authentication--authorization)
+16. [Reference: Monitoring System](#real-time-monitoring-system)
+17. [Appendix: Feature History by Version](#appendix-feature-history-by-version)
+18. [External LDAP Sync Guide](LDAP_SYNC_GUIDE.md) ↗
 
 ---
 
@@ -379,7 +380,164 @@ curl "http://localhost:8000/api/logs?limit=50&log_file=all" -H "Authorization: B
 
 ---
 
-## 9. Notifications
+## 9. Billing Administration
+
+> **NEW in v1.95** ⭐ — Complete enterprise billing management system with prepaid accounts, regional pricing, and webhook integration.
+
+### Overview
+
+The v1.95 billing system provides comprehensive tenant billing configuration, prepaid account management, regional pricing overrides, and real-time billing event tracking through webhooks.
+
+**Admin-Only Access**: All billing features require `billing:read` and `billing:write` permissions (Admin/Superadmin only).
+
+### Quick Reference
+
+| Task | UI Location | API Endpoint |
+|------|-------------|--------------|
+| Configure tenant billing | Admin → Metering → Billing Config | `GET/POST /api/billing/config` |
+| Manage prepaid accounts | Admin → Metering → Prepaid Management | `POST /api/billing/prepaid/adjust` |
+| Set regional pricing | Admin → Metering → Regional Pricing | `GET /api/billing/regional-pricing` |
+| Monitor webhook events | Admin → Metering → Webhook Hub | `GET /api/billing/webhook-events` |
+| View billing overview | Admin → Metering → Billing Overview | `GET /api/billing/overview` |
+
+### 9.1 Tenant Billing Configuration
+
+**Purpose**: Configure billing parameters, credit limits, and payment terms for each tenant.
+
+#### Create/Update Billing Config
+
+1. **Navigate**: UI → Admin → Metering → Billing Config Tab
+2. **Create New Config**:
+   - **Tenant**: Select target tenant from dropdown
+   - **Billing Model**: Choose from Standard, Enterprise, or Custom
+   - **Credit Limit**: Set maximum allowed credit (0 = unlimited)
+   - **Payment Terms**: Net 15, Net 30, or Net 45 days
+   - **Sales Person**: Assign account manager (optional)
+   - **Auto-suspend**: Enable/disable automatic suspension on credit limit breach
+
+#### API Example
+```bash
+# Create tenant billing config
+curl -X POST "http://localhost:8000/api/billing/config" \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_id": "tenant-uuid",
+    "billing_model": "Enterprise", 
+    "credit_limit_usd": 5000.00,
+    "payment_terms_days": 30,
+    "sales_person_id": "sales-user-id",
+    "auto_suspend_enabled": true
+  }'
+```
+
+### 9.2 Prepaid Account Management
+
+**Purpose**: Manage prepaid balances with automated alerts and transaction tracking.
+
+#### Adjust Prepaid Balance
+
+1. **Navigate**: UI → Admin → Metering → Prepaid Management Tab
+2. **Balance Adjustment**:
+   - **Account**: Select prepaid account
+   - **Amount**: Enter adjustment (positive = credit, negative = debit)
+   - **Reason**: Specify reason code (credit, refund, penalty, etc.)
+   - **Reference**: Optional external transaction reference
+   - **Notifications**: Enable balance threshold alerts
+
+#### API Example
+```bash
+# Adjust prepaid balance
+curl -X POST "http://localhost:8000/api/billing/prepaid/adjust" \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_id": "prepaid-account-uuid",
+    "adjustment_amount": 1000.00,
+    "reason_code": "credit",
+    "reference_id": "INV-2026-001",
+    "notify_on_threshold": true
+  }'
+```
+
+### 9.3 Regional Pricing Management
+
+**Purpose**: Configure region-specific pricing overrides with multi-currency support.
+
+#### Set Regional Pricing
+
+1. **Navigate**: UI → Admin → Metering → Regional Pricing Tab
+2. **Create Override**:
+   - **Region**: Target geographic region
+   - **Resource Types**: Select applicable resources (compute, storage, network)
+   - **Currency**: Local currency (USD, EUR, GBP, etc.)
+   - **Markup Percentage**: Regional markup/discount
+   - **Effective Date**: When pricing takes effect
+
+### 9.4 Webhook Integration Hub
+
+**Purpose**: Configure real-time billing event webhooks with retry logic and failure handling.
+
+#### Webhook Registration
+
+1. **Navigate**: UI → Admin → Metering → Webhook Hub Tab
+2. **Register Endpoint**:
+   - **Webhook URL**: Target endpoint for billing events
+   - **Event Types**: Select events (billing_created, payment_received, etc.)
+   - **Authentication**: Configure headers/tokens for webhook security
+   - **Retry Policy**: Set retry attempts and backoff strategy
+
+#### Webhook Event Types
+- `billing_config_created` — New tenant billing configuration
+- `prepaid_balance_adjusted` — Prepaid account balance change
+- `credit_limit_exceeded` — Credit limit breach alert
+- `payment_received` — Payment processing notification
+- `invoice_generated` — New invoice creation
+- `account_suspended` — Automatic account suspension
+
+### 9.5 Billing Overview Dashboard
+
+**Purpose**: Comprehensive billing metrics and tenant cost analytics.
+
+#### Key Metrics
+- **Total Monthly Recurring Revenue (MRR)**
+- **Prepaid Account Balances** (by tenant)
+- **Credit Utilization** (percentage of limits used)
+- **Regional Revenue Distribution** (by geography)
+- **Top Cost Centers** (highest consuming tenants)
+- **Payment Status Overview** (pending, overdue, paid)
+
+### 9.6 Troubleshooting Billing
+
+#### Common Issues
+
+**Billing Config Not Saving**
+- Verify admin has `billing:write` permission
+- Check tenant exists and is active
+- Validate credit limit is positive number
+- Ensure sales person ID is valid user
+
+**Prepaid Balance Adjustment Fails**
+- Confirm prepaid account exists and is active
+- Verify adjustment amount is valid decimal
+- Check reason code is from approved list
+- Ensure sufficient admin permissions
+
+**Webhook Delivery Failures**
+- Validate webhook URL is accessible
+- Check authentication headers/tokens
+- Review webhook endpoint logs for errors
+- Monitor retry attempts in Webhook Hub
+
+**Regional Pricing Not Applied**
+- Verify effective date has passed
+- Check region matching logic
+- Confirm resource type coverage
+- Validate currency conversion rates
+
+---
+
+## 10. Notifications
 
 ### Enable email
 

@@ -20,6 +20,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from auth_routes import router as auth_router
+from billing_routes import router as billing_router
 from branding_routes import router as branding_router
 from environment_routes import router as environment_router
 from metrics_routes import router as metrics_router
@@ -155,6 +156,7 @@ async def health():
 # Routers
 # ---------------------------------------------------------------------------
 app.include_router(auth_router)
+app.include_router(billing_router)
 app.include_router(branding_router)
 app.include_router(environment_router)
 app.include_router(metrics_router)

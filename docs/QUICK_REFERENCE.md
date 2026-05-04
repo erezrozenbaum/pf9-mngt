@@ -74,19 +74,26 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Most frequently changed resources with direct history navigation
   - Configurable timeframe: 1 hour, 24 hours, 3 days, 1 week
 - **Admin Tabs**: API Metrics, System Logs (Admin/Superadmin only)
-- **Metering Tab** (v1.15 + v1.15.1 Pricing ✨ | v1.94.5+ Comprehensive Chargeback ✨):
-  - "📊 Metering" tab with 8 sub-tabs: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, **Pricing**, Export
+- **Metering Tab** (v1.15 + v1.15.1 Pricing ✨ | v1.94.5+ Comprehensive Chargeback ✨ | v1.95.0+ Advanced Billing System ⭐):
+  - "📊 Metering" tab with 12 sub-tabs: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, **Pricing**, Export, **Billing Config**, **Prepaid Management**, **Regional Pricing**, **Webhook Hub**
   - **Multi-Currency Chargeback**: Full ILS pricing support with currency conversion
   - **Enhanced VM Pricing**: Flavor-based pricing tiers (Silver/Gold/Kryptonite) with auto-sync
   - **Period-Based Analysis**: 7d, 30d, 90d, 12m, custom date ranges for cost analysis
   - **All Resource Costing**: VMs, Storage, Network, Snapshots with detailed breakdown
+  - **NEW v1.95 Billing Administration** ⭐:
+    - **Billing Config Tab**: Complete tenant billing configuration with credit limits, payment terms, and sales person assignment (Admin-only)
+    - **Prepaid Management Tab**: Prepaid account balance adjustments with automated threshold alerts and transaction history (Admin-only)
+    - **Regional Pricing Tab**: Multi-region pricing overrides with currency support and markup calculations (Admin-only)
+    - **Webhook Hub Tab**: Real-time billing event webhook registration with retry logic and delivery monitoring (Admin-only)
+  - **Enhanced Database Schema**: 6 new billing tables (tenant_billing_config, prepaid_accounts, regional_pricing_overrides, webhook_registrations, resource_lifecycle_events, data_archival_log)
+  - **Advanced API Endpoints**: 5 new billing routes with admin-only access controls (`require_permission("billing", "read/write")`)
   - Per-VM resource tracking (vCPUs, RAM, disk allocation + actual usage, network I/O) — deduplicated to latest per VM
   - Snapshot and restore operation metering with compliance tracking
   - API usage tracking (call counts, error rates, latency percentiles)
   - VM efficiency scoring with classification (excellent/good/fair/poor/idle)
   - **Filter dropdowns**: Project/domain selectors populated from actual tenant data
   - Chargeback export with per-category cost breakdown (compute, storage, snapshot, restore, volume, network, TOTAL)
-  - RBAC: `metering:read` (Admin/Superadmin), `metering:write` (Superadmin)
+  - RBAC: `metering:read` (Admin/Superadmin), `metering:write` (Superadmin), `billing:read`/`billing:write` (Admin/Superadmin for billing features)
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
 - **Runbooks Tab** (v1.21 → v1.83.12):
   - "📋 Runbooks" tab with policy-as-code catalogue and one-click execution

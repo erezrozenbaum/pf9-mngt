@@ -62,6 +62,9 @@ from mfa_routes import router as mfa_router
 # Metering endpoints
 from metering_routes import router as metering_router
 
+# Billing endpoints (v1.95 enhancement)
+from billing_routes import router as billing_router
+
 # Provisioning & domain management endpoints
 from provisioning_routes import router as provisioning_router
 
@@ -389,6 +392,7 @@ app.include_router(notification_router)
 app.include_router(backup_router)
 app.include_router(mfa_router)
 app.include_router(metering_router)
+app.include_router(billing_router)
 app.include_router(provisioning_router)
 app.include_router(reports_router)
 app.include_router(resource_management_router)
