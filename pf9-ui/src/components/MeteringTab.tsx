@@ -1903,8 +1903,8 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             </div>
           ) : (
             <div>
-          {/* Billing Overview Cards */}
-          {billingOverview && (
+              {/* Billing Overview Cards */}
+              {billingOverview && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginBottom: 20 }}>
               <div style={{ ...cardStyle, textAlign: "center" }}>
                 <h3 style={{ margin: "0 0 12px", color: "var(--color-primary, #1976D2)" }}>🏢 Tenant Overview</h3>
@@ -2026,6 +2026,8 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
               </div>
             )}
           </div>
+          </div>
+          )}
         </div>
       )}
 
@@ -2160,6 +2162,8 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
               </div>
             )}
           </div>
+          </div>
+          )}
         </div>
       )}
 
