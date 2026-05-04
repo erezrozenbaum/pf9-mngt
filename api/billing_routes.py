@@ -121,7 +121,7 @@ class RegionalPricingResponse(BaseModel):
 class WebhookRegistrationRequest(BaseModel):
     """Request model for webhook registrations."""
     tenant_id: str
-    webhook_url: str = Field(..., regex=r"^https?://.*")
+    webhook_url: str = Field(..., pattern=r"^https?://.*")
     event_types: List[str] = Field(..., description="billing_threshold, quota_exceeded, payment_due, etc.")
     secret_token: Optional[str] = None
     is_active: bool = True
