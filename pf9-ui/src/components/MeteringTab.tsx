@@ -2026,8 +2026,6 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
               </div>
             )}
           </div>
-            )}
-          </div>
         </div>
       )}
 
@@ -2160,8 +2158,6 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
               <div style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary, #666)" }}>
                 No prepaid accounts found. Configure tenants with prepaid billing model to see accounts here.
               </div>
-            )}
-          </div>
             )}
           </div>
         </div>
