@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.8] - 2026-05-03
+
+### Enhanced
+- **Major Enhancement**: Comprehensive tenant UI chargeback calculations now match admin UI
+- Added storage cost calculations (VM disk allocation) to tenant chargeback
+- Added snapshot cost calculations (snapshot storage and operations) to tenant chargeback  
+- Added network cost calculations (networks and public IPs) to tenant chargeback
+- Enhanced tenant UI with detailed cost breakdown by category (compute, storage, snapshots, network)
+- Added per-VM detailed cost breakdown in tenant UI expandable rows
+- Updated tenant chargeback API endpoint to include all resource types and comprehensive calculations
+
 ## [1.94.7] - 2026-05-03
 
 ### Fixed

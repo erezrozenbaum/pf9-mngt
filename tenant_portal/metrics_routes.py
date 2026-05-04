@@ -539,6 +539,7 @@ async def tenant_chargeback(
                     COALESCE(NULLIF(mr.vcpus_allocated, 0), fl.vcpus)       AS vcpus,
                     COALESCE(NULLIF(mr.ram_allocated_mb, 0), fl.ram_mb)     AS ram_mb,
                     COALESCE(NULLIF(mr.flavor, ''), fl.name)                AS flavor_name,
+                    COALESCE(mr.disk_allocated_gb, 0)                       AS disk_allocated_gb,
                     mr.collected_at
                 FROM metering_resources mr
                 LEFT JOIN servers s  ON s.id = mr.vm_id
@@ -553,6 +554,24 @@ async def tenant_chargeback(
                 (ctx.project_ids, since),
             )
             vms = [dict(r) for r in cur.fetchall()]
+            
+            # Get snapshot storage data for this tenant
+            cur.execute(
+                """
+                SELECT vm_id, 
+                       SUM(COALESCE(size_gb, 0)) as total_snapshot_gb,
+                       COUNT(*) as snapshot_count
+                FROM metering_snapshots ms
+                WHERE ms.vm_id IN (
+                    SELECT id FROM servers WHERE project_id = ANY(%s)
+                )
+                  AND ms.collected_at > %s
+                GROUP BY vm_id
+                """,
+                (ctx.project_ids, since),
+            )
+            snapshots_by_vm = {r["vm_id"]: r for r in cur.fetchall()}
+            
             log_action(cur, ctx, "tenant_view_chargeback")
             conn.commit()
 
@@ -560,11 +579,22 @@ async def tenant_chargeback(
     fb_ram = float(cfg.get("cost_per_gb_ram_hour") or 0)
     config_currency = cfg.get("cost_currency") or "USD"
 
-    # Build flavor → price map
+    # Build pricing lookups for all resource types
     flavor_pricing: Dict[str, float] = {}
+    storage_pricing = {"storage_per_gb_month": 0.0, "snapshot_per_gb_month": 0.0}
+    network_pricing = {"network_per_month": 0.0, "public_ip_per_month": 0.0}
+    
     for p in pricing_rows:
         if p.get("category") == "flavor":
             flavor_pricing[p["item_name"]] = float(p.get("cost_per_hour") or 0)
+        elif p.get("category") == "storage_gb" and p.get("item_name") in ["storage", "Storage (per GB)"]:
+            storage_pricing["storage_per_gb_month"] = float(p.get("cost_per_month") or 0)
+        elif p.get("category") == "snapshot_gb" and p.get("item_name") in ["snapshot", "Snapshot Storage (per GB)"]:
+            storage_pricing["snapshot_per_gb_month"] = float(p.get("cost_per_month") or 0)
+        elif p.get("category") == "network" and p.get("item_name") in ["network", "Network"]:
+            network_pricing["network_per_month"] = float(p.get("cost_per_month") or 0)
+        elif p.get("category") == "public_ip" and p.get("item_name") in ["public_ip", "Public IP"]:
+            network_pricing["public_ip_per_month"] = float(p.get("cost_per_month") or 0)
 
     # Determine display currency
     if not currency:
@@ -575,29 +605,58 @@ async def tenant_chargeback(
 
     rows = []
     total_cost = 0.0
+    period_months = hours / 730.0  # Convert hours to months for monthly pricing
+    
     for vm in vms:
+        vm_id = vm["vm_id"]
+        snapshot_info = snapshots_by_vm.get(vm_id, {})
+        
+        # Calculate compute costs
         fp = flavor_pricing.get(vm.get("flavor_name") or "")
         if fp and fp > 0:
-            cost_per_hour = fp
+            compute_cost_per_hour = fp
             pricing_basis = f"Flavor price ({vm.get('flavor_name')})"
         elif fb_vcpu > 0 or fb_ram > 0:
-            cost_per_hour = (vm.get("vcpus") or 0) * fb_vcpu + ((vm.get("ram_mb") or 0) / 1024) * fb_ram
+            compute_cost_per_hour = float(vm.get("vcpus") or 0) * fb_vcpu + (float(vm.get("ram_mb") or 0) / 1024) * fb_ram
             pricing_basis = f"{vm.get('vcpus') or 0} vCPU × {fb_vcpu}/hr + {round((vm.get('ram_mb') or 0)/1024, 1)} GB RAM × {fb_ram}/hr"
         else:
-            cost_per_hour = 0.0
+            compute_cost_per_hour = 0.0
             pricing_basis = "Pricing not configured"
 
-        estimated_cost = round(cost_per_hour * hours, 4)
+        # Calculate storage costs (VM allocated disk)
+        vm_disk_gb = float(vm.get("disk_allocated_gb") or 0)
+        vm_storage_cost = vm_disk_gb * storage_pricing["storage_per_gb_month"] * period_months
+        
+        # Calculate snapshot costs
+        snapshot_gb = float(snapshot_info.get("total_snapshot_gb") or 0)
+        snapshot_cost = snapshot_gb * storage_pricing["snapshot_per_gb_month"] * period_months
+        
+        # Calculate network costs (simplified: assume 1 network + 1 public IP per VM)
+        network_cost = network_pricing["network_per_month"] * period_months
+        public_ip_cost = network_pricing["public_ip_per_month"] * period_months
+        total_network_cost = network_cost + public_ip_cost
+        
+        # Total cost calculations
+        compute_cost_total = compute_cost_per_hour * hours
+        estimated_cost = compute_cost_total + vm_storage_cost + snapshot_cost + total_network_cost
         total_cost += estimated_cost
+        
         rows.append({
             "vm_id": vm["vm_id"],
             "vm_name": vm["vm_name"],
             "project_name": vm.get("project_name") or "unknown",
             "vcpus": vm.get("vcpus") or 0,
-            "ram_gb": round((vm.get("ram_mb") or 0) / 1024, 1),
+            "ram_gb": round(float(vm.get("ram_mb") or 0) / 1024, 1),
+            "disk_gb": round(vm_disk_gb, 1),
             "flavor": vm.get("flavor_name") or "unknown",
-            "cost_per_hour": round(cost_per_hour, 6),
-            "estimated_cost": estimated_cost,
+            "cost_per_hour": round(compute_cost_per_hour, 6),
+            "compute_cost": round(compute_cost_total, 4),
+            "storage_cost": round(vm_storage_cost, 4),
+            "snapshot_cost": round(snapshot_cost, 4),
+            "snapshot_gb": round(snapshot_gb, 1),
+            "snapshot_count": int(snapshot_info.get("snapshot_count") or 0),
+            "network_cost": round(total_network_cost, 4),
+            "estimated_cost": round(estimated_cost, 4),
             "pricing_basis": pricing_basis,
             "last_metering": vm["collected_at"].isoformat() if vm.get("collected_at") else None,
         })
@@ -611,6 +670,12 @@ async def tenant_chargeback(
         "vms": rows,
         "total_estimated_cost": round(total_cost, 2),
         "total_vms": len(rows),
+        "cost_breakdown": {
+            "compute": round(sum(r["compute_cost"] for r in rows), 2),
+            "storage": round(sum(r["storage_cost"] for r in rows), 2),
+            "snapshots": round(sum(r["snapshot_cost"] for r in rows), 2),
+            "network": round(sum(r["network_cost"] for r in rows), 2),
+        },
         "disclaimer": (
             "This is an ESTIMATION based on resource allocation and the pricing rates "
             "configured by your platform administrator. It does not represent a final invoice. "
@@ -618,6 +683,7 @@ async def tenant_chargeback(
         ),
         "pricing_basis_note": (
             f"Rates: {fb_vcpu} {currency}/vCPU/hr, {fb_ram} {currency}/GB-RAM/hr "
+            f"+ storage/snapshot/network costs from configured pricing tables "
             f"(flavor-specific overrides applied where configured)."
             if (fb_vcpu > 0 or fb_ram > 0 or flavor_pricing)
             else "Pricing rates have not been configured by the administrator."

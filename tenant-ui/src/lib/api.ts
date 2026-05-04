@@ -534,8 +534,15 @@ export interface ChargebackVm {
   project_name: string;
   vcpus: number;
   ram_gb: number;
+  disk_gb: number;
   flavor: string;
   cost_per_hour: number;
+  compute_cost: number;
+  storage_cost: number;
+  snapshot_cost: number;
+  snapshot_gb: number;
+  snapshot_count: number;
+  network_cost: number;
   estimated_cost: number;
   pricing_basis: string;
   last_metering: string | null;
@@ -548,6 +555,12 @@ export interface ChargebackSummary {
   vms: ChargebackVm[];
   total_estimated_cost: number;
   total_vms: number;
+  cost_breakdown: {
+    compute: number;
+    storage: number;
+    snapshots: number;
+    network: number;
+  };
   disclaimer: string;
   pricing_basis_note: string;
   timestamp: string;

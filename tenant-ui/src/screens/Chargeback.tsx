@@ -43,7 +43,7 @@ function VmRow({ vm, max, currency }: { vm: ChargebackVm; max: number; currency:
         <td style={{ fontWeight: 500 }}>{vm.vm_name}</td>
         <td style={{ color: "var(--color-text-secondary)", fontSize: ".8rem" }}>{vm.project_name}</td>
         <td style={{ color: "var(--color-text-secondary)", fontSize: ".8rem" }}>{vm.flavor}</td>
-        <td style={{ fontSize: ".8rem" }}>{vm.vcpus} vCPU / {vm.ram_gb} GB</td>
+        <td style={{ fontSize: ".8rem" }}>{vm.vcpus} vCPU / {vm.ram_gb} GB / {vm.disk_gb} GB disk</td>
         <td>
           <div style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
             <CostBar value={vm.estimated_cost} max={max} />
@@ -56,8 +56,12 @@ function VmRow({ vm, max, currency }: { vm: ChargebackVm; max: number; currency:
       {open && (
         <tr>
           <td colSpan={5} style={{ background: "var(--color-surface-raised)", padding: ".6rem 1rem" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: ".4rem .8rem", fontSize: ".8rem" }}>
-              <span><strong>Cost/hr:</strong> {fmt(vm.cost_per_hour, currency)}</span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: ".4rem .8rem", fontSize: ".8rem" }}>
+              <span><strong>Compute:</strong> {fmt(vm.compute_cost, currency)} ({fmt(vm.cost_per_hour, currency)}/hr)</span>
+              <span><strong>Storage:</strong> {fmt(vm.storage_cost, currency)} ({vm.disk_gb} GB)</span>
+              <span><strong>Snapshots:</strong> {fmt(vm.snapshot_cost, currency)} ({vm.snapshot_count} snapshots, {vm.snapshot_gb} GB)</span>
+              <span><strong>Network:</strong> {fmt(vm.network_cost, currency)}</span>
+              <span><strong>Total:</strong> {fmt(vm.estimated_cost, currency)}</span>
               <span><strong>Pricing basis:</strong> {vm.pricing_basis}</span>
               {vm.last_metering && (
                 <span><strong>Last metered:</strong> {new Date(vm.last_metering).toLocaleString()}</span>
@@ -148,6 +152,27 @@ export function Chargeback() {
               </div>
             ))}
           </div>
+
+          {/* Cost breakdown */}
+          {data.cost_breakdown && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "1rem", marginBottom: "1.5rem" }}>
+              {[
+                { label: "💻 Compute", value: fmt(data.cost_breakdown.compute, data.currency), color: "#3B82F6" },
+                { label: "💾 Storage", value: fmt(data.cost_breakdown.storage, data.currency), color: "#10B981" },
+                { label: "📸 Snapshots", value: fmt(data.cost_breakdown.snapshots, data.currency), color: "#F59E0B" },
+                { label: "🌐 Network", value: fmt(data.cost_breakdown.network, data.currency), color: "#8B5CF6" },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="card" style={{ padding: ".75rem", borderLeft: `3px solid ${color}` }}>
+                  <div style={{ fontSize: ".72rem", fontWeight: 600, color: "var(--color-text-secondary)", marginBottom: ".25rem" }}>
+                    {label}
+                  </div>
+                  <div style={{ fontSize: ".9rem", fontWeight: 600 }}>
+                    {value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Disclaimer */}
           <div style={{

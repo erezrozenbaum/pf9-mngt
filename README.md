@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.94.7-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.94.8-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -344,7 +344,7 @@ SLA tier templates (Gold/Silver/Bronze/Custom), per-tenant KPI measurement (upti
 ### 🤖 AI Ops Copilot — Query Layer for the Entire Platform
 Not just an LLM integration — a purpose-built operator assistant that queries your live infrastructure in plain language. Ask *"which tenants are over quota?"*, *"show drift events from last week"*, or *"how many VMs are powered off on host X?"* and get live SQL-backed answers instantly. 40+ built-in intents with tenant / project / host scoping. Ollama backend keeps all data on your network; OpenAI / Anthropic available with automatic sensitive-data redaction.
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.94.7)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.94.8)*
 A completely isolated, MFA-protected web portal that gives your customers read and restore access to their own infrastructure — without exposing your admin panel.
 
 - **Security by design**: data isolated at the PostgreSQL Row-Level Security layer (not just application code); separate JWT namespace; IP-bound Redis sessions; per-user rate limiting.
@@ -636,6 +636,10 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Recent Major Releases
+
+### Comprehensive tenant chargeback enhancement — v1.94.8
+
+**[v1.94.8](CHANGELOG.md)** — Major enhancement bringing tenant UI chargeback calculations to feature parity with admin UI. Now includes comprehensive cost calculations for all resource types (compute, storage, snapshots, networks) with detailed per-VM cost breakdown and category-based cost summaries. Resolves pricing discrepancies between admin and tenant views.
 
 ### Critical decimal type conversion hotfix — v1.94.7
 
@@ -1033,4 +1037,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.94.7 | **Last Updated**: May 2026
+**Project Status**: Production Ready | **Version**: 1.94.8 | **Last Updated**: May 2026
