@@ -555,22 +555,22 @@ async def tenant_chargeback(
             )
             vms = [dict(r) for r in cur.fetchall()]
             
-            # Get snapshot storage data for this tenant
+            # Get snapshot storage data for this tenant (aggregated by project)
             cur.execute(
                 """
-                SELECT vm_id, 
+                SELECT project_name,
                        SUM(COALESCE(size_gb, 0)) as total_snapshot_gb,
                        COUNT(*) as snapshot_count
                 FROM metering_snapshots ms
-                WHERE ms.vm_id IN (
-                    SELECT id FROM servers WHERE project_id = ANY(%s)
+                WHERE ms.project_name IN (
+                    SELECT name FROM projects WHERE id = ANY(%s)
                 )
                   AND ms.collected_at > %s
-                GROUP BY vm_id
+                GROUP BY project_name
                 """,
                 (ctx.project_ids, since),
             )
-            snapshots_by_vm = {r["vm_id"]: r for r in cur.fetchall()}
+            snapshots_by_project = {r["project_name"]: r for r in cur.fetchall()}
             
             log_action(cur, ctx, "tenant_view_chargeback")
             conn.commit()
@@ -607,9 +607,25 @@ async def tenant_chargeback(
     total_cost = 0.0
     period_months = hours / 730.0  # Convert hours to months for monthly pricing
     
+    # Calculate total VMs per project for snapshot cost distribution
+    vms_per_project = {}
+    for vm in vms:
+        project_name = vm.get("project_name") or "unknown"
+        vms_per_project[project_name] = vms_per_project.get(project_name, 0) + 1
+    
     for vm in vms:
         vm_id = vm["vm_id"]
-        snapshot_info = snapshots_by_vm.get(vm_id, {})
+        project_name = vm.get("project_name") or "unknown"
+        
+        # Get project-level snapshot info and distribute across VMs in the project
+        project_snapshot_info = snapshots_by_project.get(project_name, {})
+        project_vms = vms_per_project.get(project_name, 1)
+        
+        # Distribute snapshot costs proportionally across VMs in the project
+        total_snapshot_gb = float(project_snapshot_info.get("total_snapshot_gb") or 0)
+        total_snapshot_count = int(project_snapshot_info.get("snapshot_count") or 0)
+        vm_snapshot_gb = total_snapshot_gb / project_vms if project_vms > 0 else 0
+        vm_snapshot_count = total_snapshot_count / project_vms if project_vms > 0 else 0
         
         # Calculate compute costs
         fp = flavor_pricing.get(vm.get("flavor_name") or "")
@@ -628,8 +644,7 @@ async def tenant_chargeback(
         vm_storage_cost = vm_disk_gb * storage_pricing["storage_per_gb_month"] * period_months
         
         # Calculate snapshot costs
-        snapshot_gb = float(snapshot_info.get("total_snapshot_gb") or 0)
-        snapshot_cost = snapshot_gb * storage_pricing["snapshot_per_gb_month"] * period_months
+        snapshot_cost = vm_snapshot_gb * storage_pricing["snapshot_per_gb_month"] * period_months
         
         # Calculate network costs (simplified: assume 1 network + 1 public IP per VM)
         network_cost = network_pricing["network_per_month"] * period_months
@@ -653,8 +668,8 @@ async def tenant_chargeback(
             "compute_cost": round(compute_cost_total, 4),
             "storage_cost": round(vm_storage_cost, 4),
             "snapshot_cost": round(snapshot_cost, 4),
-            "snapshot_gb": round(snapshot_gb, 1),
-            "snapshot_count": int(snapshot_info.get("snapshot_count") or 0),
+            "snapshot_gb": round(vm_snapshot_gb, 1),
+            "snapshot_count": int(vm_snapshot_count),
             "network_cost": round(total_network_cost, 4),
             "estimated_cost": round(estimated_cost, 4),
             "pricing_basis": pricing_basis,

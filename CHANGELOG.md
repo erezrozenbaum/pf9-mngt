@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.94.9] - 2026-05-04
+
+### Fixed
+- **Critical Bugfix**: Fixed 500 internal server error in tenant chargeback endpoint
+- Resolved "column vm_id does not exist" error in metering_snapshots table query
+- Fixed snapshot cost calculations to use project-level aggregation instead of VM-level
+- Distributed snapshot costs proportionally across VMs within each project
+- Ensured tenant portal chargeback functionality works correctly in Kubernetes environments
+
 ## [1.94.8] - 2026-05-03
 
 ### Enhanced
