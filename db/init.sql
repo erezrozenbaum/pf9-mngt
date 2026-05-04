@@ -4304,7 +4304,7 @@ CREATE TABLE IF NOT EXISTS tenant_billing_config (
     currency_code TEXT DEFAULT 'USD',
     onboarding_date DATE NOT NULL,
     billing_start_date DATE,
-    billing_cycle_day INTEGER GENERATED ALWAYS AS (EXTRACT(DAY FROM COALESCE(billing_start_date, onboarding_date))) STORED,
+    billing_cycle_day INTEGER GENERATED ALWAYS AS (EXTRACT(DAY FROM COALESCE(billing_start_date, onboarding_date))::INTEGER) STORED,
     sales_person_id TEXT REFERENCES users(username),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -4440,6 +4440,13 @@ GRANT SELECT ON tenant_billing_config TO tenant_portal_role;
 GRANT SELECT ON prepaid_accounts TO tenant_portal_role;
 GRANT SELECT ON regional_pricing_overrides TO tenant_portal_role;
 GRANT SELECT ON resource_lifecycle_events TO tenant_portal_role;
+
+-- Role-based access permissions for billing API (v1.95)
+INSERT INTO role_permissions (role, resource, action) VALUES
+    ('superadmin', 'billing', 'write'),
+    ('admin',      'billing', 'read'),
+    ('technical',  'billing', 'read')
+ON CONFLICT DO NOTHING;
 
 
 -- Dashboard health trend snapshots (daily aggregate for sparklines)

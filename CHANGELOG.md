@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.1] - 2026-05-04
+
+### Fixed
+- **DB init failure on fresh deploy**: `GRANT SELECT` statements for billing tables were placed before the corresponding `CREATE TABLE` statements in `db/init.sql`, causing `psql ON_ERROR_STOP=1` to abort the entire initialization. The grants are now placed after the billing table definitions. This was preventing `pf9_db` from becoming healthy and blocking `pf9_api` startup in CI and fresh Kubernetes deployments.
+- **`pf9_api` container cycling unhealthy/starting**: `billing_routes.py` used the deprecated Pydantic v1 `regex=` parameter in `Field()` (should be `pattern=` in Pydantic v2). This caused a `PydanticUserError` at import time, crashing all gunicorn workers before the `/health` endpoint could be served.
+- **403 Insufficient permissions for billing:read**: `billing:read` and `billing:write` were never inserted into `role_permissions` for any role. `superadmin → billing:write`, `admin → billing:read`, and `technical → billing:read` are now seeded in both `init.sql` and `migrate_billing_v195.sql`.
+- **404 on tenant portal Usage & Billing tab**: Tenant portal billing routes (`/tenant/billing/status`, `/tenant/metering/billing-aware`) were registered without the `/tenant/` path prefix, making them unreachable. Fixed in `tenant_portal/billing_routes.py`.
+- **404 `/api/users` on Billing Config / Prepaid Accounts tabs**: Admin UI called `/api/users` which is not proxied by nginx (only `/api/` → FastAPI is). The correct endpoint is `/auth/users`. Fixed in `MeteringTab.tsx`.
+- **`billing_cycle_day` generated column type error**: `EXTRACT()` returns `float8`; assigning it to an `INTEGER` generated column requires an explicit `::INTEGER` cast. Fixed in both `db/init.sql` and `db/migrate_billing_v195.sql`.
+
+### Changed
+- `deployment.ps1` now includes `migrate_billing_v195.sql` in the standard migration sequence so existing Docker Compose deployments are automatically upgraded.
+- Helm chart version bumped to 1.95.1; the K8s `db-migrate` Job will apply `migrate_billing_v195.sql` on the next `helm upgrade`.
+- `tenant_portal/main.py` version string updated to 1.95.1.
+
+---
+
 ## [1.95.0] - 2026-05-04
 
 ### ⭐ Major Release: Advanced Billing & Metering System

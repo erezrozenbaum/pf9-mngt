@@ -29,7 +29,7 @@ router = APIRouter(tags=["billing"])
 # Billing Status Endpoint
 # ---------------------------------------------------------------------------
 
-@router.get("/billing/status")
+@router.get("/tenant/billing/status")
 async def get_tenant_billing_status(
     tenant_ctx: TenantContext = Depends(get_tenant_context),
     conn = Depends(get_tenant_connection),
@@ -128,7 +128,7 @@ async def get_tenant_billing_status(
 # Billing-Aware Chargeback Endpoint
 # ---------------------------------------------------------------------------
 
-@router.get("/metering/billing-aware")
+@router.get("/tenant/metering/billing-aware")
 async def get_billing_aware_chargeback(
     hours: int = Query(default=720, ge=1, le=8760, description="Time period in hours"),
     currency: Optional[str] = Query(default=None, description="Currency override"),

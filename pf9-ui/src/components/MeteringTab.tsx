@@ -701,7 +701,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
 
   const loadUsers = useCallback(async () => {
     try {
-      const userData = await apiFetch<User[]>("/api/users", {
+      const userData = await apiFetch<User[]>("/auth/users", {
         headers: authHeaders()
       });
       setUsers(userData);

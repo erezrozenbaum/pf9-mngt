@@ -74,7 +74,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Most frequently changed resources with direct history navigation
   - Configurable timeframe: 1 hour, 24 hours, 3 days, 1 week
 - **Admin Tabs**: API Metrics, System Logs (Admin/Superadmin only)
-- **Metering Tab** (v1.15 + v1.15.1 Pricing ✨ | v1.94.5+ Comprehensive Chargeback ✨ | v1.95.0+ Advanced Billing System ⭐):
+- **Metering Tab** (v1.15 + v1.15.1 Pricing ✨ | v1.94.5+ Comprehensive Chargeback ✨ | v1.95.1+ Advanced Billing System ⭐):
   - "📊 Metering" tab with 12 sub-tabs: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, **Pricing**, Export, **Billing Config**, **Prepaid Management**, **Regional Pricing**, **Webhook Hub**
   - **Multi-Currency Chargeback**: Full ILS pricing support with currency conversion
   - **Enhanced VM Pricing**: Flavor-based pricing tiers (Silver/Gold/Kryptonite) with auto-sync
