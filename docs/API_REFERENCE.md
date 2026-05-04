@@ -1,6 +1,6 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.95.0 - Added comprehensive billing API endpoints
+> **Version**: v1.95.1 - Fixed billing RBAC permissions; `/api/billing/*` now accessible to admin/superadmin/technical roles
 
 ## Base URL
 ```

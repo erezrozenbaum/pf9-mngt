@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-1.95.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-1.95.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 

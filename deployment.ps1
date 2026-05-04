@@ -831,7 +831,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_v1_89_0_intelligence_p3.sql"; Desc="Operational Intelligence Phase 3 v1.89.0: idx_insights_type_prefix (text_pattern_ops) for fast dept-based prefix queries"},
     @{File="db\migrate_intelligence_v4.sql";        Desc="Operational Intelligence v1.90.0: msp_contract_entitlements, msp_labor_rates, psa_webhook_config tables; default labor rates seeded"},
     @{File="db\migrate_v1_91_0_phase5.sql";         Desc="Phase 5 v1.91.0: portal_role on tenant_portal_access, portal_invite_tokens, v_insight_history view"},
-    @{File="db\migrate_v1_94_0.sql";               Desc="Dashboard health trend v1.94.0: dashboard_health_snapshots table + date index for /dashboard/health-trend sparkline endpoint"}
+    @{File="db\migrate_v1_94_0.sql";               Desc="Dashboard health trend v1.94.0: dashboard_health_snapshots table + date index for /dashboard/health-trend sparkline endpoint"},
+    @{File="db\migrate_billing_v195.sql";          Desc="Advanced Billing & Metering System v1.95.1: tenant_billing_config, prepaid_accounts, regional_pricing_overrides, webhook_registrations, resource_lifecycle_events, data_archival_log tables + billing RBAC permissions"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."
