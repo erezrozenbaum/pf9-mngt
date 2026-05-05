@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.4] - 2026-05-06
+
+### Fixed
+- **Tenant portal Usage & Billing `internal_error` (`/tenant/metering/billing-aware`, `/tenant/billing/status`)**: `billing_routes.py` called `log_action(action, username, details_dict)` but `audit_helper.log_action` signature is `log_action(cur, ctx, action)` — the string `username` was being passed as `ctx`, causing `AttributeError: 'str' object has no attribute 'keystone_user_id'` in `audit_helper.py:81`. Fixed by switching both calls to `log_action_bare(ctx, action, details=...)`, which opens its own DB connection and has the correct signature.
+- **Admin UI Billing Config 404 on load and save (domain names vs UUIDs)**: `loadBillingConfigs` iterated `filtersData.domains` (domain *names* like "ORG1", "ISP1") and called `GET /api/billing/config/{name}` — but the route matched by UUID primary key, so every request 404'd. Similarly `POST /api/billing/config?tenant_id=ORG1` failed. Fixed on two fronts: (1) added `GET /api/billing/configs` list endpoint that returns all configs in a single call with `tenant_name` included; (2) `GET /api/billing/config/{id}` and `POST /api/billing/config` now resolve name→UUID via `domains.name` lookup before querying, so both names and UUIDs are accepted. UI `loadBillingConfigs` replaced with the single-call list endpoint.
+- **"Unsupported currency code: ILS" from API validator**: `TenantBillingConfigRequest.validate_currency` in `api/billing_routes.py` had a hardcoded set `{'USD','EUR','GBP','JPY','CAD','AUD','CHF','CNY','INR'}` that excluded ILS. Added `'ILS'` to the set, matching the UI currency dropdown.
+
 ## [1.95.3] - 2026-05-05
 
 ### Fixed

@@ -25,7 +25,7 @@ from psycopg2.extras import RealDictCursor
 from db_pool import get_tenant_connection
 from middleware import get_tenant_context, inject_rls_vars
 from tenant_context import TenantContext
-from audit_helper import log_action
+from audit_helper import log_action_bare
 
 logger = logging.getLogger("tenant_portal.billing")
 
@@ -64,7 +64,7 @@ async def get_tenant_billing_status(
     Returns billing model, currency, balance (if prepaid), and other billing details.
     Returns billing_configured=false when no config has been set up yet.
     """
-    log_action("billing_status_view", tenant_ctx.username, {
+    log_action_bare(tenant_ctx, "billing_status_view", details={
         "control_plane_id": tenant_ctx.control_plane_id,
     })
 
@@ -170,7 +170,7 @@ async def get_billing_aware_chargeback(
     based on the tenant's billing model (prepaid vs pay-as-you-go).
     Returns basic usage data with billing_configured=false when no config exists.
     """
-    log_action("billing_aware_chargeback", tenant_ctx.username, {
+    log_action_bare(tenant_ctx, "billing_aware_chargeback", details={
         "control_plane_id": tenant_ctx.control_plane_id,
         "hours": hours,
         "currency": currency,
