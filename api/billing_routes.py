@@ -398,7 +398,13 @@ async def list_prepaid_accounts(
     with get_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("""
-            SELECT pa.*, d.name as tenant_name
+            SELECT pa.*,
+                CASE
+                    WHEN pa.current_balance <= 0 AND pa.quota_enforcement THEN 'suspended'
+                    WHEN pa.current_balance <= 100 THEN 'low_balance'
+                    ELSE 'active'
+                END as status,
+                d.name as tenant_name
             FROM prepaid_accounts pa
             LEFT JOIN domains d ON d.id = pa.tenant_id
             ORDER BY d.name
