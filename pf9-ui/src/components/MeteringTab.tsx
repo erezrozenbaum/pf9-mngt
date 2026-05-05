@@ -2178,7 +2178,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             <div style={{display:"grid",gap:12,marginBottom:20}}>
               <label>
                 Tenant:
-                {!!editingBilling.tenant_id ? (
+                {editingBilling.tenant_id ? (
                   <input
                     type="text"
                     value={editingBilling.tenant_id}
