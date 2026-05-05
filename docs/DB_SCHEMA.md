@@ -379,11 +379,12 @@ CREATE TABLE inventory_runs (
 
 ## Operational Features
 
-### Billing System (v1.95.1) ⭐
+### Billing System (v1.95.2) ⭐
 
 Complete enterprise billing management with tenant configuration, prepaid accounts, regional pricing, and webhook integration.
 
 > **v1.95.1 fix**: In v1.95.0 the `GRANT` statements for these tables were placed before the `CREATE TABLE` statements in `init.sql`, causing DB initialization to fail. This was corrected in v1.95.1. The `billing:read` / `billing:write` RBAC permissions were also missing from `role_permissions` — they are now seeded automatically for `admin`, `superadmin`, and `technical` roles.
+> **v1.95.2 fix**: All billing API endpoints used `async with get_connection()` (sync contextmanager); replaced with `with get_connection()`. Tenant portal billing endpoints used `Depends(get_tenant_connection)` which yielded the contextmanager wrapper instead of the connection; replaced with inline `with get_tenant_connection() as conn`.
 
 #### Tenant Billing Configuration
 Comprehensive billing parameters and credit management for each tenant.
