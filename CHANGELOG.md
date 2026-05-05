@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.5] - 2026-05-05
+
+### Fixed
+- **POST /api/billing/config 500 "Failed to create billing configuration"**: `tenant_billing_config.sales_person_id` had a FK constraint `REFERENCES users(id)` (Keystone UUID), but the admin UI and `get_all_users()` return the LDAP uid (= `users.name`, e.g. "erez") as the sales person identifier. Every save triggered a `psycopg2` FK violation. Fixed by dropping the FK constraint via `db/migrate_billing_v1954.sql` and removing it from `db/init.sql`. The JOIN in `get_tenant_billing_config` and `list_billing_configs` was also corrected to `LEFT JOIN users u ON u.name = tbc.sales_person_id`.
+- **GET /api/billing/prepaid/{domain} 404 spam (prepaid accounts tab)**: `loadPrepaidAccounts` in `MeteringTab.tsx` looped over `filtersData.domains` (domain *names*) calling `GET /api/billing/prepaid/{name}` per domain — but the endpoint matches by UUID primary key, so every call 404'd. Fixed by adding a `GET /api/billing/prepaid-accounts` list endpoint (returns all prepaid accounts with `tenant_name` joined from `domains`) and updating `loadPrepaidAccounts` to use a single call instead of a per-domain loop.
+- **Tenant portal Usage & Billing blank page after login**: `BillingAwareChargeback.tsx` passed `data.billing_status` (which is `null` when billing is not configured) directly to `BillingStatusCard({ status })`, causing `TypeError: Cannot read properties of null (reading 'billing_model')`. Fixed by guarding all access to `billing_status` with null checks: `BillingStatusCard` is only rendered when `data.billing_status` is non-null, a "billing not configured" card is shown instead, and all `.billing_model` accesses in the VM table use optional chaining. Updated `BillingAwareChargeback` interface in `api.ts` to `billing_status: TenantBillingStatus | null`.
+
+---
+
 ## [1.95.4] - 2026-05-06
 
 ### Fixed

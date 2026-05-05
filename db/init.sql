@@ -4299,13 +4299,13 @@ ON CONFLICT DO NOTHING;
 -- Tenant billing configuration - Prepaid vs Pay-as-you-go billing models
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS tenant_billing_config (
-    tenant_id UUID PRIMARY KEY REFERENCES domains(id),
+    tenant_id TEXT PRIMARY KEY REFERENCES domains(id),
     billing_model TEXT NOT NULL CHECK (billing_model IN ('prepaid', 'pay_as_you_go')),
     currency_code TEXT DEFAULT 'USD',
     onboarding_date DATE NOT NULL,
     billing_start_date DATE,
     billing_cycle_day INTEGER GENERATED ALWAYS AS (EXTRACT(DAY FROM COALESCE(billing_start_date, onboarding_date))::INTEGER) STORED,
-    sales_person_id TEXT REFERENCES users(username),
+    sales_person_id TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );

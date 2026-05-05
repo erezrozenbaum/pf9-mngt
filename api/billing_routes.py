@@ -90,6 +90,7 @@ class PrepaidAccountRequest(BaseModel):
 class PrepaidAccountResponse(BaseModel):
     """Response model for prepaid account status."""
     tenant_id: str
+    tenant_name: Optional[str] = None
     current_balance: Decimal
     last_charge_date: Optional[datetime]
     next_billing_date: Optional[datetime]
@@ -171,7 +172,7 @@ async def get_tenant_billing_config(tenant_id: str, conn) -> Optional[Dict[str, 
     cursor.execute("""
         SELECT tbc.*, u.name as sales_person_name, d.name as tenant_name
         FROM tenant_billing_config tbc
-        LEFT JOIN users u ON tbc.sales_person_id = u.id
+        LEFT JOIN users u ON u.name = tbc.sales_person_id
         LEFT JOIN domains d ON d.id = tbc.tenant_id
         WHERE tbc.tenant_id = %s
     """, (tenant_id,))
@@ -290,7 +291,7 @@ async def list_billing_configs(
         cursor.execute("""
             SELECT tbc.*, u.name as sales_person_name, d.name as tenant_name
             FROM tenant_billing_config tbc
-            LEFT JOIN users u ON tbc.sales_person_id = u.id
+            LEFT JOIN users u ON u.name = tbc.sales_person_id
             LEFT JOIN domains d ON d.id = tbc.tenant_id
             ORDER BY d.name
         """)
@@ -388,6 +389,23 @@ async def create_tenant_billing_config(
             )
         finally:
             cursor.close()
+
+@router.get("/prepaid-accounts", response_model=List[PrepaidAccountResponse])
+async def list_prepaid_accounts(
+    user: User = Depends(require_permission("billing", "read"))
+):
+    """List all prepaid accounts with tenant names."""
+    with get_connection() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT pa.*, d.name as tenant_name
+            FROM prepaid_accounts pa
+            LEFT JOIN domains d ON d.id = pa.tenant_id
+            ORDER BY d.name
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        return [PrepaidAccountResponse(**dict(r)) for r in rows]
 
 @router.get("/prepaid/{tenant_id}", response_model=PrepaidAccountResponse)
 async def get_prepaid_account(
