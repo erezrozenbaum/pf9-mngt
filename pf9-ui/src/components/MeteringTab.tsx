@@ -2173,15 +2173,18 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
           onClick={() => setEditingBilling(null)}>
           <div style={{background:"var(--color-surface,#fff)",borderRadius:10,padding:24,minWidth:480,maxWidth:600,boxShadow:"0 8px 32px rgba(0,0,0,0.24)"}}
             onClick={e => e.stopPropagation()}>
-            <h3 style={{margin:"0 0 16px"}}>🏦 {editingBilling.tenant_id ? "Edit" : "Add"} Billing Configuration</h3>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <h3 style={{margin:0}}>🏦 {editingBilling.created_at ? "Edit" : "Add"} Billing Configuration</h3>
+              <button onClick={() => setEditingBilling(null)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"var(--color-muted,#888)",lineHeight:1}} title="Close">✕</button>
+            </div>
             
             <div style={{display:"grid",gap:12,marginBottom:20}}>
               <label>
                 Tenant:
-                {editingBilling.tenant_id ? (
+                {editingBilling.created_at ? (
                   <input
                     type="text"
-                    value={editingBilling.tenant_id}
+                    value={editingBilling.tenant_id || ""}
                     style={inputStyle}
                     disabled
                   />
@@ -2218,7 +2221,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                   onChange={(e) => setEditingBilling({...editingBilling, currency_code: e.target.value})}
                   style={selectStyle}
                 >
-                  {["USD", "EUR", "GBP", "CAD", "AUD", "JPY"].map(curr => (
+                  {["USD", "EUR", "GBP", "ILS", "CAD", "AUD", "JPY", "CHF", "INR"].map(curr => (
                     <option key={curr} value={curr}>{curr}</option>
                   ))}
                 </select>

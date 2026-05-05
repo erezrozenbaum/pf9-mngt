@@ -1,6 +1,6 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.95.2 - Fixed billing RBAC permissions; `/api/billing/*` now accessible to admin/superadmin/technical roles
+> **Version**: v1.95.3 - Fixed billing RBAC permissions; `/api/billing/*` now accessible to admin/superadmin/technical roles
 
 ## Base URL
 ```
