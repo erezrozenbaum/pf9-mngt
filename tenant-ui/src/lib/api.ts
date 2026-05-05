@@ -609,7 +609,8 @@ export interface BillingAwareChargeback {
   timestamp: string;
   
   // Enhanced billing-aware data
-  billing_status: TenantBillingStatus;
+  billing_configured: boolean;
+  billing_status: TenantBillingStatus | null;
   billing_explanation: string;
   cost_projection?: {
     monthly_estimate: number;

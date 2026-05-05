@@ -241,6 +241,7 @@ interface TenantBillingConfig {
 
 interface PrepaidAccount {
   tenant_id: string;
+  tenant_name?: string;
   current_balance: number;
   last_charge_date?: string;
   next_billing_date?: string;
@@ -670,24 +671,14 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
 
   const loadPrepaidAccounts = useCallback(async () => {
     try {
-      if (!filtersData?.domains?.length) return;
-      
-      const accounts: PrepaidAccount[] = [];
-      for (const domain of filtersData.domains) {
-        try {
-          const account = await apiFetch<PrepaidAccount>(`/api/billing/prepaid/${domain}`, {
-            headers: authHeaders()
-          });
-          accounts.push(account);
-        } catch {
-          // Domain may not have prepaid account
-        }
-      }
+      const accounts = await apiFetch<PrepaidAccount[]>("/api/billing/prepaid-accounts", {
+        headers: authHeaders()
+      });
       setPrepaidAccounts(accounts);
     } catch (err) {
       setError(`Failed to load prepaid accounts: ${err}`);
     }
-  }, [filtersData]);
+  }, []);
 
   const loadUsers = useCallback(async () => {
     try {

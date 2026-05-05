@@ -221,16 +221,24 @@ export function BillingAwareChargeback() {
   const handleCurrency = (c: string) => { setCurrency(c); load(periodHours, c); };
 
   const maxCost = data ? Math.max(...data.vms.map((v) => v.estimated_cost), 0.01) : 0.01;
-  const isPrepaid = data?.billing_status.billing_model === "prepaid";
+  const isPrepaid = data?.billing_status?.billing_model === "prepaid";
 
   return (
     <div>
       {/* Billing Status */}
-      {data && (
+      {data && data.billing_status && (
         <>
           <BillingStatusCard status={data.billing_status} />
           <BillingExplanationCard data={data} />
         </>
+      )}
+      {data && !data.billing_status && (
+        <div className="card" style={{ padding: "1rem", marginBottom: "1.5rem", border: "2px solid var(--color-border)", opacity: 0.8 }}>
+          <div style={{ fontWeight: 600, marginBottom: ".25rem" }}>Billing not configured</div>
+          <div style={{ fontSize: ".875rem", color: "var(--color-text-muted)" }}>
+            {data.billing_explanation || "Contact your administrator to set up billing for your account."}
+          </div>
+        </div>
       )}
 
       {/* Controls */}
@@ -351,7 +359,7 @@ export function BillingAwareChargeback() {
                       vm={vm} 
                       max={maxCost} 
                       currency={data.currency}
-                      billingModel={data.billing_status.billing_model}
+                      billingModel={data.billing_status?.billing_model ?? "pay_as_you_go"}
                     />
                   ))}
                   <tr style={{ borderTop: "2px solid var(--color-border)", fontWeight: 700 }}>
