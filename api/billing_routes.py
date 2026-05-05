@@ -170,9 +170,8 @@ async def get_tenant_billing_config(tenant_id: str, conn) -> Optional[Dict[str, 
     """Fetch tenant billing configuration."""
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("""
-        SELECT tbc.*, u.name as sales_person_name, d.name as tenant_name
+        SELECT tbc.*, tbc.sales_person_id as sales_person_name, d.name as tenant_name
         FROM tenant_billing_config tbc
-        LEFT JOIN users u ON u.name = tbc.sales_person_id
         LEFT JOIN domains d ON d.id = tbc.tenant_id
         WHERE tbc.tenant_id = %s
     """, (tenant_id,))
@@ -202,7 +201,7 @@ async def get_prepaid_account_status(tenant_id: str, conn) -> Optional[Dict[str,
     cursor.execute("""
         SELECT *,
             CASE 
-                WHEN current_balance <= 0 AND quota_enforcement THEN 'suspended'
+                WHEN current_balance <= 0 AND quota_enforcement AND last_charge_date IS NOT NULL THEN 'suspended'
                 WHEN current_balance <= 100 THEN 'low_balance'
                 ELSE 'active'
             END as status
@@ -289,9 +288,8 @@ async def list_billing_configs(
     with get_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("""
-            SELECT tbc.*, u.name as sales_person_name, d.name as tenant_name
+            SELECT tbc.*, tbc.sales_person_id as sales_person_name, d.name as tenant_name
             FROM tenant_billing_config tbc
-            LEFT JOIN users u ON u.name = tbc.sales_person_id
             LEFT JOIN domains d ON d.id = tbc.tenant_id
             ORDER BY d.name
         """)
@@ -400,13 +398,22 @@ async def list_prepaid_accounts(
         cursor.execute("""
             SELECT pa.*,
                 CASE
-                    WHEN pa.current_balance <= 0 AND pa.quota_enforcement THEN 'suspended'
+                    WHEN pa.current_balance <= 0 AND pa.quota_enforcement AND pa.last_charge_date IS NOT NULL THEN 'suspended'
                     WHEN pa.current_balance <= 100 THEN 'low_balance'
                     ELSE 'active'
                 END as status,
-                d.name as tenant_name
+                d.name as tenant_name,
+                COALESCE(pa.next_billing_date,
+                    CASE WHEN tbc.billing_cycle_day IS NOT NULL THEN
+                        CASE WHEN EXTRACT(DAY FROM CURRENT_DATE) < tbc.billing_cycle_day
+                            THEN (DATE_TRUNC('month', CURRENT_DATE) + ((tbc.billing_cycle_day - 1)::text || ' days')::INTERVAL)::DATE
+                            ELSE (DATE_TRUNC('month', CURRENT_DATE + INTERVAL '1 month') + ((tbc.billing_cycle_day - 1)::text || ' days')::INTERVAL)::DATE
+                        END
+                    ELSE NULL END
+                ) as next_billing_date
             FROM prepaid_accounts pa
             LEFT JOIN domains d ON d.id = pa.tenant_id
+            LEFT JOIN tenant_billing_config tbc ON tbc.tenant_id = pa.tenant_id
             ORDER BY d.name
         """)
         rows = cursor.fetchall()
@@ -564,9 +571,11 @@ async def get_billing_overview(
         cursor.execute("""
             SELECT 
                 COUNT(*) as total_accounts,
-                COUNT(*) FILTER (WHERE current_balance <= 0 AND quota_enforcement) as suspended_accounts,
+                COUNT(*) FILTER (WHERE current_balance <= 0 AND quota_enforcement AND last_charge_date IS NOT NULL) as suspended_accounts,
                 COUNT(*) FILTER (WHERE current_balance <= 100) as low_balance_accounts,
-                COALESCE(SUM(current_balance), 0) as total_balance
+                COALESCE(SUM(current_balance), 0) as total_balance,
+                (SELECT currency_code FROM prepaid_accounts
+                 GROUP BY currency_code ORDER BY COUNT(*) DESC LIMIT 1) as primary_currency
             FROM prepaid_accounts
         """)
         prepaid_stats = cursor.fetchone()
