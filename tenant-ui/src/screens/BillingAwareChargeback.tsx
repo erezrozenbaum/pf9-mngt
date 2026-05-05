@@ -111,7 +111,7 @@ function BillingStatusCard({ status }: { status: TenantBillingStatus }) {
 }
 
 function BillingExplanationCard({ data }: { data: BillingAwareChargeback }) {
-  const isPrepaid = data.billing_status.billing_model === "prepaid";
+  const isPrepaid = data.billing_status?.billing_model === "prepaid";
   
   return (
     <div style={{
