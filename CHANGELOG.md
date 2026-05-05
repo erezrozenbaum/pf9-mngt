@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.3] - 2026-05-05
+
+### Fixed
+- **Tenant portal Usage & Billing 500 (`/tenant/metering/billing-aware`)**: `billing_routes.py` referenced `tenant_ctx.tenant_id` but `TenantContext` has no such attribute — the portal identifies tenants via Keystone `project_ids`, not a `tenant_id`. Raised `AttributeError: 'TenantContext' object has no attribute 'tenant_id'` on every request. Fixed by resolving the domain UUID at runtime via `SELECT domain_id FROM projects WHERE id = ANY(project_ids) LIMIT 1`, consistent with how other portal routes resolve tenant scope. Also changed missing-billing-config from a hard 404 to a graceful `billing_configured: false` response so the page loads even when no billing config exists.
+- **Admin UI Billing Config modal: ILS currency missing**: Currency dropdown in Add/Edit Billing Config hardcoded `["USD", "EUR", "GBP", "CAD", "AUD", "JPY"]` — ILS was absent. Added ILS to the list.
+- **Admin UI Billing Config modal: no way to close once opened**: No ✕ button. Clicking the backdrop closes the modal but users didn't know that. Added explicit ✕ button at top-right of the modal header.
+- **Admin UI Billing Config modal: tenant dropdown disappears after selecting a tenant**: When adding a new config, picking a tenant from the dropdown set `tenant_id`, which switched the condition `tenant_id ? disabled-input : dropdown` — making the dropdown vanish and preventing re-selection. Fixed by using `created_at` (only present on existing DB records) to distinguish edit vs add mode, so the dropdown stays editable throughout the add flow.
+
 ## [1.95.2] - 2026-05-05
 
 ### Fixed
