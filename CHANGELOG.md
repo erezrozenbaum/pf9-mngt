@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.6] - 2026-05-05
+
+### Fixed
+- **GET /api/billing/prepaid-accounts 500 Internal Server Error**: The new list endpoint queried `SELECT pa.*` without computing the `status` field that `PrepaidAccountResponse` requires — `prepaid_accounts` has no `status` column; it is a computed `CASE` expression. Fixed by adding the same `CASE WHEN current_balance <= 0 AND quota_enforcement THEN 'suspended' WHEN current_balance <= 100 THEN 'low_balance' ELSE 'active' END as status` to the list query.
+- **Tenant portal Usage & Billing shows $0.00 for all costs**: `_get_chargeback_data` in `tenant_portal/billing_routes.py` was a stub returning empty/zero data. Replaced with a real implementation that: (1) resolves the domain name from the tenant's `project_ids` via `projects → domains`; (2) queries `metering_resources WHERE domain = <name>` using `DISTINCT ON (vm_id)` for the latest metric per VM in the requested window; (3) looks up flavor pricing from `metering_pricing`; (4) calculates per-VM compute cost + storage cost and domain-level snapshot cost. Now shows actual cost estimates based on the configured flavor pricing.
+
+---
+
 ## [1.95.5] - 2026-05-05
 
 ### Fixed

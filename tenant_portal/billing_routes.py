@@ -255,30 +255,164 @@ async def get_billing_aware_chargeback(
 # ---------------------------------------------------------------------------
 
 async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, currency: str) -> Dict[str, Any]:
-    """Return basic chargeback structure scoped to this tenant's projects."""
+    """Return chargeback data scoped to this tenant's domain, with real cost calculations."""
     period_labels = {
         24: "Last 24 hours",
         168: "Last 7 days",
         720: "Last 30 days",
         2160: "Last 90 days",
     }
-    return {
+
+    base = {
         "currency": currency,
         "period_hours": hours,
-        "period_label": period_labels.get(hours, f"Last {hours} hours"),
+        "period_label": period_labels.get(hours, f"Last {hours} hours (prorated)"),
         "vms": [],
         "total_estimated_cost": 0.0,
         "total_vms": 0,
-        "cost_breakdown": {
-            "compute": 0.0,
-            "storage": 0.0,
-            "snapshots": 0.0,
-            "network": 0.0,
-        },
+        "cost_breakdown": {"compute": 0.0, "storage": 0.0, "snapshots": 0.0, "network": 0.0},
         "disclaimer": "Billing-aware calculations based on your account's billing model",
         "pricing_basis_note": "Regional pricing and billing model adjustments applied",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Resolve domain name from project_ids (metering_resources uses text domain name)
+    if not tenant_ctx.project_ids:
+        return base
+    cur.execute(
+        """SELECT d.name FROM domains d
+           JOIN projects p ON p.domain_id = d.id
+           WHERE p.id = ANY(%s) AND d.name IS NOT NULL LIMIT 1""",
+        (tenant_ctx.project_ids,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return base
+    domain_name = row["name"]
+
+    # Load flavor pricing
+    cur.execute(
+        "SELECT item_name, cost_per_hour, cost_per_month FROM metering_pricing WHERE category = 'flavor'"
+    )
+    flavor_pricing: Dict[str, Dict] = {
+        r["item_name"]: {
+            "cost_per_hour": float(r["cost_per_hour"] or 0),
+            "cost_per_month": float(r["cost_per_month"] or 0),
+        }
+        for r in cur.fetchall()
+    }
+
+    # Load fallback per-resource pricing (storage, snapshot)
+    cur.execute(
+        "SELECT item_name, cost_per_hour, cost_per_month FROM metering_pricing"
+        " WHERE category IN ('storage_gb','snapshot_gb')"
+    )
+    cat_pricing: Dict[str, Dict] = {
+        r["item_name"]: {
+            "cost_per_hour": float(r["cost_per_hour"] or 0),
+            "cost_per_month": float(r["cost_per_month"] or 0),
+        }
+        for r in cur.fetchall()
+    }
+
+    def _hourly(cat: str) -> float:
+        e = cat_pricing.get(cat)
+        if not e:
+            return 0.0
+        if e["cost_per_hour"] > 0:
+            return e["cost_per_hour"]
+        return e["cost_per_month"] / 730.0 if e["cost_per_month"] > 0 else 0.0
+
+    storage_per_gb_hr = _hourly("storage_gb")
+    snapshot_per_gb_hr = _hourly("snapshot_gb")
+
+    # Latest per-VM metrics in the requested window
+    cur.execute(
+        """SELECT DISTINCT ON (vm_id)
+               vm_id, vm_name, project_name, flavor,
+               vcpus_allocated, ram_allocated_mb, disk_allocated_gb, collected_at
+           FROM metering_resources
+           WHERE domain = %s AND collected_at > NOW() - (%s || ' hours')::INTERVAL
+           ORDER BY vm_id, collected_at DESC""",
+        (domain_name, str(hours)),
+    )
+    vm_rows = cur.fetchall()
+
+    # Latest snapshot totals for this domain
+    cur.execute(
+        """SELECT COALESCE(SUM(size_gb), 0) AS total_snap_gb, COUNT(*) AS snap_count
+           FROM (
+               SELECT DISTINCT ON (snapshot_id) size_gb
+               FROM metering_snapshots
+               WHERE domain = %s AND collected_at > NOW() - (%s || ' hours')::INTERVAL
+               ORDER BY snapshot_id, collected_at DESC
+           ) s""",
+        (domain_name, str(hours)),
+    )
+    snap_row = cur.fetchone()
+    total_snap_gb = float(snap_row["total_snap_gb"] or 0) if snap_row else 0.0
+    snap_count = int(snap_row["snap_count"] or 0) if snap_row else 0
+
+    vms_out = []
+    total_compute = 0.0
+    total_storage = 0.0
+    total_snap = total_snap_gb * snapshot_per_gb_hr * hours
+
+    for vm in vm_rows:
+        flavor = vm["flavor"] or ""
+        vcpus = int(vm["vcpus_allocated"] or 0)
+        ram_gb = float(vm["ram_allocated_mb"] or 0) / 1024.0
+        disk_gb = float(vm["disk_allocated_gb"] or 0)
+
+        fp = flavor_pricing.get(flavor)
+        if fp:
+            hr = fp["cost_per_hour"] if fp["cost_per_hour"] > 0 else fp["cost_per_month"] / 730.0
+            compute_cost = hr * hours
+            pricing_basis = f"flavor:{flavor}"
+        else:
+            compute_cost = 0.0
+            pricing_basis = "no_pricing_configured"
+
+        storage_cost = disk_gb * storage_per_gb_hr * hours
+        snap_cost_vm = 0.0  # snapshots shown as domain total, not per-VM
+        network_cost = 0.0
+
+        vm_total = compute_cost + storage_cost
+
+        vms_out.append({
+            "vm_id": vm["vm_id"],
+            "vm_name": vm["vm_name"] or vm["vm_id"],
+            "project_name": vm["project_name"] or domain_name,
+            "vcpus": vcpus,
+            "ram_gb": round(ram_gb, 2),
+            "disk_gb": round(disk_gb, 2),
+            "flavor": flavor,
+            "cost_per_hour": round(hr if fp else 0.0, 6),
+            "compute_cost": round(compute_cost, 4),
+            "storage_cost": round(storage_cost, 4),
+            "snapshot_cost": round(snap_cost_vm, 4),
+            "snapshot_gb": 0.0,
+            "snapshot_count": 0,
+            "network_cost": round(network_cost, 4),
+            "estimated_cost": round(vm_total, 4),
+            "pricing_basis": pricing_basis,
+            "last_metering": vm["collected_at"].isoformat() if vm["collected_at"] else None,
+        })
+        total_compute += compute_cost
+        total_storage += storage_cost
+
+    total_cost = total_compute + total_storage + total_snap
+
+    base["vms"] = vms_out
+    base["total_vms"] = len(vms_out)
+    base["total_estimated_cost"] = round(total_cost, 4)
+    base["cost_breakdown"] = {
+        "compute": round(total_compute, 4),
+        "storage": round(total_storage, 4),
+        "snapshots": round(total_snap, 4),
+        "network": 0.0,
+    }
+    return base
 
 
 async def _get_billing_status_data(cur, domain_id: str, billing_config) -> Dict[str, Any]:
