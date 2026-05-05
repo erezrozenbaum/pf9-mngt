@@ -60,7 +60,7 @@ class TenantBillingConfigRequest(BaseModel):
     @classmethod
     def validate_currency(cls, v: str) -> str:
         # Basic currency validation - extend with full currency list as needed
-        valid_currencies = {'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'INR'}
+        valid_currencies = {'USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF', 'CNY', 'INR', 'ILS'}
         if v.upper() not in valid_currencies:
             raise ValueError(f'Unsupported currency code: {v}')
         return v.upper()
@@ -68,6 +68,7 @@ class TenantBillingConfigRequest(BaseModel):
 class TenantBillingConfigResponse(BaseModel):
     """Response model for tenant billing configuration."""
     tenant_id: str
+    tenant_name: Optional[str] = None
     billing_model: BillingModel
     currency_code: str
     onboarding_date: datetime
@@ -168,14 +169,31 @@ async def get_tenant_billing_config(tenant_id: str, conn) -> Optional[Dict[str, 
     """Fetch tenant billing configuration."""
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("""
-        SELECT tbc.*, u.name as sales_person_name
+        SELECT tbc.*, u.name as sales_person_name, d.name as tenant_name
         FROM tenant_billing_config tbc
         LEFT JOIN users u ON tbc.sales_person_id = u.id
+        LEFT JOIN domains d ON d.id = tbc.tenant_id
         WHERE tbc.tenant_id = %s
     """, (tenant_id,))
     result = cursor.fetchone()
     cursor.close()
     return dict(result) if result else None
+
+
+async def resolve_domain_uuid(name_or_id: str, conn) -> Optional[str]:
+    """Resolve a domain name or UUID to the domain UUID."""
+    cursor = conn.cursor()
+    # Try UUID match first
+    cursor.execute("SELECT id FROM domains WHERE id = %s", (name_or_id,))
+    row = cursor.fetchone()
+    if row:
+        cursor.close()
+        return row[0]
+    # Fall back to name match
+    cursor.execute("SELECT id FROM domains WHERE name = %s", (name_or_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    return row[0] if row else None
 
 async def get_prepaid_account_status(tenant_id: str, conn) -> Optional[Dict[str, Any]]:
     """Fetch prepaid account status with calculated status."""
@@ -262,14 +280,38 @@ async def calculate_billing_aware_costs(
 # API Endpoints
 # ===============================================================================
 
+@router.get("/configs", response_model=List[TenantBillingConfigResponse])
+async def list_billing_configs(
+    user: User = Depends(require_permission("billing", "read"))
+):
+    """List all tenant billing configurations."""
+    with get_connection() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT tbc.*, u.name as sales_person_name, d.name as tenant_name
+            FROM tenant_billing_config tbc
+            LEFT JOIN users u ON tbc.sales_person_id = u.id
+            LEFT JOIN domains d ON d.id = tbc.tenant_id
+            ORDER BY d.name
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        return [TenantBillingConfigResponse(**dict(r)) for r in rows]
+
 @router.get("/config/{tenant_id}", response_model=TenantBillingConfigResponse)
 async def get_tenant_billing_config_endpoint(
     tenant_id: str,
     user: User = Depends(require_permission("billing", "read"))
 ):
-    """Get billing configuration for a specific tenant."""
+    """Get billing configuration for a specific tenant (accepts UUID or domain name)."""
     with get_connection() as conn:
-        config = await get_tenant_billing_config(tenant_id, conn)
+        resolved_id = await resolve_domain_uuid(tenant_id, conn)
+        if not resolved_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tenant {tenant_id} not found"
+            )
+        config = await get_tenant_billing_config(resolved_id, conn)
         
         if not config:
             raise HTTPException(
@@ -285,19 +327,19 @@ async def create_tenant_billing_config(
     tenant_id: str = Query(..., description="Target tenant ID"),
     user: User = Depends(require_permission("billing", "write"))
 ):
-    """Create or update billing configuration for a tenant."""
+    """Create or update billing configuration for a tenant (accepts UUID or domain name)."""
     with get_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         try:
-            # Check if tenant exists
-            cursor.execute("SELECT id FROM domains WHERE id = %s", (tenant_id,))
-            if not cursor.fetchone():
+            # Resolve domain name or UUID to UUID
+            resolved_id = await resolve_domain_uuid(tenant_id, conn)
+            if not resolved_id:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Tenant {tenant_id} not found"
                 )
-            
+            tenant_id = resolved_id
             # Insert or update billing configuration
             cursor.execute("""
                 INSERT INTO tenant_billing_config 

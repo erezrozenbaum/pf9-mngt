@@ -227,6 +227,7 @@ interface FiltersData {
 
 interface TenantBillingConfig {
   tenant_id: string;
+  tenant_name?: string;
   billing_model: "prepaid" | "pay_as_you_go";
   currency_code: string;
   onboarding_date: string;
@@ -658,25 +659,14 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
 
   const loadBillingConfigs = useCallback(async () => {
     try {
-      // Get all domains first
-      if (!filtersData?.domains?.length) return;
-      
-      const configs: TenantBillingConfig[] = [];
-      for (const domain of filtersData.domains) {
-        try {
-          const config = await apiFetch<TenantBillingConfig>(`/api/billing/config/${domain}`, {
-            headers: authHeaders()
-          });
-          configs.push(config);
-        } catch {
-          // Domain may not have billing config yet
-        }
-      }
+      const configs = await apiFetch<TenantBillingConfig[]>("/api/billing/configs", {
+        headers: authHeaders()
+      });
       setBillingConfigs(configs);
     } catch (err) {
       setError(`Failed to load billing configurations: ${err}`);
     }
-  }, [filtersData]);
+  }, []);
 
   const loadPrepaidAccounts = useCallback(async () => {
     try {
@@ -1990,7 +1980,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                   <tbody>
                     {billingConfigs.map((config, i) => (
                       <tr key={i} style={i % 2 === 0 ? rowEvenStyle : {}}>
-                        <td>{config.tenant_id}</td>
+                        <td>{config.tenant_name || config.tenant_id}</td>
                         <td>
                           <span style={{
                             padding: "4px 8px",
@@ -2184,7 +2174,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                 {editingBilling.created_at ? (
                   <input
                     type="text"
-                    value={editingBilling.tenant_id || ""}
+                    value={editingBilling.tenant_name || editingBilling.tenant_id || ""}
                     style={inputStyle}
                     disabled
                   />
@@ -2195,7 +2185,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                     style={selectStyle}
                   >
                     <option value="">— Select Tenant —</option>
-                    {filtersData?.domains?.filter(d => !billingConfigs.find(c => c.tenant_id === d)).map(d => (
+                    {filtersData?.domains?.filter(d => !billingConfigs.find(c => c.tenant_name === d || c.tenant_id === d)).map(d => (
                       <option key={d} value={d}>{d}</option>
                     ))}
                   </select>
