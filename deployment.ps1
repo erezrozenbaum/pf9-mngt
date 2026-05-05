@@ -833,7 +833,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_v1_91_0_phase5.sql";         Desc="Phase 5 v1.91.0: portal_role on tenant_portal_access, portal_invite_tokens, v_insight_history view"},
     @{File="db\migrate_v1_94_0.sql";               Desc="Dashboard health trend v1.94.0: dashboard_health_snapshots table + date index for /dashboard/health-trend sparkline endpoint"},
     @{File="db\migrate_billing_v195.sql";          Desc="Advanced Billing & Metering System v1.95.1: tenant_billing_config, prepaid_accounts, regional_pricing_overrides, webhook_registrations, resource_lifecycle_events, data_archival_log tables + billing RBAC permissions"},
-    @{File="db\migrate_billing_v1954.sql";         Desc="Billing FK fix v1.95.5: drop sales_person_id FK constraint (was REFERENCES users(id), but stores LDAP uid)"}
+    @{File="db\migrate_billing_v1954.sql";         Desc="Billing FK fix v1.95.5: drop sales_person_id FK constraint (was REFERENCES users(id), but stores LDAP uid)"},
+    @{File="db\migrate_billing_v1957.sql";         Desc="Billing grant fix v1.95.7: GRANT SELECT on domains and metering_snapshots to tenant_portal_role"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

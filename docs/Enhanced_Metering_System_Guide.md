@@ -1,6 +1,7 @@
-# Enhanced Metering System Guide (v1.95)
+# Enhanced Metering System Guide (v1.95.7)
 
-> **v1.95 MAJOR UPDATE**: Complete billing administration with tenant configuration, prepaid accounts, and webhook integration v1.95
+> **v1.95.7 PATCH**: Tenant portal billing fixed (permission denied for `domains`), prepaid status logic corrected, UI currency/tenant-name display fixed, chargeback tab enriched with billing model and cycle info.  
+> **v1.95 MAJOR**: Complete billing administration with tenant configuration, prepaid accounts, and webhook integration.
 
 ## 📋 **Table of Contents**
 - [Overview](#overview)
@@ -281,7 +282,7 @@ PUT /api/billing/config/550e8400-e29b-41d4-a716-446655440000
     "billing_model": "prepaid",
     "currency_code": "USD",
     "billing_start_date": "2026-06-01",
-    "sales_person_id": "123e4567-e89b-12d3-a456-426614174000"
+    "sales_person_id": "erez"
 }
 ```
 
@@ -342,7 +343,7 @@ GET    /tenant/billing/status           # Tenant billing account status
     "billing_cycle_day": 1,
     "quota_enforcement": true,
     "status_message": "Account in good standing",
-    "sales_person": "John Smith"
+    "sales_person": "erez"
 }
 ```
 
@@ -396,8 +397,8 @@ CREATE TABLE tenant_billing_config (
     currency_code TEXT DEFAULT 'USD',
     onboarding_date DATE NOT NULL,
     billing_start_date DATE,
-    billing_cycle_day INTEGER GENERATED ALWAYS AS (EXTRACT(DAY FROM COALESCE(billing_start_date, onboarding_date))) STORED,
-    sales_person_id UUID REFERENCES users(id),
+    billing_cycle_day INTEGER GENERATED ALWAYS AS (EXTRACT(DAY FROM COALESCE(billing_start_date, onboarding_date))::INTEGER) STORED,
+    sales_person_id TEXT,  -- LDAP uid (users.name), NOT a UUID FK (v1.95.5: FK constraint dropped)
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -405,16 +406,19 @@ CREATE TABLE tenant_billing_config (
 
 #### **prepaid_accounts**
 ```sql
+-- tenant_id is the domain UUID (domains.id), NOT a project UUID
 CREATE TABLE prepaid_accounts (
-    tenant_id UUID PRIMARY KEY REFERENCES tenants(id),
-    current_balance DECIMAL(15,2) DEFAULT 0.00,
-    last_charge_date DATE,
-    next_billing_date DATE,
-    currency_code TEXT DEFAULT 'USD',
-    quota_enforcement BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    tenant_id TEXT PRIMARY KEY REFERENCES domains(id),
+    current_balance NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+    last_charge_date DATE,                 -- NULL on new accounts
+    next_billing_date DATE,                -- NULL = computed from billing_cycle_day
+    currency_code TEXT NOT NULL DEFAULT 'USD',
+    quota_enforcement BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- status computed at query time:
+-- suspended only when last_charge_date IS NOT NULL AND balance <= 0 AND quota_enforcement
 ```
 
 #### **regional_pricing_overrides**

@@ -379,61 +379,75 @@ CREATE TABLE inventory_runs (
 
 ## Operational Features
 
-### Billing System (v1.95.2) ⭐
+### Billing System (v1.95.7) ⭐
 
 Complete enterprise billing management with tenant configuration, prepaid accounts, regional pricing, and webhook integration.
 
 > **v1.95.1 fix**: In v1.95.0 the `GRANT` statements for these tables were placed before the `CREATE TABLE` statements in `init.sql`, causing DB initialization to fail. This was corrected in v1.95.1. The `billing:read` / `billing:write` RBAC permissions were also missing from `role_permissions` — they are now seeded automatically for `admin`, `superadmin`, and `technical` roles.
 > **v1.95.2 fix**: All billing API endpoints used `async with get_connection()` (sync contextmanager); replaced with `with get_connection()`. Tenant portal billing endpoints used `Depends(get_tenant_connection)` which yielded the contextmanager wrapper instead of the connection; replaced with inline `with get_tenant_connection() as conn`.
+> **v1.95.5 fix**: `sales_person_id` FK constraint to `users(id)` was dropped — the column stores LDAP uid (= `users.name`), not a Keystone UUID. See `db/migrate_billing_v1954.sql`.
+> **v1.95.7 fix**: `tenant_portal_role` now has `SELECT` on `domains` and `metering_snapshots` — required for tenant portal billing-aware chargeback. Applied via `db/migrate_billing_v1957.sql`. The `suspended` status in `prepaid_accounts` is now only computed when `last_charge_date IS NOT NULL`, preventing new zero-balance accounts from appearing suspended.
 
 #### Tenant Billing Configuration
-Comprehensive billing parameters and credit management for each tenant.
+Comprehensive billing parameters and credit management for each tenant. `tenant_id` is the domain UUID (`domains.id`).
 
 ```sql
 CREATE TABLE tenant_billing_config (
-    id                     SERIAL PRIMARY KEY,
-    tenant_id              TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
-    billing_model          TEXT NOT NULL DEFAULT 'Standard',  -- Standard, Enterprise, Custom
-    credit_limit_usd       DECIMAL(10,2) DEFAULT 0.00,       -- 0 = unlimited credit
-    payment_terms_days     INTEGER NOT NULL DEFAULT 30,       -- Net payment terms (15, 30, 45)
-    sales_person_id        TEXT REFERENCES users(id),         -- Assigned account manager
-    auto_suspend_enabled   BOOLEAN NOT NULL DEFAULT true,     -- Auto-suspend on credit breach
+    tenant_id              TEXT PRIMARY KEY REFERENCES domains(id),
+    billing_model          TEXT NOT NULL CHECK (billing_model IN ('prepaid', 'pay_as_you_go')),
+    currency_code          TEXT NOT NULL DEFAULT 'USD',
+    onboarding_date        DATE NOT NULL,
+    billing_start_date     DATE,
+    billing_cycle_day      INTEGER GENERATED ALWAYS AS (EXTRACT(DAY FROM COALESCE(billing_start_date, onboarding_date))::INTEGER) STORED,
+    sales_person_id        TEXT,                              -- LDAP uid (users.name), NOT a FK
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Indexes for billing config management
-CREATE INDEX idx_tenant_billing_config_tenant_id ON tenant_billing_config(tenant_id);
+-- Note: sales_person_id stores LDAP uid (e.g. "erez"), NOT users.id (UUID).
+-- The FK constraint was dropped in v1.95.5 (migrate_billing_v1954.sql).
 CREATE INDEX idx_tenant_billing_config_sales_person ON tenant_billing_config(sales_person_id);
 CREATE INDEX idx_tenant_billing_config_billing_model ON tenant_billing_config(billing_model);
 ```
 
 #### Prepaid Accounts  
-Prepaid balance management with automated alerts and transaction history.
+Prepaid balance management. `status` is **computed** at query time via `CASE` — there is no `status` column in the table.
 
 ```sql
 CREATE TABLE prepaid_accounts (
-    id                     SERIAL PRIMARY KEY,
-    account_id             TEXT NOT NULL UNIQUE,              -- Unique prepaid account identifier
-    tenant_id              TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    current_balance_usd    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    threshold_alert_usd    DECIMAL(10,2) DEFAULT 100.00,      -- Alert threshold for low balance
-    last_adjustment_date   TIMESTAMPTZ,                       -- Last balance change
-    last_adjustment_amount DECIMAL(10,2),                     -- Last adjustment amount
-    adjustment_reason      TEXT,                              -- Reason for last adjustment
-    reference_id           TEXT,                              -- External transaction reference
-    notify_on_threshold    BOOLEAN NOT NULL DEFAULT true,     -- Enable low balance alerts
-    account_status         TEXT NOT NULL DEFAULT 'active',    -- active, suspended, closed
+    tenant_id              TEXT PRIMARY KEY REFERENCES domains(id),  -- domain UUID (NOT project UUID)
+    current_balance        NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+    last_charge_date       DATE,                              -- NULL for brand-new accounts
+    next_billing_date      DATE,                             -- NULL = computed from billing_cycle_day
+    currency_code          TEXT NOT NULL DEFAULT 'USD',
+    quota_enforcement      BOOLEAN NOT NULL DEFAULT TRUE,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Indexes for prepaid account management
-CREATE INDEX idx_prepaid_accounts_account_id ON prepaid_accounts(account_id);
+-- status is computed at query time:
+--   CASE
+--     WHEN current_balance <= 0 AND quota_enforcement AND last_charge_date IS NOT NULL THEN 'suspended'
+--     WHEN current_balance <= 100 THEN 'low_balance'
+--     ELSE 'active'
+--   END
+-- New accounts (last_charge_date IS NULL) are always 'active' even if balance is 0.
 CREATE INDEX idx_prepaid_accounts_tenant_id ON prepaid_accounts(tenant_id);
-CREATE INDEX idx_prepaid_accounts_status ON prepaid_accounts(account_status);
-CREATE INDEX idx_prepaid_accounts_balance ON prepaid_accounts(current_balance_usd);
 ```
+
+#### DB Role Permissions (tenant_portal_role)
+
+The `tenant_portal_role` role has `SELECT` on these tables:
+
+| Table | Granted since |
+|---|---|
+| `projects` | v1.95.0 |
+| `metering_resources` | v1.95.0 |
+| `metering_pricing` | v1.95.0 |
+| `metering_snapshots` | v1.95.7 |
+| `domains` | v1.95.7 |
+
+
 
 #### Regional Pricing Overrides
 Multi-region pricing with currency support and markup calculations.

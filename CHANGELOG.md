@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.7] - 2026-05-05
+
+### Fixed
+- **Tenant portal Usage & Billing 500 "permission denied for table domains"**: `_get_chargeback_data` in `tenant_portal/billing_routes.py` resolved the domain name via `SELECT d.name FROM domains d JOIN projects p ON p.domain_id = d.id WHERE p.id = ANY(%s)`. The `tenant_portal_role` DB role was never granted `SELECT` on the `domains` table, causing `psycopg2.errors.InsufficientPrivilege` on every request. Fixed by `db/migrate_billing_v1957.sql` which grants `SELECT ON domains` and `SELECT ON metering_snapshots` to `tenant_portal_role`. Applied to both Docker Compose and Kubernetes production databases.
+- **Admin Billing Config "Sales Person" column always shows "—"**: `list_billing_configs` and `get_tenant_billing_config` used `LEFT JOIN users u ON u.name = tbc.sales_person_id` and returned `u.name` as `sales_person_name`. In the K8s environment `users.name` stores the email address (e.g. `erez@ccc.co.il`), not the LDAP uid (`erez`), so the JOIN never matched. Fixed by removing the users JOIN and returning `tbc.sales_person_id` directly as `sales_person_name` — this correctly shows the configured LDAP uid in the UI.
+- **Prepaid accounts wrongly show "🚫 Suspended" for new zero-balance tenants**: The `CASE` expression used `WHEN current_balance <= 0 AND quota_enforcement THEN 'suspended'`. A brand-new prepaid account has `current_balance = 0` and `quota_enforcement = true` — so it was immediately marked suspended even though it has never been charged. Fixed by adding `AND last_charge_date IS NOT NULL` to the suspended condition across `get_prepaid_account_status`, `list_prepaid_accounts`, and the `billing-overview` suspended count. New accounts are now correctly shown as `active` until they have been through at least one billing cycle.
+- **Prepaid Accounts overview card "Total Balance" displays "$0" instead of "₪0"**: The overview card hardcoded the `$` currency symbol regardless of the actual account currency. Fixed by: (1) adding a `primary_currency` field to the `GET /api/billing/overview` prepaid_summary (the most common currency among accounts); (2) adding `getCurrencySymbol(code)` helper in `MeteringTab.tsx`; (3) using the helper to render the correct currency symbol in the card.
+- **Prepaid Accounts table "Tenant" column shows UUID instead of tenant name**: The `<td>` rendered `account.tenant_id` (UUID). The API already returns `tenant_name` from the `JOIN domains` in `list_prepaid_accounts`. Fixed to display `account.tenant_name || account.tenant_id` as fallback. Also fixed the Balance Adjustment dropdown to show tenant name instead of UUID, and currency symbol instead of hardcoded `$`.
+- **Chargeback tab shows no billing model, currency, or billing cycle per tenant**: The chargeback summary table had no billing context columns. Fixed by: (1) also loading `billingConfigs` when the chargeback sub-tab opens (if not already loaded); (2) joining billing config by `domain` name to add "Billing Model", "Currency", and "Billing Cycle" columns to the chargeback table — with colour-coded model badges (green = Prepaid, purple = PAYG).
+- **`next_billing_date` always null in prepaid accounts list**: `list_prepaid_accounts` returned `pa.next_billing_date` directly (always null for new accounts). Now computes it on the fly from `tenant_billing_config.billing_cycle_day` when not set: next occurrence of the billing cycle day from today.
+
+### Added
+- `db/migrate_billing_v1957.sql` — grants `SELECT ON domains` and `SELECT ON metering_snapshots` to `tenant_portal_role`
+- `getCurrencySymbol(code)` helper in `MeteringTab.tsx` for consistent currency rendering across billing UI
+- `primary_currency` field in `GET /api/billing/overview` prepaid_summary response
+- Billing Model, Currency, and Billing Cycle columns in the admin Chargeback tab
+
+---
+
 ## [1.95.6] - 2026-05-05
 
 ### Fixed

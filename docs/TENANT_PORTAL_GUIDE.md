@@ -1,6 +1,6 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.95.4  
+**Version**: 1.95.7  
 **Last Updated**: May 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 
@@ -71,7 +71,17 @@ The tenant self-service portal is a completely isolated web application that let
               └───────────────────────────────┘
 ```
 
-The tenant portal API (`tenant_portal/`) is a **completely separate FastAPI process** from the main admin API (`api/`). It uses its own JWT signing key, its own Redis key namespace, and connects to PostgreSQL using the `tenant_portal_role` database role — which has only `SELECT` permission on five inventory tables, each protected by Row-Level Security policies that restrict rows to the tenant's own projects.
+The tenant portal API (`tenant_portal/`) is a **completely separate FastAPI process** from the main admin API (`api/`). It uses its own JWT signing key, its own Redis key namespace, and connects to PostgreSQL using the `tenant_portal_role` database role — which has `SELECT` permission on the following tables (Row-Level Security restricts rows to the tenant's own projects where applicable):
+
+| Table | Purpose |
+|---|---|
+| `projects` | Resolve tenant scope from Keystone project IDs |
+| `metering_resources` | VM usage data for cost calculation |
+| `metering_pricing` | Flavor pricing for cost calculation |
+| `metering_snapshots` | Snapshot storage cost calculation *(added v1.95.7)* |
+| `domains` | Resolve domain name from project ID for chargeback *(added v1.95.7)* |
+
+> **v1.95.7**: Before this release `tenant_portal_role` lacked `SELECT` on `domains` and `metering_snapshots`, causing every Usage & Billing page load to return HTTP 500 (`psycopg2.errors.InsufficientPrivilege`). Fixed in `db/migrate_billing_v1957.sql`.
 
 The main admin API (`api/`) continues to manage admin operations and hosts the tenant portal admin endpoints under `/api/admin/tenant-portal/`.
 
@@ -502,7 +512,7 @@ Check for IP address changes — if the customer is behind a NAT that rotates so
 
 | Control | Implementation |
 |---------|---------------|
-| Data isolation | PostgreSQL Row-Level Security on 5 tables using `tenant_portal_role` — data is filtered at the DB layer |
+| Data isolation | PostgreSQL Row-Level Security on 5 billing/metering tables using `tenant_portal_role` — data is filtered at the DB layer |
 | JWT isolation | Separate signing key from admin JWT; `role=tenant` claim — admin tokens are explicitly rejected at every endpoint |
 | Session binding | Session token stored in Redis; validated against stored IP on every request |
 | MFA | TOTP (RFC 6238) with 8 bcrypt-hashed backup codes, or email OTP (SHA-256 hash, 10 min TTL) |

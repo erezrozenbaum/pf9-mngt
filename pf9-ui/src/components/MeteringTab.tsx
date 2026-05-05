@@ -414,6 +414,10 @@ const SUB_TABS: { id: SubTab; label: string; adminOnly?: boolean }[] = [
 
 const CURRENCIES = ["USD", "EUR", "GBP", "ILS", "JPY", "CAD", "AUD", "CHF", "INR"];
 
+function getCurrencySymbol(code: string): string {
+  const symbols: Record<string, string> = { USD: '$', EUR: '€', GBP: '£', ILS: '₪', JPY: '¥', CAD: 'CA$', AUD: 'A$', CHF: 'Fr', INR: '₹' };
+  return symbols[code] ?? (code + ' ');
+}
 export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
   const { selectedRegionId } = useClusterContext();
   const isAdmin = _isAdmin; // Use the admin status for tab filtering
@@ -706,7 +710,10 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     else if (subTab === "api_usage") loadApiUsage();
     else if (subTab === "efficiency") loadEfficiency();
     else if (subTab === "pricing") loadPricing();
-    else if (subTab === "chargeback") loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined);
+    else if (subTab === "chargeback") {
+      loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined);
+      if (billingConfigs.length === 0) loadBillingConfigs();
+    }
     else if (subTab === "growth") loadGrowth(growthMonths);
     else if (subTab === "billing_config") {
       loadBillingOverview();
@@ -1680,6 +1687,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                   <tr>
                     <th>Domain</th>
                     <th>Project / Tenant</th>
+                    <th>Billing Model</th>
+                    <th>Currency</th>
+                    <th>Billing Cycle</th>
                     <th>VMs</th>
                     <th>vCPUs</th>
                     <th>RAM (GB)</th>
@@ -1691,12 +1701,24 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                 </thead>
                 <tbody>
                   {chargebackData.tenants?.length === 0 && (
-                    <tr><td colSpan={9} style={{ textAlign: "center", padding: 20 }}>No data available for this period.</td></tr>
+                    <tr><td colSpan={12} style={{ textAlign: "center", padding: 20 }}>No data available for this period.</td></tr>
                   )}
-                  {chargebackData.tenants?.map((t: any, i: number) => (
+                  {chargebackData.tenants?.map((t: any, i: number) => {
+                    const cfg = billingConfigs.find(c => c.tenant_name === t.domain);
+                    return (
                     <tr key={i}>
                       <td>{t.domain}</td>
                       <td>{t.project_name}</td>
+                      <td>
+                        {cfg ? (
+                          <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.8em", fontWeight: "bold", color: "#fff",
+                            background: cfg.billing_model === "prepaid" ? "#059669" : "#7C3AED" }}>
+                            {cfg.billing_model === "prepaid" ? "💳 Prepaid" : "🔄 PAYG"}
+                          </span>
+                        ) : "—"}
+                      </td>
+                      <td>{cfg?.currency_code || "—"}</td>
+                      <td>{cfg?.billing_cycle_day ? `Day ${cfg.billing_cycle_day}` : "—"}</td>
                       <td>{t.vm_count}</td>
                       <td>{t.total_vcpus}</td>
                       <td>{t.total_ram_gb.toFixed(1)}</td>
@@ -1705,7 +1727,8 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                       <td>{((t.storage_cost || 0) + (t.snapshot_cost || 0) + (t.network_cost || 0)).toFixed(2)}</td>
                       <td style={{ fontWeight: 600 }}>{t.estimated_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </>
@@ -1928,7 +1951,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                   </div>
                   <div>
                     <div style={{ fontSize: "1.6em", fontWeight: "bold", color: "#D97706" }}>
-                      ${fmtNum(billingOverview.prepaid_summary.total_balance, 0)}
+                      {getCurrencySymbol(billingOverview.prepaid_summary.primary_currency || 'USD')}{fmtNum(billingOverview.prepaid_summary.total_balance, 0)}
                     </div>
                     <div style={{ fontSize: "0.8em", opacity: 0.7 }}>Total Balance</div>
                   </div>
@@ -2044,7 +2067,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                   <option value="">Select Tenant</option>
                   {prepaidAccounts.map(acc => (
                     <option key={acc.tenant_id} value={acc.tenant_id}>
-                      {acc.tenant_id} (${fmtNum(acc.current_balance, 2)})
+                      {acc.tenant_name || acc.tenant_id} ({getCurrencySymbol(acc.currency_code)}{fmtNum(acc.current_balance, 2)})
                     </option>
                   ))}
                 </select>
@@ -2072,7 +2095,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                       body: JSON.stringify({
                         tenant_id: selectedTenantId,
                         balance_adjustment: balanceAdjustment,
-                        currency_code: "USD"
+                        currency_code: prepaidAccounts.find(a => a.tenant_id === selectedTenantId)?.currency_code || "USD"
                       })
                     });
                     setBalanceAdjustment(0);
@@ -2110,9 +2133,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                   <tbody>
                     {prepaidAccounts.map((account, i) => (
                       <tr key={i} style={i % 2 === 0 ? rowEvenStyle : {}}>
-                        <td>{account.tenant_id}</td>
+                        <td>{account.tenant_name || account.tenant_id}</td>
                         <td style={{ fontWeight: "bold" }}>
-                          ${fmtNum(account.current_balance, 2)}
+                          {getCurrencySymbol(account.currency_code)}{fmtNum(account.current_balance, 2)}
                         </td>
                         <td>
                           <span style={{
