@@ -268,7 +268,7 @@ async def get_tenant_billing_config_endpoint(
     user: User = Depends(require_permission("billing", "read"))
 ):
     """Get billing configuration for a specific tenant."""
-    async with get_connection() as conn:
+    with get_connection() as conn:
         config = await get_tenant_billing_config(tenant_id, conn)
         
         if not config:
@@ -286,7 +286,7 @@ async def create_tenant_billing_config(
     user: User = Depends(require_permission("billing", "write"))
 ):
     """Create or update billing configuration for a tenant."""
-    async with get_connection() as conn:
+    with get_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         try:
@@ -353,7 +353,7 @@ async def get_prepaid_account(
     user: User = Depends(require_permission("billing", "read"))
 ):
     """Get prepaid account status for a tenant."""
-    async with get_connection() as conn:
+    with get_connection() as conn:
         account = await get_prepaid_account_status(tenant_id, conn)
         
         if not account:
@@ -370,7 +370,7 @@ async def adjust_prepaid_balance(
     user: User = Depends(require_permission("billing", "write"))
 ):
     """Adjust prepaid account balance (add funds or charge usage)."""
-    async with get_connection() as conn:
+    with get_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         try:
@@ -429,7 +429,7 @@ async def get_billing_aware_metering(
     user: User = Depends(require_permission("billing", "read"))
 ):
     """Get metering data with billing model awareness and regional pricing."""
-    async with get_connection() as conn:
+    with get_connection() as conn:
         # Get billing configuration
         billing_config = await get_tenant_billing_config(tenant_id, conn)
         if not billing_config:
@@ -481,7 +481,7 @@ async def get_billing_overview(
     user: User = Depends(require_permission("billing", "read"))
 ):
     """Get billing system overview with key metrics."""
-    async with get_connection() as conn:
+    with get_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         # Get billing statistics

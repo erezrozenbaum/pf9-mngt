@@ -32,15 +32,14 @@ router = APIRouter(tags=["billing"])
 @router.get("/tenant/billing/status")
 async def get_tenant_billing_status(
     tenant_ctx: TenantContext = Depends(get_tenant_context),
-    conn = Depends(get_tenant_connection),
 ):
     """
     Get the authenticated tenant's billing configuration and account status.
     Returns billing model, currency, balance (if prepaid), and other billing details.
     """
     log_action("billing_status_view", tenant_ctx.username, {"tenant_id": tenant_ctx.tenant_id})
-    
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+    with get_tenant_connection() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         inject_rls_vars(cur, tenant_ctx)
         
         # Get billing configuration
@@ -133,7 +132,6 @@ async def get_billing_aware_chargeback(
     hours: int = Query(default=720, ge=1, le=8760, description="Time period in hours"),
     currency: Optional[str] = Query(default=None, description="Currency override"),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
-    conn = Depends(get_tenant_connection),
 ):
     """
     Get billing-aware chargeback data that adapts display and calculations 
@@ -144,8 +142,8 @@ async def get_billing_aware_chargeback(
         "hours": hours,
         "currency": currency
     })
-    
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+    with get_tenant_connection() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         inject_rls_vars(cur, tenant_ctx)
         
         # Get tenant billing configuration

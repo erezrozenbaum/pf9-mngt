@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.2] - 2026-05-05
+
+### Fixed
+- **Billing endpoints 500 Internal Server Error (all `/api/billing/*`)**: `billing_routes.py` used `async with get_connection()` but `get_connection()` is a synchronous `@contextmanager`, not an async one. This raised `TypeError: '_GeneratorContextManager' object does not support the asynchronous context manager protocol` on every billing API request. Fixed by replacing all 6 `async with get_connection()` calls with `with get_connection()`, consistent with every other API module.
+- **Tenant portal Usage & Billing 500 (`/tenant/metering/billing-aware`)**: Billing endpoints used `conn = Depends(get_tenant_connection)` — FastAPI passes a sync contextmanager as a dependency, yielding the `_GeneratorContextManager` wrapper, not the connection. Raised `AttributeError: '_GeneratorContextManager' object has no attribute 'throw'`. Fixed by removing the `Depends` injection and calling `with get_tenant_connection() as conn` directly inside each handler, matching all other tenant portal routes.
+- **Admin UI "Add Billing Configuration" shows free-text Tenant ID field**: Replaced the raw text input with a dropdown populated from existing domains, pre-filtered to exclude tenants that already have billing configs. When editing an existing config, the tenant ID is shown as a disabled read-only field (immutable PK).
+
 ## [1.95.1] - 2026-05-04
 
 ### Fixed

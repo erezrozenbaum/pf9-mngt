@@ -2177,14 +2177,26 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             
             <div style={{display:"grid",gap:12,marginBottom:20}}>
               <label>
-                Tenant ID:
-                <input
-                  type="text"
-                  value={editingBilling.tenant_id || ""}
-                  onChange={(e) => setEditingBilling({...editingBilling, tenant_id: e.target.value})}
-                  style={inputStyle}
-                  disabled={!!editingBilling.tenant_id} // Disable editing existing tenant_id
-                />
+                Tenant:
+                {!!editingBilling.tenant_id ? (
+                  <input
+                    type="text"
+                    value={editingBilling.tenant_id}
+                    style={inputStyle}
+                    disabled
+                  />
+                ) : (
+                  <select
+                    value={editingBilling.tenant_id || ""}
+                    onChange={(e) => setEditingBilling({...editingBilling, tenant_id: e.target.value})}
+                    style={selectStyle}
+                  >
+                    <option value="">— Select Tenant —</option>
+                    {filtersData?.domains?.filter(d => !billingConfigs.find(c => c.tenant_id === d)).map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                )}
               </label>
               
               <label>
