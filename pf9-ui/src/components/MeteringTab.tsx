@@ -271,6 +271,7 @@ interface BillingOverview {
     suspended_accounts: number;
     low_balance_accounts: number;
     total_balance: number;
+    primary_currency?: string;
   };
   recent_events: Array<{
     event_type: string;
