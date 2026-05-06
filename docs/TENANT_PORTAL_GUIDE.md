@@ -1,6 +1,6 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.95.7  
+**Version**: 1.95.10  
 **Last Updated**: May 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 
@@ -81,6 +81,12 @@ The tenant portal API (`tenant_portal/`) is a **completely separate FastAPI proc
 | `metering_snapshots` | Snapshot storage cost calculation *(added v1.95.7)* |
 | `domains` | Resolve domain name from project ID for chargeback *(added v1.95.7)* |
 
+> **v1.95.10**: Tenant portal Usage & Billing screen now shows per-VM running/idle hours inline in the VM row (no need to expand), and displays a **"Changes during this period"** panel below the VM table that lists VMs added, VMs removed, and disk resizes detected within the selected metering window.
+>
+> **v1.95.9**: Added `metered_hours`, `down_hours`, `first_seen`, `last_seen` fields to per-VM chargeback data. PAYG compute displayed as `Xh × rate/hr = total` in expanded row detail.
+>
+> **v1.95.8**: Fixed tenant portal `storage_cost` and `network_cost` being zero (missing per-resource pricing lookup). Fixed PAYG billing status incorrectly shown as inactive. Fixed metered run-hours for prepaid accounts.
+>
 > **v1.95.7**: Before this release `tenant_portal_role` lacked `SELECT` on `domains` and `metering_snapshots`, causing every Usage & Billing page load to return HTTP 500 (`psycopg2.errors.InsufficientPrivilege`). Fixed in `db/migrate_billing_v1957.sql`.
 
 The main admin API (`api/`) continues to manage admin operations and hosts the tenant portal admin endpoints under `/api/admin/tenant-portal/`.

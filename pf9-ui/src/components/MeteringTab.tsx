@@ -406,7 +406,7 @@ const SUB_TABS: { id: SubTab; label: string; adminOnly?: boolean }[] = [
   { id: "api_usage", label: "🔌 API Usage" },
   { id: "efficiency", label: "⚡ Efficiency" },
   { id: "pricing", label: "💰 Pricing" },
-  { id: "chargeback", label: "📊 Usage Summary" },
+  { id: "chargeback", label: "� Chargeback" },
   { id: "billing_config", label: "⚙️ Metering Config", adminOnly: true },
   { id: "prepaid_accounts", label: "💳 Prepaid Credits", adminOnly: true },
   { id: "growth", label: "📈 Tenant Growth" },

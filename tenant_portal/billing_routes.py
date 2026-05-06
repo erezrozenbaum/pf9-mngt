@@ -16,7 +16,7 @@ a graceful "billing_configured: false" response instead of 404.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -331,23 +331,62 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
     )
     vm_rows = cur.fetchall()
 
-    # Metered hours per VM: count of collected snapshots = hours the VM was metered/running
+    # Metered hours per VM + disk change detection for lifecycle tracking
     cur.execute(
-        """SELECT vm_id, COUNT(*) AS metered_hours,
-                  MIN(collected_at) AS first_seen, MAX(collected_at) AS last_seen
+        """SELECT vm_id, MIN(vm_name) AS vm_name,
+                  COUNT(*) AS metered_hours,
+                  MIN(collected_at) AS first_seen, MAX(collected_at) AS last_seen,
+                  MIN(disk_allocated_gb) AS min_disk, MAX(disk_allocated_gb) AS max_disk
            FROM metering_resources
            WHERE domain = %s AND collected_at > NOW() - (%s || ' hours')::INTERVAL
            GROUP BY vm_id""",
         (domain_name, str(hours)),
     )
+    lifecycle_rows = cur.fetchall()
+
+    # Build vm_metered lookup
     vm_metered: Dict[str, Any] = {
         r["vm_id"]: {
             "metered_hours": int(r["metered_hours"]),
             "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
             "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
         }
-        for r in cur.fetchall()
+        for r in lifecycle_rows
     }
+
+    # Detect lifecycle changes during the period
+    now = datetime.now(timezone.utc)
+    period_start = now - timedelta(hours=hours)
+    # "new" = first metered more than 10% into the period (not pre-existing at period start)
+    new_threshold = period_start + timedelta(hours=max(1.0, hours * 0.10))
+    # "removed" = last metered more than 5% before the period end
+    removed_threshold = now - timedelta(hours=max(1.0, hours * 0.05))
+
+    period_changes: Dict[str, Any] = {"vms_added": [], "vms_removed": [], "storage_resized": []}
+    for r in lifecycle_rows:
+        first_s = r["first_seen"]
+        last_s = r["last_seen"]
+        vm_label = r["vm_name"] or r["vm_id"]
+        # New VM (joined after period start)
+        if first_s and first_s > new_threshold:
+            period_changes["vms_added"].append({
+                "vm_id": r["vm_id"], "vm_name": vm_label,
+                "added_at": first_s.isoformat(),
+            })
+        # Removed VM (stopped being metered before period end)
+        if last_s and last_s < removed_threshold:
+            period_changes["vms_removed"].append({
+                "vm_id": r["vm_id"], "vm_name": vm_label,
+                "removed_at": last_s.isoformat(),
+            })
+        # Storage resize
+        min_d = r["min_disk"]
+        max_d = r["max_disk"]
+        if min_d is not None and max_d is not None and int(min_d) != int(max_d):
+            period_changes["storage_resized"].append({
+                "vm_id": r["vm_id"], "vm_name": vm_label,
+                "from_gb": int(min_d), "to_gb": int(max_d),
+            })
 
     # Latest snapshot totals for this domain
     cur.execute(
@@ -431,6 +470,7 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
         "snapshots": round(total_snap, 4),
         "network": round(total_network, 4),
     }
+    base["period_changes"] = period_changes
     return base
 
 

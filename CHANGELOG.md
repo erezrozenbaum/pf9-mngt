@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.10] - 2026-05-06
+
+### Fixed
+- **Admin UI**: Renamed tab restored — "📋 Chargeback" (was renamed to "Usage Summary" in v1.95.9, causing confusion). The tab ID and all functionality remain the same.
+
+### Added
+- **Tenant portal — hours per VM in summary row**: Each VM row now shows a small inline indicator (e.g., `● 162h on · 6h off`) without needing to expand the row.
+- **Tenant portal — lifecycle changes section**: After the VM table, a "📋 Changes during this period" card appears when the metering data contains VMs added, VMs removed, or storage disk resizes during the selected period. Each event is timestamped.
+- **Tenant portal backend** (`billing_routes.py`): `period_changes` field added to the `/tenant/metering/billing-aware` response, containing `vms_added`, `vms_removed`, and `storage_resized` arrays derived from metering_resources.
+
+---
+
 ## [1.95.9] - 2026-05-06
 
 ### Changed
