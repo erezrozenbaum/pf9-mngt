@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.9] - 2026-05-06
+
+### Changed
+- **Metering rebrand**: Renamed tabs — "Chargeback" → "Usage Summary", "Billing Config" → "Metering Config", "Prepaid Accounts" → "Prepaid Credits" — to reflect that this is a metering/reporting system, not a direct billing system.
+- **Per-VM hours detail (admin UI)**: Usage Summary rows are now expandable. Clicking a tenant row reveals a per-VM table showing vCPU/RAM/Disk, hours running (🟢), hours idle/off (⬛), compute cost (`Xh × ₪Y/hr = ₪Z` for PAYG, `₪Z/mo flat` for prepaid), disk storage, and VM total. A footer row shows network + snapshot charges + tenant grand total.
+- **Domain filter (admin UI)**: Added a domain filter dropdown to the Usage Summary tab so admins can narrow the view to a single tenant domain.
+- **Prepaid Credits cleanup**: Removed the balance status badge ("Low Balance", etc.) — the balance field is now purely informational. Replaced the "Charge Usage / Add Funds" dual-button with a single "💰 Add Funds" top-up only action.
+- **Per-VM hours detail (tenant portal)**: `BillingAwareChargeback` expanded row now shows hours running / hours idle, and compute is displayed as `Xh × rate/hr = total` for PAYG tenants.
+
+### Added
+- Backend (`api/metering_routes.py`): `vm_details` now includes `metered_hours`, `down_hours`, `first_seen`, `last_seen` per VM.
+- Backend (`tenant_portal/billing_routes.py`): `/api/billing/chargeback` VMs now include `metered_hours`, `down_hours`, `first_seen`, `last_seen`.
+- TypeScript type (`ChargebackVm`): Added `metered_hours?`, `down_hours?`, `first_seen?`, `last_seen?` optional fields.
+
+---
+
 ## [1.95.8] - 2026-05-05
 
 ### Fixed

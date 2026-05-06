@@ -546,6 +546,10 @@ export interface ChargebackVm {
   estimated_cost: number;
   pricing_basis: string;
   last_metering: string | null;
+  metered_hours?: number;
+  down_hours?: number;
+  first_seen?: string | null;
+  last_seen?: string | null;
 }
 
 export interface ChargebackSummary {

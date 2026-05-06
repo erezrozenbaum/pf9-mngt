@@ -1316,9 +1316,28 @@ async def get_chargeback_summary(
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(vm_sql, params)
             vms = cur.fetchall()
-            
+
             cur.execute(storage_sql, params)
             storage_data = {(row["domain"], row["project_name"]): row for row in cur.fetchall()}
+
+            # Metered hours per VM: count of collected snapshots = hours the VM was metered/running
+            metered_hours_sql = f"""
+                SELECT vm_id, COUNT(*) AS metered_hours,
+                       MIN(collected_at) AS first_seen,
+                       MAX(collected_at) AS last_seen
+                FROM metering_resources
+                WHERE {' AND '.join(where_parts)}
+                GROUP BY vm_id
+            """
+            cur.execute(metered_hours_sql, params)
+            vm_metered_hours = {
+                row["vm_id"]: {
+                    "metered_hours": int(row["metered_hours"]),
+                    "first_seen": row["first_seen"].isoformat() if row["first_seen"] else None,
+                    "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
+                }
+                for row in cur.fetchall()
+            }
 
     tenant_totals: dict = {}
     vm_details: list = []
@@ -1346,6 +1365,8 @@ async def get_chargeback_summary(
         cost_breakdown["storage"] = vm_storage_cost
         
         # Add VM details for per-VM breakdown
+        mh_data = vm_metered_hours.get(vm.get("vm_id"), {})
+        metered_h = mh_data.get("metered_hours", 0)
         vm_details.append({
             "vm_id": vm.get("vm_id"),
             "vm_name": vm.get("vm_name"),
@@ -1359,6 +1380,10 @@ async def get_chargeback_summary(
             "storage_cost": round(vm_storage_cost, 2),
             "total_cost": round(total_vm_cost, 2),
             "cost_breakdown": cost_breakdown,
+            "metered_hours": metered_h,
+            "down_hours": max(0, hours - metered_h),
+            "first_seen": mh_data.get("first_seen"),
+            "last_seen": mh_data.get("last_seen"),
         })
 
         entry = tenant_totals.setdefault(key, {
