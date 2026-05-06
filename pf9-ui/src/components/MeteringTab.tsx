@@ -406,9 +406,9 @@ const SUB_TABS: { id: SubTab; label: string; adminOnly?: boolean }[] = [
   { id: "api_usage", label: "🔌 API Usage" },
   { id: "efficiency", label: "⚡ Efficiency" },
   { id: "pricing", label: "💰 Pricing" },
-  { id: "chargeback", label: "🧾 Chargeback" },
-  { id: "billing_config", label: "🏦 Billing Config", adminOnly: true },
-  { id: "prepaid_accounts", label: "💳 Prepaid Accounts", adminOnly: true },
+  { id: "chargeback", label: "📊 Usage Summary" },
+  { id: "billing_config", label: "⚙️ Metering Config", adminOnly: true },
+  { id: "prepaid_accounts", label: "💳 Prepaid Credits", adminOnly: true },
   { id: "growth", label: "📈 Tenant Growth" },
   { id: "export", label: "📥 Export" },
 ];
@@ -457,6 +457,8 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
   const [chargebackPeriod, setChargebackPeriod] = useState("7d");
   const [chargebackStartDate, setChargebackStartDate] = useState("");
   const [chargebackEndDate, setChargebackEndDate] = useState("");
+  const [chargebackDomainFilter, setChargebackDomainFilter] = useState("");
+  const [expandedTenants, setExpandedTenants] = useState<Set<string>>(new Set());
 
   // Tenant growth
   const [growthData, setGrowthData] = useState<any | null>(null);
@@ -1582,27 +1584,27 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
         </div>
       )}
 
-      {/* ═══════════════════════════ CHARGEBACK SUMMARY ═══════════════════════════ */}
+      {/* ═══════════════════════════ USAGE SUMMARY ═══════════════════════════ */}
       {subTab === "chargeback" && (
         <div>
           <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
             <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
               Currency:
-              <select value={chargebackCurrency} onChange={e => { 
-                setChargebackCurrency(e.target.value); 
-                loadChargebackSummary(e.target.value, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined); 
+              <select value={chargebackCurrency} onChange={e => {
+                setChargebackCurrency(e.target.value);
+                loadChargebackSummary(e.target.value, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined);
               }} style={selectStyle}>
                 {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
             <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
               Period:
-              <select value={chargebackPeriod} onChange={e => { 
+              <select value={chargebackPeriod} onChange={e => {
                 const period = e.target.value;
                 setChargebackPeriod(period);
-                if (period !== 'custom') {
-                  setChargebackStartDate('');
-                  setChargebackEndDate('');
+                if (period !== "custom") {
+                  setChargebackStartDate("");
+                  setChargebackEndDate("");
                   loadChargebackSummary(chargebackCurrency, period);
                 }
               }} style={selectStyle}>
@@ -1612,80 +1614,70 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                 <option value="custom">Custom Range</option>
               </select>
             </label>
-            {chargebackPeriod === 'custom' && (
+            {chargebackPeriod === "custom" && (
               <>
                 <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
-                  Start Date:
-                  <input 
-                    type="date" 
-                    value={chargebackStartDate} 
-                    onChange={e => setChargebackStartDate(e.target.value)}
-                    style={{ padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: "0.85em" }}
-                  />
+                  Start: <input type="date" value={chargebackStartDate} onChange={e => setChargebackStartDate(e.target.value)}
+                    style={{ padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: "0.85em" }} />
                 </label>
                 <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
-                  End Date:
-                  <input 
-                    type="date" 
-                    value={chargebackEndDate} 
-                    onChange={e => setChargebackEndDate(e.target.value)}
-                    style={{ padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: "0.85em" }}
-                  />
+                  End: <input type="date" value={chargebackEndDate} onChange={e => setChargebackEndDate(e.target.value)}
+                    style={{ padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: "0.85em" }} />
                 </label>
-                <button 
-                  onClick={() => loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate, chargebackEndDate)}
+                <button onClick={() => loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate, chargebackEndDate)}
                   disabled={!chargebackStartDate || !chargebackEndDate}
-                  style={{ 
-                    padding: "4px 12px", 
-                    borderRadius: 4, 
-                    border: "1px solid #007acc", 
-                    background: "#007acc",
-                    color: "white",
-                    cursor: chargebackStartDate && chargebackEndDate ? "pointer" : "not-allowed", 
-                    fontSize: "0.85em",
-                    opacity: chargebackStartDate && chargebackEndDate ? 1 : 0.5
-                  }}
-                >
+                  style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid #007acc", background: "#007acc", color: "white",
+                    cursor: chargebackStartDate && chargebackEndDate ? "pointer" : "not-allowed", fontSize: "0.85em",
+                    opacity: chargebackStartDate && chargebackEndDate ? 1 : 0.5 }}>
                   Apply Range
                 </button>
               </>
             )}
-            <button onClick={() => loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined)} style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid #ccc", cursor: "pointer", fontSize: "0.85em" }}>
+            <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
+              Domain:
+              <select value={chargebackDomainFilter} onChange={e => setChargebackDomainFilter(e.target.value)} style={selectStyle}>
+                <option value="">All domains</option>
+                {Array.from(new Set(chargebackData?.tenants?.map((t: any) => t.domain) || [])).sort().map((d: any) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </label>
+            <button onClick={() => loadChargebackSummary(chargebackCurrency, chargebackPeriod, chargebackStartDate || undefined, chargebackEndDate || undefined)}
+              style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid #ccc", cursor: "pointer", fontSize: "0.85em" }}>
               🔄 Refresh
             </button>
           </div>
 
-          {loading && <div style={{ padding: 20 }}>Loading chargeback summary…</div>}
+          {loading && <div style={{ padding: 20 }}>Loading usage summary…</div>}
           {!loading && chargebackData && (
             <>
               <div style={{ marginBottom: 12, padding: "8px 14px", background: "var(--color-surface-elevated, #f9fafb)", borderRadius: 8, display: "inline-block" }}>
-                <strong>Total estimated cost:</strong>&nbsp;
+                <strong>Total metered cost:</strong>&nbsp;
                 <span style={{ fontSize: "1.2em", fontWeight: 700, color: "#1d4ed8" }}>
                   {chargebackData.total_cost?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {chargebackData.currency}
                 </span>
                 &nbsp;<span style={{ color: "#888", fontSize: "0.8em" }}>({chargebackData.period_description})</span>
               </div>
-              
-              {/* Cost Breakdown Summary */}
+
               {chargebackData.cost_breakdown && (
                 <div style={{ marginBottom: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <div style={{ fontSize: "0.85em", padding: "4px 8px", background: "#e3f2fd", borderRadius: 4 }}>
-                    💻 Compute: {chargebackData.cost_breakdown.compute?.toFixed(2)} {chargebackData.currency}
-                  </div>
-                  <div style={{ fontSize: "0.85em", padding: "4px 8px", background: "#f3e5f5", borderRadius: 4 }}>
-                    💾 Storage: {chargebackData.cost_breakdown.storage?.toFixed(2)} {chargebackData.currency}
-                  </div>
-                  <div style={{ fontSize: "0.85em", padding: "4px 8px", background: "#e8f5e8", borderRadius: 4 }}>
-                    📸 Snapshots: {chargebackData.cost_breakdown.snapshots?.toFixed(2)} {chargebackData.currency}
-                  </div>
-                  <div style={{ fontSize: "0.85em", padding: "4px 8px", background: "#fff3e0", borderRadius: 4 }}>
-                    🌐 Network: {chargebackData.cost_breakdown.network?.toFixed(2)} {chargebackData.currency}
-                  </div>
+                  {[
+                    { label: "💻 Compute", val: chargebackData.cost_breakdown.compute, bg: "#e3f2fd" },
+                    { label: "💾 Storage", val: chargebackData.cost_breakdown.storage, bg: "#f3e5f5" },
+                    { label: "📸 Snapshots", val: chargebackData.cost_breakdown.snapshots, bg: "#e8f5e8" },
+                    { label: "🌐 Network", val: chargebackData.cost_breakdown.network, bg: "#fff3e0" },
+                  ].map(({ label, val, bg }) => (
+                    <div key={label} style={{ fontSize: "0.85em", padding: "4px 10px", background: bg, borderRadius: 4 }}>
+                      {label}: {val?.toFixed(2)} {chargebackData.currency}
+                    </div>
+                  ))}
                 </div>
               )}
+
               <table className="pf9-table" style={{ width: "100%" }}>
                 <thead>
                   <tr>
+                    <th style={{ width: 24 }}></th>
                     <th>Domain</th>
                     <th>Project / Tenant</th>
                     <th>Billing Model</th>
@@ -1695,98 +1687,162 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                     <th>vCPUs</th>
                     <th>RAM (GB)</th>
                     <th>Disk (GB)</th>
-                    <th>Compute Cost</th>
-                    <th>Storage Cost</th>
-                    <th>Total Cost</th>
+                    <th>Compute</th>
+                    <th>Storage + Net</th>
+                    <th>Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {chargebackData.tenants?.length === 0 && (
-                    <tr><td colSpan={12} style={{ textAlign: "center", padding: 20 }}>No data available for this period.</td></tr>
+                    <tr><td colSpan={13} style={{ textAlign: "center", padding: 20 }}>No data available for this period.</td></tr>
                   )}
-                  {chargebackData.tenants?.map((t: any, i: number) => {
-                    const cfg = billingConfigs.find(c => c.tenant_name === t.domain);
-                    const isPAYG = cfg?.billing_model === "pay_as_you_go";
-                    const paygDetail = chargebackData.payg_details?.[t.domain];
-                    return (
-                    <React.Fragment key={i}>
-                    <tr>
-                      <td>{t.domain}</td>
-                      <td>{t.project_name}</td>
-                      <td>
-                        {cfg ? (
-                          <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.8em", fontWeight: "bold", color: "#fff",
-                            background: cfg.billing_model === "prepaid" ? "#059669" : "#7C3AED" }}>
-                            {cfg.billing_model === "prepaid" ? "💳 Prepaid" : "🔄 PAYG"}
-                          </span>
-                        ) : "—"}
-                      </td>
-                      <td>{cfg?.currency_code || "—"}</td>
-                      <td>{cfg?.billing_cycle_day ? `Day ${cfg.billing_cycle_day}` : "—"}</td>
-                      <td>{t.vm_count}</td>
-                      <td>{t.total_vcpus}</td>
-                      <td>{t.total_ram_gb.toFixed(1)}</td>
-                      <td>{t.total_disk_gb?.toFixed(1) || '0.0'}</td>
-                      <td>{t.compute_cost?.toFixed(2) || '0.00'}</td>
-                      <td>{((t.storage_cost || 0) + (t.snapshot_cost || 0) + (t.network_cost || 0)).toFixed(2)}</td>
-                      <td style={{ fontWeight: 600 }}>{t.estimated_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    </tr>
-                    {isPAYG && paygDetail && (
-                      <tr style={{ background: "var(--color-surface-raised)" }}>
-                        <td colSpan={12} style={{ background: "var(--color-surface-raised)", padding: "8px 16px" }}>
-                          <div style={{ fontSize: "0.82em", color: "var(--color-text)" }}>
-                            <strong>🔄 Pay-as-You-Go Summary</strong>
-                            <div style={{ marginTop: 6, display: "flex", gap: 24, flexWrap: "wrap" }}>
-                              <div>
-                                <strong>VM Run Hours:</strong>
-                                <table style={{ marginTop: 4, borderCollapse: "collapse", fontSize: "0.9em" }}>
-                                  <thead>
-                                    <tr>
-                                      <th style={{ textAlign: "left", paddingRight: 12, opacity: 0.7 }}>VM</th>
-                                      <th style={{ textAlign: "left", paddingRight: 12, opacity: 0.7 }}>Flavor</th>
-                                      <th style={{ textAlign: "right", opacity: 0.7 }}>Hours Billed</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {paygDetail.vm_run_hours?.map((vm: any, vi: number) => (
-                                      <tr key={vi}>
-                                        <td style={{ paddingRight: 12 }}>{vm.vm_name}</td>
-                                        <td style={{ paddingRight: 12, opacity: 0.75 }}>{vm.flavor || "—"}</td>
-                                        <td style={{ textAlign: "right", fontWeight: 600 }}>{vm.run_hours}h</td>
+                  {chargebackData.tenants
+                    ?.filter((t: any) => !chargebackDomainFilter || t.domain === chargebackDomainFilter)
+                    .map((t: any) => {
+                      const cfg = billingConfigs.find(c => c.tenant_name === t.domain);
+                      const isPAYG = cfg?.billing_model === "pay_as_you_go";
+                      const tenantKey = `${t.domain}|${t.project_name}`;
+                      const isExpanded = expandedTenants.has(tenantKey);
+                      const tenantVms = chargebackData.vm_details?.filter(
+                        (vm: any) => vm.domain === t.domain && vm.project_name === t.project_name
+                      ) || [];
+                      const paygChanges = chargebackData.payg_details?.[t.domain]?.changes;
+                      const periodHours = chargebackData.period_hours || 168;
+                      return (
+                        <React.Fragment key={tenantKey}>
+                          <tr
+                            style={{ cursor: tenantVms.length > 0 ? "pointer" : "default",
+                              background: isExpanded ? "var(--color-surface-raised, #f0f4ff)" : undefined }}
+                            onClick={() => {
+                              if (!tenantVms.length) return;
+                              setExpandedTenants(prev => {
+                                const next = new Set(prev);
+                                next.has(tenantKey) ? next.delete(tenantKey) : next.add(tenantKey);
+                                return next;
+                              });
+                            }}
+                            title={tenantVms.length > 0 ? "Click to expand VM details" : undefined}
+                          >
+                            <td style={{ textAlign: "center", fontSize: "0.8em", color: "#888" }}>
+                              {tenantVms.length > 0 ? (isExpanded ? "▼" : "▶") : ""}
+                            </td>
+                            <td style={{ fontWeight: 500 }}>{t.domain}</td>
+                            <td>{t.project_name}</td>
+                            <td>
+                              {cfg ? (
+                                <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.8em", fontWeight: "bold", color: "#fff",
+                                  background: cfg.billing_model === "prepaid" ? "#059669" : "#7C3AED" }}>
+                                  {cfg.billing_model === "prepaid" ? "💳 Prepaid" : "🔄 PAYG"}
+                                </span>
+                              ) : "—"}
+                            </td>
+                            <td>{cfg?.currency_code || "—"}</td>
+                            <td>{cfg?.billing_cycle_day ? `Day ${cfg.billing_cycle_day}` : "—"}</td>
+                            <td>{t.vm_count}</td>
+                            <td>{t.total_vcpus}</td>
+                            <td>{t.total_ram_gb.toFixed(1)}</td>
+                            <td>{t.total_disk_gb?.toFixed(1) || "0.0"}</td>
+                            <td>{t.compute_cost?.toFixed(2) || "0.00"}</td>
+                            <td>{((t.storage_cost || 0) + (t.snapshot_cost || 0) + (t.network_cost || 0)).toFixed(2)}</td>
+                            <td style={{ fontWeight: 600 }}>{t.estimated_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          </tr>
+
+                          {isExpanded && (
+                            <tr>
+                              <td colSpan={13} style={{ padding: 0, background: "var(--color-surface-raised, #f8faff)" }}>
+                                <div style={{ padding: "10px 24px 14px", borderLeft: "3px solid #7C3AED" }}>
+                                  <div style={{ fontWeight: 600, fontSize: "0.85em", marginBottom: 8, color: "var(--color-text-secondary)" }}>
+                                    VM Metering Detail — {t.domain} / {t.project_name}&nbsp;
+                                    <span style={{ fontWeight: 400, opacity: 0.7 }}>
+                                      ({isPAYG ? "PAYG: billed per metered hour" : "Prepaid: monthly flat rate"})
+                                    </span>
+                                  </div>
+                                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82em" }}>
+                                    <thead>
+                                      <tr style={{ borderBottom: "1px solid var(--color-border, #e5e7eb)" }}>
+                                        <th style={{ textAlign: "left", paddingBottom: 4, paddingRight: 10 }}>VM Name</th>
+                                        <th style={{ textAlign: "left", paddingRight: 10 }}>Flavor</th>
+                                        <th style={{ textAlign: "right", paddingRight: 10 }}>vCPU / RAM / Disk</th>
+                                        <th style={{ textAlign: "right", paddingRight: 10 }}>🟢 Hours Running</th>
+                                        <th style={{ textAlign: "right", paddingRight: 10 }}>⬛ Hours Off/Idle</th>
+                                        <th style={{ textAlign: "right", paddingRight: 10 }}>Compute</th>
+                                        <th style={{ textAlign: "right", paddingRight: 10 }}>Disk Storage</th>
+                                        <th style={{ textAlign: "right" }}>VM Total</th>
                                       </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                              {(paygDetail.changes?.vms_added?.length > 0 || paygDetail.changes?.vms_removed?.length > 0) && (
-                                <div>
-                                  <strong>Changes During Period:</strong>
-                                  {paygDetail.changes.vms_added?.length > 0 && (
-                                    <div style={{ marginTop: 4 }}>
-                                      <span style={{ color: "#10B981" }}>✚ Added:</span> {paygDetail.changes.vms_added.map((v: any) => v.vm_name || v.vm_id).join(", ")}
-                                    </div>
-                                  )}
-                                  {paygDetail.changes.vms_removed?.length > 0 && (
-                                    <div style={{ marginTop: 2 }}>
-                                      <span style={{ color: "#EF4444" }}>✖ Removed:</span> {paygDetail.changes.vms_removed.map((v: any) => v.vm_name || v.vm_id).join(", ")}
+                                    </thead>
+                                    <tbody>
+                                      {tenantVms.map((vm: any, vi: number) => {
+                                        const mh = vm.metered_hours ?? periodHours;
+                                        const dh = vm.down_hours ?? 0;
+                                        const cph = vm.compute_cost_per_hour || 0;
+                                        const computeDisplay = isPAYG
+                                          ? `${mh}h × ${getCurrencySymbol(chargebackCurrency)}${cph.toFixed(4)}/hr = ${getCurrencySymbol(chargebackCurrency)}${(mh * cph).toFixed(2)}`
+                                          : `${getCurrencySymbol(chargebackCurrency)}${(cph * 730).toFixed(2)}/mo (flat)`;
+                                        const vmTotal = isPAYG
+                                          ? (mh * cph) + (vm.storage_cost || 0)
+                                          : (cph * 730) + (vm.storage_cost || 0);
+                                        return (
+                                          <tr key={vi} style={{ borderBottom: "1px solid var(--color-border, #f0f0f0)" }}>
+                                            <td style={{ paddingRight: 10, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>{vm.vm_name}</td>
+                                            <td style={{ paddingRight: 10, opacity: 0.75 }}>{vm.flavor_name || "—"}</td>
+                                            <td style={{ textAlign: "right", paddingRight: 10, opacity: 0.75 }}>
+                                              {vm.vcpus} / {vm.ram_gb}GB / {vm.disk_gb}GB
+                                            </td>
+                                            <td style={{ textAlign: "right", paddingRight: 10, color: "#10B981", fontWeight: 600 }}>{mh}h</td>
+                                            <td style={{ textAlign: "right", paddingRight: 10, color: "#9CA3AF" }}>{dh}h</td>
+                                            <td style={{ textAlign: "right", paddingRight: 10, fontSize: "0.88em" }}>{computeDisplay}</td>
+                                            <td style={{ textAlign: "right", paddingRight: 10 }}>
+                                              {getCurrencySymbol(chargebackCurrency)}{(vm.storage_cost || 0).toFixed(2)} ({vm.disk_gb}GB)
+                                            </td>
+                                            <td style={{ textAlign: "right", fontWeight: 600 }}>
+                                              {getCurrencySymbol(chargebackCurrency)}{vmTotal.toFixed(2)}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                    <tfoot>
+                                      <tr style={{ borderTop: "2px solid var(--color-border, #e5e7eb)", fontWeight: 600, fontSize: "0.85em", opacity: 0.75 }}>
+                                        <td colSpan={6} style={{ paddingTop: 6, textAlign: "right", paddingRight: 10 }}>
+                                          Network: {getCurrencySymbol(chargebackCurrency)}{(t.network_cost || 0).toFixed(2)} (1 port/VM)&nbsp;·&nbsp;
+                                          Snapshots: {getCurrencySymbol(chargebackCurrency)}{(t.snapshot_cost || 0).toFixed(2)}
+                                        </td>
+                                        <td colSpan={2} style={{ paddingTop: 6, textAlign: "right" }}>
+                                          Tenant Total: {getCurrencySymbol(chargebackCurrency)}{t.estimated_cost.toFixed(2)}
+                                        </td>
+                                      </tr>
+                                    </tfoot>
+                                  </table>
+
+                                  {isPAYG && paygChanges && (paygChanges.vms_added?.length > 0 || paygChanges.vms_removed?.length > 0) && (
+                                    <div style={{ marginTop: 10, fontSize: "0.82em", display: "flex", gap: 24, flexWrap: "wrap" }}>
+                                      {paygChanges.vms_added?.length > 0 && (
+                                        <div>
+                                          <span style={{ color: "#10B981", fontWeight: 600 }}>✚ Added during period:</span>{" "}
+                                          {paygChanges.vms_added.map((v: any) => v.vm_name || v.vm_id).join(", ")}
+                                        </div>
+                                      )}
+                                      {paygChanges.vms_removed?.length > 0 && (
+                                        <div>
+                                          <span style={{ color: "#EF4444", fontWeight: 600 }}>✖ Removed during period:</span>{" "}
+                                          {paygChanges.vms_removed.map((v: any) => v.vm_name || v.vm_id).join(", ")}
+                                        </div>
+                                      )}
                                     </div>
                                   )}
                                 </div>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    </React.Fragment>
-                    );
-                  })}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                 </tbody>
               </table>
             </>
           )}
           {!loading && !chargebackData && (
-            <div style={{ padding: 20, color: "#888" }}>No chargeback data loaded. Click refresh.</div>
+            <div style={{ padding: 20, color: "#888" }}>No usage data loaded. Click refresh.</div>
           )}
         </div>
       )}
@@ -2107,12 +2163,12 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             <div>
               {/* Prepaid Account Controls */}
               <div style={{ ...cardStyle, marginBottom: 20 }}>
-            <h3 style={{ margin: "0 0 16px" }}>💰 Balance Adjustment</h3>
+            <h3 style={{ margin: "0 0 16px" }}>💰 Top-up Balance</h3>
             <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <label style={{ fontSize: "0.85em", color: "var(--color-text-primary, #212121)" }}>
                 Tenant:
-                <select 
-                  value={selectedTenantId} 
+                <select
+                  value={selectedTenantId}
                   onChange={(e) => setSelectedTenantId(e.target.value)}
                   style={selectStyle}
                 >
@@ -2124,14 +2180,15 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                   ))}
                 </select>
               </label>
-              
+
               <label style={{ fontSize: "0.85em", color: "var(--color-text-primary, #212121)" }}>
-                Amount:
+                Amount to add:
                 <input
                   type="number"
                   step="0.01"
+                  min="0.01"
                   value={balanceAdjustment}
-                  onChange={(e) => setBalanceAdjustment(Number(e.target.value))}
+                  onChange={(e) => setBalanceAdjustment(Math.max(0, Number(e.target.value)))}
                   placeholder="100.00"
                   style={inputStyle}
                 />
@@ -2139,7 +2196,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
 
               <button
                 onClick={async () => {
-                  if (!selectedTenantId || balanceAdjustment === 0) return;
+                  if (!selectedTenantId || balanceAdjustment <= 0) return;
                   try {
                     await apiFetch(`/api/billing/prepaid/adjust`, {
                       method: "POST",
@@ -2151,23 +2208,23 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                       })
                     });
                     setBalanceAdjustment(0);
-                    loadPrepaidAccounts(); // Reload data
+                    loadPrepaidAccounts();
                   } catch (err) {
-                    setError(`Failed to adjust balance: ${err}`);
+                    setError(`Failed to add funds: ${err}`);
                   }
                 }}
-                disabled={!selectedTenantId || balanceAdjustment === 0}
+                disabled={!selectedTenantId || balanceAdjustment <= 0}
                 style={btnPrimary}
               >
-                {balanceAdjustment > 0 ? "💰 Add Funds" : "💸 Charge Usage"}
+                💰 Add Funds
               </button>
             </div>
           </div>
 
           {/* Prepaid Accounts Table */}
           <div style={{ ...cardStyle }}>
-            <h3 style={{ margin: "0 0 16px" }}>💳 Prepaid Account Status</h3>
-            
+            <h3 style={{ margin: "0 0 16px" }}>💳 Prepaid Credit Balances</h3>
+
             {prepaidAccounts.length > 0 ? (
               <div style={{ overflowX: "auto" }}>
                 <table style={tableStyle}>
@@ -2175,7 +2232,6 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                     <tr>
                       <th>Tenant</th>
                       <th>Current Balance</th>
-                      <th>Status</th>
                       <th>Currency</th>
                       <th>Quota Enforcement</th>
                       <th>Last Charge</th>
@@ -2188,20 +2244,6 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                         <td>{account.tenant_name || account.tenant_id}</td>
                         <td style={{ fontWeight: "bold" }}>
                           {getCurrencySymbol(account.currency_code)}{fmtNum(account.current_balance, 2)}
-                        </td>
-                        <td>
-                          <span style={{
-                            padding: "4px 8px",
-                            borderRadius: 4,
-                            fontSize: "0.8em",
-                            fontWeight: "bold",
-                            color: "#fff",
-                            background: account.status === "active" ? "#059669" : 
-                                       account.status === "suspended" ? "#DC2626" : "#D97706"
-                          }}>
-                            {account.status === "active" ? "✅ Active" :
-                             account.status === "suspended" ? "🚫 Suspended" : "⚠️ Low Balance"}
-                          </span>
                         </td>
                         <td>{account.currency_code}</td>
                         <td>{account.quota_enforcement ? "✅ Enabled" : "❌ Disabled"}</td>

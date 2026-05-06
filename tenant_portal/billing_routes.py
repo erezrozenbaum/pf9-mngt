@@ -331,6 +331,24 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
     )
     vm_rows = cur.fetchall()
 
+    # Metered hours per VM: count of collected snapshots = hours the VM was metered/running
+    cur.execute(
+        """SELECT vm_id, COUNT(*) AS metered_hours,
+                  MIN(collected_at) AS first_seen, MAX(collected_at) AS last_seen
+           FROM metering_resources
+           WHERE domain = %s AND collected_at > NOW() - (%s || ' hours')::INTERVAL
+           GROUP BY vm_id""",
+        (domain_name, str(hours)),
+    )
+    vm_metered: Dict[str, Any] = {
+        r["vm_id"]: {
+            "metered_hours": int(r["metered_hours"]),
+            "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
+            "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+        }
+        for r in cur.fetchall()
+    }
+
     # Latest snapshot totals for this domain
     cur.execute(
         """SELECT COALESCE(SUM(size_gb), 0) AS total_snap_gb, COUNT(*) AS snap_count
@@ -373,6 +391,8 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
 
         vm_total = compute_cost + storage_cost + network_cost
 
+        mh_data = vm_metered.get(vm["vm_id"], {})
+        metered_h = mh_data.get("metered_hours", 0)
         vms_out.append({
             "vm_id": vm["vm_id"],
             "vm_name": vm["vm_name"] or vm["vm_id"],
@@ -391,6 +411,10 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
             "estimated_cost": round(vm_total, 4),
             "pricing_basis": pricing_basis,
             "last_metering": vm["collected_at"].isoformat() if vm["collected_at"] else None,
+            "metered_hours": metered_h,
+            "down_hours": max(0, hours - metered_h),
+            "first_seen": mh_data.get("first_seen"),
+            "last_seen": mh_data.get("last_seen"),
         })
         total_compute += compute_cost
         total_storage += storage_cost

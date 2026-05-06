@@ -177,16 +177,25 @@ function VmRow({ vm, max, currency, billingModel }: {
         <tr>
           <td colSpan={5} style={{ background: "var(--color-surface-raised)", padding: ".6rem 1rem" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: ".4rem .8rem", fontSize: ".8rem" }}>
-              <span><strong>Compute:</strong> {fmt(vm.compute_cost, currency)} 
-                {isPrepaid ? " (monthly)" : ` (${fmt(vm.cost_per_hour, currency)}/hr)`}
+              {vm.metered_hours !== undefined && (
+                <span style={{ gridColumn: "1 / -1", display: "flex", gap: "1.5rem", paddingBottom: ".25rem",
+                  borderBottom: "1px solid var(--color-border)", marginBottom: ".25rem" }}>
+                  <span><span style={{ color: "#10B981", fontWeight: 700 }}>🟢 Running:</span> <strong>{vm.metered_hours}h</strong></span>
+                  <span><span style={{ color: "#9CA3AF" }}>⬛ Idle/Off:</span> {vm.down_hours ?? 0}h</span>
+                  {vm.first_seen && <span style={{ color: "var(--color-text-secondary)" }}>From {new Date(vm.first_seen).toLocaleDateString()} to {vm.last_seen ? new Date(vm.last_seen).toLocaleDateString() : "now"}</span>}
+                </span>
+              )}
+              <span><strong>Compute:</strong>{" "}
+                {isPrepaid
+                  ? `${fmt(vm.compute_cost, currency)} / month (flat)`
+                  : `${vm.metered_hours ?? "?"}h × ${fmt(vm.cost_per_hour, currency)}/hr = ${fmt(vm.compute_cost, currency)}`}
               </span>
-              <span><strong>Storage:</strong> {fmt(vm.storage_cost, currency)} ({vm.disk_gb} GB)</span>
+              <span><strong>Disk Storage:</strong> {fmt(vm.storage_cost, currency)} ({vm.disk_gb} GB × rate)</span>
               <span><strong>Snapshots:</strong> {fmt(vm.snapshot_cost, currency)} ({vm.snapshot_count} snapshots, {vm.snapshot_gb} GB)</span>
-              <span><strong>Network:</strong> {fmt(vm.network_cost, currency)}</span>
-              <span><strong>Total:</strong> {fmt(vm.estimated_cost, currency)}</span>
-              <span><strong>Billing basis:</strong> {isPrepaid ? "Monthly flat rate" : "Usage-based hourly"}</span>
+              <span><strong>Network:</strong> {fmt(vm.network_cost, currency)} (1 port × rate × {vm.metered_hours ?? "?"}h)</span>
+              <span><strong>VM Total:</strong> {fmt(vm.estimated_cost, currency)}</span>
               {vm.last_metering && (
-                <span><strong>Last metered:</strong> {new Date(vm.last_metering).toLocaleString()}</span>
+                <span style={{ color: "var(--color-text-secondary)" }}>Last metered: {new Date(vm.last_metering).toLocaleString()}</span>
               )}
             </div>
           </td>
