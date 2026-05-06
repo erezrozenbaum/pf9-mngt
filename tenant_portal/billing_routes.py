@@ -95,17 +95,8 @@ async def get_tenant_billing_status(
         if not billing_config:
             return {"billing_configured": False, "message": "Billing not yet configured for this tenant"}
 
-        # Get sales person name if assigned
-        sales_person_name = None
-        if billing_config["sales_person_id"]:
-            cur.execute("""
-                SELECT username, email, full_name
-                FROM users
-                WHERE username = %s
-            """, (billing_config["sales_person_id"],))
-            sales_person = cur.fetchone()
-            if sales_person:
-                sales_person_name = sales_person["full_name"] or sales_person["email"]
+        # Return sales_person_id directly (users.name stores email in K8s, not display name)
+        sales_person_name = billing_config["sales_person_id"] or None
 
         result = {
             "billing_configured": True,
@@ -185,7 +176,8 @@ async def get_billing_aware_chargeback(
         billing_config = None
         if domain_id:
             cur.execute("""
-                SELECT billing_model, currency_code
+                SELECT billing_model, currency_code, sales_person_id,
+                       onboarding_date, billing_start_date, billing_cycle_day
                 FROM tenant_billing_config
                 WHERE tenant_id = %s
             """, (domain_id,))
@@ -302,13 +294,13 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
         for r in cur.fetchall()
     }
 
-    # Load fallback per-resource pricing (storage, snapshot)
+    # Load per-resource pricing (storage, snapshot, network, IP) — keyed by category
     cur.execute(
-        "SELECT item_name, cost_per_hour, cost_per_month FROM metering_pricing"
-        " WHERE category IN ('storage_gb','snapshot_gb')"
+        "SELECT category, cost_per_hour, cost_per_month FROM metering_pricing"
+        " WHERE category IN ('storage_gb','snapshot_gb','network','public_ip')"
     )
     cat_pricing: Dict[str, Dict] = {
-        r["item_name"]: {
+        r["category"]: {
             "cost_per_hour": float(r["cost_per_hour"] or 0),
             "cost_per_month": float(r["cost_per_month"] or 0),
         }
@@ -325,12 +317,13 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
 
     storage_per_gb_hr = _hourly("storage_gb")
     snapshot_per_gb_hr = _hourly("snapshot_gb")
+    network_per_hr = _hourly("network")    # per VM (1 network port per VM)
 
     # Latest per-VM metrics in the requested window
     cur.execute(
         """SELECT DISTINCT ON (vm_id)
                vm_id, vm_name, project_name, flavor,
-               vcpus_allocated, ram_allocated_mb, disk_allocated_gb, collected_at
+               vcpus_allocated, ram_allocated_mb, disk_allocated_gb, vm_ip, collected_at
            FROM metering_resources
            WHERE domain = %s AND collected_at > NOW() - (%s || ' hours')::INTERVAL
            ORDER BY vm_id, collected_at DESC""",
@@ -356,6 +349,7 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
     vms_out = []
     total_compute = 0.0
     total_storage = 0.0
+    total_network = 0.0
     total_snap = total_snap_gb * snapshot_per_gb_hr * hours
 
     for vm in vm_rows:
@@ -375,9 +369,9 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
 
         storage_cost = disk_gb * storage_per_gb_hr * hours
         snap_cost_vm = 0.0  # snapshots shown as domain total, not per-VM
-        network_cost = 0.0
+        network_cost = network_per_hr * hours  # 1 network port per VM
 
-        vm_total = compute_cost + storage_cost
+        vm_total = compute_cost + storage_cost + network_cost
 
         vms_out.append({
             "vm_id": vm["vm_id"],
@@ -400,8 +394,9 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
         })
         total_compute += compute_cost
         total_storage += storage_cost
+        total_network += network_cost
 
-    total_cost = total_compute + total_storage + total_snap
+    total_cost = total_compute + total_storage + total_snap + total_network
 
     base["vms"] = vms_out
     base["total_vms"] = len(vms_out)
@@ -410,7 +405,7 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
         "compute": round(total_compute, 4),
         "storage": round(total_storage, 4),
         "snapshots": round(total_snap, 4),
-        "network": 0.0,
+        "network": round(total_network, 4),
     }
     return base
 
@@ -421,18 +416,23 @@ async def _get_billing_status_data(cur, domain_id: str, billing_config) -> Dict[
         "tenant_id": domain_id,
         "billing_model": billing_config["billing_model"],
         "currency_code": billing_config["currency_code"],
+        "onboarding_date": billing_config["onboarding_date"].isoformat() if billing_config.get("onboarding_date") else None,
+        "billing_start_date": billing_config["billing_start_date"].isoformat() if billing_config.get("billing_start_date") else None,
+        "billing_cycle_day": billing_config.get("billing_cycle_day"),
+        "sales_person": billing_config.get("sales_person_id") or None,
     }
 
     if billing_config["billing_model"] == "prepaid":
         cur.execute("""
-            SELECT current_balance, next_billing_date
+            SELECT current_balance, last_charge_date, next_billing_date, quota_enforcement
             FROM prepaid_accounts
             WHERE tenant_id = %s
         """, (domain_id,))
         prepaid = cur.fetchone()
         if prepaid:
             result["current_balance"] = float(prepaid["current_balance"])
-            if prepaid["next_billing_date"]:
-                result["next_billing_date"] = prepaid["next_billing_date"].isoformat()
+            result["quota_enforcement"] = prepaid["quota_enforcement"]
+            result["last_charge_date"] = prepaid["last_charge_date"].isoformat() if prepaid["last_charge_date"] else None
+            result["next_billing_date"] = prepaid["next_billing_date"].isoformat() if prepaid["next_billing_date"] else None
 
     return result

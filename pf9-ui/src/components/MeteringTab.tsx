@@ -1706,8 +1706,11 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                   )}
                   {chargebackData.tenants?.map((t: any, i: number) => {
                     const cfg = billingConfigs.find(c => c.tenant_name === t.domain);
+                    const isPAYG = cfg?.billing_model === "pay_as_you_go";
+                    const paygDetail = chargebackData.payg_details?.[t.domain];
                     return (
-                    <tr key={i}>
+                    <React.Fragment key={i}>
+                    <tr>
                       <td>{t.domain}</td>
                       <td>{t.project_name}</td>
                       <td>
@@ -1728,6 +1731,54 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                       <td>{((t.storage_cost || 0) + (t.snapshot_cost || 0) + (t.network_cost || 0)).toFixed(2)}</td>
                       <td style={{ fontWeight: 600 }}>{t.estimated_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     </tr>
+                    {isPAYG && paygDetail && (
+                      <tr style={{ background: "var(--color-surface-raised)" }}>
+                        <td colSpan={12} style={{ background: "var(--color-surface-raised)", padding: "8px 16px" }}>
+                          <div style={{ fontSize: "0.82em", color: "var(--color-text)" }}>
+                            <strong>🔄 Pay-as-You-Go Summary</strong>
+                            <div style={{ marginTop: 6, display: "flex", gap: 24, flexWrap: "wrap" }}>
+                              <div>
+                                <strong>VM Run Hours:</strong>
+                                <table style={{ marginTop: 4, borderCollapse: "collapse", fontSize: "0.9em" }}>
+                                  <thead>
+                                    <tr>
+                                      <th style={{ textAlign: "left", paddingRight: 12, opacity: 0.7 }}>VM</th>
+                                      <th style={{ textAlign: "left", paddingRight: 12, opacity: 0.7 }}>Flavor</th>
+                                      <th style={{ textAlign: "right", opacity: 0.7 }}>Hours Billed</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {paygDetail.vm_run_hours?.map((vm: any, vi: number) => (
+                                      <tr key={vi}>
+                                        <td style={{ paddingRight: 12 }}>{vm.vm_name}</td>
+                                        <td style={{ paddingRight: 12, opacity: 0.75 }}>{vm.flavor || "—"}</td>
+                                        <td style={{ textAlign: "right", fontWeight: 600 }}>{vm.run_hours}h</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              {(paygDetail.changes?.vms_added?.length > 0 || paygDetail.changes?.vms_removed?.length > 0) && (
+                                <div>
+                                  <strong>Changes During Period:</strong>
+                                  {paygDetail.changes.vms_added?.length > 0 && (
+                                    <div style={{ marginTop: 4 }}>
+                                      <span style={{ color: "#10B981" }}>✚ Added:</span> {paygDetail.changes.vms_added.map((v: any) => v.vm_name || v.vm_id).join(", ")}
+                                    </div>
+                                  )}
+                                  {paygDetail.changes.vms_removed?.length > 0 && (
+                                    <div style={{ marginTop: 2 }}>
+                                      <span style={{ color: "#EF4444" }}>✖ Removed:</span> {paygDetail.changes.vms_removed.map((v: any) => v.vm_name || v.vm_id).join(", ")}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                     );
                   })}
                 </tbody>

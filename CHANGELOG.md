@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.8] - 2026-05-05
+
+### Fixed
+- **Tenant portal storage/network costs showed ₪0.00**: `_get_chargeback_data` built its `cat_pricing` dict keyed by `item_name` (e.g. "Storage (per GB)") but `_hourly("storage_gb")` looked up by category key — so storage, snapshot, and network lookups always returned 0.0. Fixed by keying `cat_pricing` on `r["category"]` and extending the pricing query to include `network` and `public_ip` categories. Also fixed the hardcoded `network_cost = 0.0` to actually compute `network_per_hr * hours`.
+- **Tenant portal billing status 500 (users query)**: `get_tenant_billing_status` ran `SELECT username, email, full_name FROM users WHERE username = %s` — neither `username` nor `full_name` columns exist in the schema. Fixed by removing the users query and returning `sales_person_id` directly as `sales_person_name`.
+- **Tenant portal billing date and sales person not shown**: `_get_billing_status_data` only returned `tenant_id`, `billing_model`, `currency_code`. Fixed to return all fields: `onboarding_date`, `billing_start_date`, `billing_cycle_day`, `sales_person`, plus prepaid fields `quota_enforcement`, `last_charge_date`, `next_billing_date`.
+- **Admin chargeback PAYG run-hours summary**: Added `payg_details` to the `/api/metering/chargeback-summary` response, keyed by domain name. For each PAYG tenant: per-VM run-hours (sorted descending), flavor, first/last seen timestamps, and lifecycle changes (VMs added/removed during the billing period). The admin UI chargeback tab now renders an inline PAYG summary row beneath each PAYG tenant showing the VM run-hours table and lifecycle changes.
+
 ## [1.95.7] - 2026-05-05
 
 ### Fixed

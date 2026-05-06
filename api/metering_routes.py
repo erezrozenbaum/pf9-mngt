@@ -1404,6 +1404,94 @@ async def get_chargeback_summary(
         for cost_field in ["compute_cost", "storage_cost", "snapshot_cost", "network_cost", "estimated_cost"]:
             r[cost_field] = round(r[cost_field], 2)
 
+    # ---------------------------------------------------------------------------
+    # PAYG per-domain: run hours per VM + lifecycle changes during period
+    # ---------------------------------------------------------------------------
+    payg_details: dict = {}
+    if vms:
+        domain_names = list({v["domain"] for v in vms if v.get("domain")})
+        # Filter to only domains where we want PAYG details (all domains with metered VMs)
+        if domain_names:
+            with get_connection() as conn2:
+                with conn2.cursor(cursor_factory=RealDictCursor) as cur2:
+                    # Get billing model for each domain
+                    cur2.execute(
+                        "SELECT d.name AS domain_name, tbc.billing_model "
+                        "FROM domains d "
+                        "LEFT JOIN tenant_billing_config tbc ON tbc.tenant_id = d.id "
+                        "WHERE d.name = ANY(%s)",
+                        (domain_names,),
+                    )
+                    domain_billing = {r["domain_name"]: r["billing_model"] for r in cur2.fetchall()}
+
+                    # Run hours per VM: count distinct metering snapshots in window
+                    cur2.execute(
+                        """SELECT vm_id, vm_name, domain, project_name, flavor,
+                                  COUNT(*) AS snapshot_count,
+                                  MIN(collected_at) AS first_seen,
+                                  MAX(collected_at) AS last_seen
+                           FROM metering_resources
+                           WHERE collected_at > %s
+                           GROUP BY vm_id, vm_name, domain, project_name, flavor""",
+                        (since,),
+                    )
+                    run_rows = cur2.fetchall()
+
+            # Group run hours by domain
+            domain_vm_runs: dict = {}
+            for row in run_rows:
+                d = row["domain"] or "unknown"
+                domain_vm_runs.setdefault(d, []).append({
+                    "vm_id": row["vm_id"],
+                    "vm_name": row["vm_name"] or row["vm_id"],
+                    "project_name": row["project_name"] or d,
+                    "flavor": row["flavor"] or "",
+                    # Each snapshot ≈ 1 metering interval (≈ 1 hour for hourly collectors)
+                    "run_hours": int(row["snapshot_count"]),
+                    "first_seen": row["first_seen"].isoformat() if row["first_seen"] else None,
+                    "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
+                })
+
+            for d, billing_model in domain_billing.items():
+                vm_runs = domain_vm_runs.get(d, [])
+                if not vm_runs:
+                    continue
+                # Detect added/removed VMs: compare first half vs second half of period
+                mid_point = since + timedelta(hours=hours / 2)
+                with get_connection() as conn3:
+                    with conn3.cursor(cursor_factory=RealDictCursor) as cur3:
+                        cur3.execute(
+                            "SELECT DISTINCT vm_id, vm_name FROM metering_resources "
+                            "WHERE domain = %s AND collected_at > %s AND collected_at <= %s",
+                            (d, since, mid_point),
+                        )
+                        early_vms = {r["vm_id"]: r["vm_name"] for r in cur3.fetchall()}
+                        cur3.execute(
+                            "SELECT DISTINCT vm_id, vm_name FROM metering_resources "
+                            "WHERE domain = %s AND collected_at > %s",
+                            (d, mid_point),
+                        )
+                        late_vms = {r["vm_id"]: r["vm_name"] for r in cur3.fetchall()}
+
+                added_vms = [
+                    {"vm_id": vid, "vm_name": name}
+                    for vid, name in late_vms.items()
+                    if vid not in early_vms
+                ]
+                removed_vms = [
+                    {"vm_id": vid, "vm_name": name}
+                    for vid, name in early_vms.items()
+                    if vid not in late_vms
+                ]
+                payg_details[d] = {
+                    "billing_model": billing_model or "unset",
+                    "vm_run_hours": sorted(vm_runs, key=lambda x: x["run_hours"], reverse=True),
+                    "changes": {
+                        "vms_added": added_vms,
+                        "vms_removed": removed_vms,
+                    },
+                }
+
     return {
         "currency": currency,
         "period_hours": hours,
@@ -1412,6 +1500,7 @@ async def get_chargeback_summary(
         "end_date": end_date,
         "tenants": rows,
         "vm_details": vm_details,
+        "payg_details": payg_details,
         "total_cost": round(sum(r["estimated_cost"] for r in rows), 2),
         "cost_breakdown": {
             "compute": round(sum(r["compute_cost"] for r in rows), 2),
