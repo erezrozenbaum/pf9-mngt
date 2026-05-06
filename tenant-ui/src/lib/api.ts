@@ -621,6 +621,11 @@ export interface BillingAwareChargeback {
     next_bill_amount?: number; // For prepaid
     days_until_next_bill?: number; // For prepaid
   };
+  period_changes?: {
+    vms_added: { vm_id: string; vm_name: string; added_at: string }[];
+    vms_removed: { vm_id: string; vm_name: string; removed_at: string }[];
+    storage_resized: { vm_id: string; vm_name: string; from_gb: number; to_gb: number }[];
+  };
 }
 
 export async function apiTenantBillingStatus(): Promise<TenantBillingStatus> {

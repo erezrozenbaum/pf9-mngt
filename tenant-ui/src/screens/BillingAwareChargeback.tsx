@@ -163,7 +163,15 @@ function VmRow({ vm, max, currency, billingModel }: {
         <td style={{ fontWeight: 500 }}>{vm.vm_name}</td>
         <td style={{ color: "var(--color-text-secondary)", fontSize: ".8rem" }}>{vm.project_name}</td>
         <td style={{ color: "var(--color-text-secondary)", fontSize: ".8rem" }}>{vm.flavor}</td>
-        <td style={{ fontSize: ".8rem" }}>{vm.vcpus} vCPU / {vm.ram_gb} GB / {vm.disk_gb} GB disk</td>
+        <td style={{ fontSize: ".8rem" }}>
+          {vm.vcpus} vCPU / {vm.ram_gb} GB / {vm.disk_gb} GB disk
+          {vm.metered_hours !== undefined && (
+            <div style={{ marginTop: ".2rem", fontSize: ".72rem", display: "flex", gap: ".6rem" }}>
+              <span style={{ color: "#10B981", fontWeight: 600 }}>● {vm.metered_hours}h on</span>
+              {(vm.down_hours ?? 0) > 0 && <span style={{ color: "#9CA3AF" }}>● {vm.down_hours}h off</span>}
+            </div>
+          )}
+        </td>
         <td>
           <div style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
             <CostBar value={vm.estimated_cost} max={max} />
@@ -357,7 +365,7 @@ export function BillingAwareChargeback() {
                     <th>VM</th>
                     <th>Project</th>
                     <th>Flavor</th>
-                    <th>Resources</th>
+                    <th>Resources &amp; Hours</th>
                     <th>{isPrepaid ? `Monthly Cost (${data.period_label} view)` : `Estimated cost (${data.period_label})`}</th>
                   </tr>
                 </thead>
@@ -378,6 +386,45 @@ export function BillingAwareChargeback() {
                 </tbody>
               </table>
             </div>
+          )}
+
+          {/* Period changes (lifecycle events) */}
+          {data.period_changes && (
+            (data.period_changes.vms_added.length > 0 ||
+             data.period_changes.vms_removed.length > 0 ||
+             data.period_changes.storage_resized.length > 0) && (
+              <div className="card" style={{ padding: "1rem", marginTop: "1rem", borderLeft: "3px solid var(--color-warning, #F59E0B)" }}>
+                <div style={{ fontWeight: 700, marginBottom: ".75rem", fontSize: ".9rem" }}>
+                  📋 Changes during this period
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: ".5rem", fontSize: ".82rem" }}>
+                  {data.period_changes.vms_added.map((v) => (
+                    <div key={v.vm_id} style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
+                      <span style={{ color: "#10B981", fontWeight: 700, minWidth: "1.2rem" }}>✚</span>
+                      <span><strong>VM added:</strong> {v.vm_name}</span>
+                      <span style={{ color: "var(--color-text-secondary)", marginLeft: "auto" }}>
+                        {new Date(v.added_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  ))}
+                  {data.period_changes.vms_removed.map((v) => (
+                    <div key={v.vm_id} style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
+                      <span style={{ color: "#EF4444", fontWeight: 700, minWidth: "1.2rem" }}>✖</span>
+                      <span><strong>VM removed:</strong> {v.vm_name}</span>
+                      <span style={{ color: "var(--color-text-secondary)", marginLeft: "auto" }}>
+                        {new Date(v.removed_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  ))}
+                  {data.period_changes.storage_resized.map((v) => (
+                    <div key={v.vm_id} style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
+                      <span style={{ color: "#3B82F6", fontWeight: 700, minWidth: "1.2rem" }}>↕</span>
+                      <span><strong>Disk resized:</strong> {v.vm_name} — {v.from_gb} GB → {v.to_gb} GB</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
           )}
         </>
       )}

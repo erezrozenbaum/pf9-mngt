@@ -1,5 +1,8 @@
-# Enhanced Metering System Guide (v1.95.7)
+# Enhanced Metering System Guide (v1.95.10)
 
+> **v1.95.10**: Chargeback tab label restored; tenant portal shows hours running/idle inline per VM and a lifecycle changes panel (VMs added/removed, disk resizes) below the VM table.  
+> **v1.95.9**: Metering rebrand — "Chargeback" tab (formerly "Billing Chargeback"), renamed sub-tabs (Metering Config, Prepaid Credits). Per-VM hours detail in expandable admin chargeback rows (`metered_hours`, `down_hours`). Domain filter added to chargeback view. PAYG compute shown as `Xh × rate/hr = total`. Prepaid Credits cleanup: removed status badge, top-up only flow.  
+> **v1.95.8**: Fixed tenant portal storage/network costs, PAYG billing status, and metered run-hours.  
 > **v1.95.7 PATCH**: Tenant portal billing fixed (permission denied for `domains`), prepaid status logic corrected, UI currency/tenant-name display fixed, chargeback tab enriched with billing model and cycle info.  
 > **v1.95 MAJOR**: Complete billing administration with tenant configuration, prepaid accounts, and webhook integration.
 

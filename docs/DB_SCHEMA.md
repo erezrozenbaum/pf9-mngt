@@ -379,10 +379,13 @@ CREATE TABLE inventory_runs (
 
 ## Operational Features
 
-### Billing System (v1.95.7) ⭐
+### Billing System (v1.95.10) ⭐
 
 Complete enterprise billing management with tenant configuration, prepaid accounts, regional pricing, and webhook integration.
 
+> **v1.95.10**: `billing_routes.py` now returns `period_changes` in the tenant billing-aware chargeback response, containing `vms_added`, `vms_removed`, and `storage_resized` arrays derived from `metering_resources`.
+> **v1.95.9**: `metering_routes.py` chargeback-summary now returns `metered_hours`, `down_hours`, `first_seen`, `last_seen` per VM in `vm_details`. Tenant portal billing route returns the same fields per VM.
+> **v1.95.8**: Fixed tenant portal `_get_chargeback_data` — per-resource pricing (storage, network) was not being applied correctly; PAYG billing model status fix.
 > **v1.95.1 fix**: In v1.95.0 the `GRANT` statements for these tables were placed before the `CREATE TABLE` statements in `init.sql`, causing DB initialization to fail. This was corrected in v1.95.1. The `billing:read` / `billing:write` RBAC permissions were also missing from `role_permissions` — they are now seeded automatically for `admin`, `superadmin`, and `technical` roles.
 > **v1.95.2 fix**: All billing API endpoints used `async with get_connection()` (sync contextmanager); replaced with `with get_connection()`. Tenant portal billing endpoints used `Depends(get_tenant_connection)` which yielded the contextmanager wrapper instead of the connection; replaced with inline `with get_tenant_connection() as conn`.
 > **v1.95.5 fix**: `sales_person_id` FK constraint to `users(id)` was dropped — the column stores LDAP uid (= `users.name`), not a Keystone UUID. See `db/migrate_billing_v1954.sql`.

@@ -1,6 +1,6 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.95.4 - Fixed billing audit log_action signature; domain name→UUID resolution for billing config; ILS currency support
+> **Version**: v1.95.10 — Metering rebrand, per-VM hours detail, domain filter, tenant portal lifecycle changes audit log_action signature; domain name→UUID resolution for billing config; ILS currency support
 
 ## Base URL
 ```

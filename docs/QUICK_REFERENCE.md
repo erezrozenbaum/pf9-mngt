@@ -74,15 +74,17 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Most frequently changed resources with direct history navigation
   - Configurable timeframe: 1 hour, 24 hours, 3 days, 1 week
 - **Admin Tabs**: API Metrics, System Logs (Admin/Superadmin only)
-- **Metering Tab** (v1.15 + v1.15.1 Pricing ✨ | v1.94.5+ Comprehensive Chargeback ✨ | v1.95.2+ Advanced Billing System ⭐):
-  - "📊 Metering" tab with 12 sub-tabs: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, **Pricing**, Export, **Billing Config**, **Prepaid Management**, **Regional Pricing**, **Webhook Hub**
+- **Metering Tab** (v1.15 + v1.15.1 Pricing ✨ | v1.94.5+ Comprehensive Chargeback ✨ | v1.95.2+ Advanced Billing System ⭐ | **v1.95.9–10 Metering Rebrand** 🆕):
+  - "📊 Metering" tab with sub-tabs: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, Pricing, **📋 Chargeback**, **⚙️ Metering Config** (admin), **💳 Prepaid Credits** (admin), Tenant Growth, Export
+  - **v1.95.10**: Tenant portal VM rows show hours on/off inline; lifecycle changes panel (VMs added/removed, disk resizes) below VM table
+  - **v1.95.9**: Per-VM expandable chargeback rows with 🟢 hours running / ⬛ hours off; PAYG compute as `Xh × rate/hr = total`; domain filter on Chargeback; tab renames (Metering Config, Prepaid Credits)
   - **Multi-Currency Chargeback**: Full ILS pricing support with currency conversion
   - **Enhanced VM Pricing**: Flavor-based pricing tiers (Silver/Gold/Kryptonite) with auto-sync
   - **Period-Based Analysis**: 7d, 30d, 90d, 12m, custom date ranges for cost analysis
   - **All Resource Costing**: VMs, Storage, Network, Snapshots with detailed breakdown
-  - **NEW v1.95 Billing Administration** ⭐:
-    - **Billing Config Tab**: Complete tenant billing configuration with credit limits, payment terms, and sales person assignment (Admin-only)
-    - **Prepaid Management Tab**: Prepaid account balance adjustments with automated threshold alerts and transaction history (Admin-only)
+  - **v1.95 Billing Administration** ⭐:
+    - **Metering Config Tab**: Complete tenant billing configuration with credit limits, payment terms, and sales person assignment (Admin-only)
+    - **Prepaid Credits Tab**: Prepaid account balance top-ups (Add Funds only); balance is informational, no status badge (Admin-only)
     - **Regional Pricing Tab**: Multi-region pricing overrides with currency support and markup calculations (Admin-only)
     - **Webhook Hub Tab**: Real-time billing event webhook registration with retry logic and delivery monitoring (Admin-only)
   - **Enhanced Database Schema**: 6 new billing tables (tenant_billing_config, prepaid_accounts, regional_pricing_overrides, webhook_registrations, resource_lifecycle_events, data_archival_log)
