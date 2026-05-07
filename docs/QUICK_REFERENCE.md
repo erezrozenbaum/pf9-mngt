@@ -76,6 +76,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Admin Tabs**: API Metrics, System Logs (Admin/Superadmin only)
 - **Metering Tab** (v1.15 + v1.15.1 Pricing ✨ | v1.94.5+ Comprehensive Chargeback ✨ | v1.95.2+ Advanced Billing System ⭐ | **v1.95.9–10 Metering Rebrand** 🆕):
   - "📊 Metering" tab with sub-tabs: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, Pricing, **📋 Chargeback**, **⚙️ Metering Config** (admin), **💳 Prepaid Credits** (admin), Tenant Growth, Export
+  - **v1.95.11**: API memory raised to 2 Gi (fixes OOMKill/503 errors); Resources > Security Groups now has Add/Delete Rule buttons; deps panel light-mode contrast fixed; quota inputs no longer overflow card
   - **v1.95.10**: Tenant portal VM rows show hours on/off inline; lifecycle changes panel (VMs added/removed, disk resizes) below VM table
   - **v1.95.9**: Per-VM expandable chargeback rows with 🟢 hours running / ⬛ hours off; PAYG compute as `Xh × rate/hr = total`; domain filter on Chargeback; tab renames (Metering Config, Prepaid Credits)
   - **Multi-Currency Chargeback**: Full ILS pricing support with currency conversion

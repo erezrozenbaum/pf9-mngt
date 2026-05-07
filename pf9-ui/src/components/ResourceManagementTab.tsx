@@ -109,6 +109,17 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   const [newSgDesc, setNewSgDesc] = useState("");
   const [newSgProject, setNewSgProject] = useState("");
 
+  // Security Group rule management
+  const [selectedSgRules, setSelectedSgRules] = useState<{ sgId: string; sgName: string; rules: any[] } | null>(null);
+  const [showAddRule, setShowAddRule] = useState(false);
+  const [newRuleDirection, setNewRuleDirection] = useState<"ingress" | "egress">("ingress");
+  const [newRuleProtocol, setNewRuleProtocol] = useState("");
+  const [newRulePortMin, setNewRulePortMin] = useState("");
+  const [newRulePortMax, setNewRulePortMax] = useState("");
+  const [newRuleRemoteIp, setNewRuleRemoteIp] = useState("");
+  const [newRuleEthertype, setNewRuleEthertype] = useState("IPv4");
+  const [ruleCreating, setRuleCreating] = useState(false);
+
   // Quotas form
   const [quotaProjectId, setQuotaProjectId] = useState("");
   const [quotaData, setQuotaData] = useState<any>(null);
@@ -459,6 +470,56 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
       setError(e.message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  // SG rule management handlers
+  const refreshSgRulesPanel = async (sgId: string, sgName: string) => {
+    try {
+      const result = await apiFetch<{ data: any[] }>("/api/resources/security-groups");
+      const sg = result.data.find((s: any) => s.id === sgId);
+      if (sg) setSelectedSgRules({ sgId: sg.id, sgName: sg.name, rules: sg.rules || [] });
+      setData(result.data);
+    } catch { /* best-effort */ }
+  };
+
+  const handleAddRule = async () => {
+    if (!selectedSgRules) return;
+    setRuleCreating(true);
+    setError("");
+    try {
+      await apiFetch("/api/resources/security-groups/rules", {
+        method: "POST",
+        body: JSON.stringify({
+          security_group_id: selectedSgRules.sgId,
+          direction: newRuleDirection,
+          protocol: newRuleProtocol || null,
+          port_range_min: newRulePortMin ? parseInt(newRulePortMin) : null,
+          port_range_max: newRulePortMax ? parseInt(newRulePortMax) : null,
+          remote_ip_prefix: newRuleRemoteIp || null,
+          ethertype: newRuleEthertype,
+        }),
+      });
+      setSuccess("Rule added");
+      setShowAddRule(false);
+      setNewRuleProtocol(""); setNewRulePortMin(""); setNewRulePortMax(""); setNewRuleRemoteIp("");
+      await refreshSgRulesPanel(selectedSgRules.sgId, selectedSgRules.sgName);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setRuleCreating(false);
+    }
+  };
+
+  const handleDeleteRule = async (ruleId: string) => {
+    if (!selectedSgRules) return;
+    setError("");
+    try {
+      await apiFetch(`/api/resources/security-groups/rules/${ruleId}`, { method: "DELETE" });
+      setSuccess("Rule deleted");
+      await refreshSgRulesPanel(selectedSgRules.sgId, selectedSgRules.sgName);
+    } catch (e: any) {
+      setError(e.message);
     }
   };
 
@@ -1180,8 +1241,11 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               <td style={tdStyle}>{sg.egress_rules}</td>
               <td style={tdStyle}>
                 {isAdmin && sg.name !== "default" && (
-                  <div style={{ display: "flex", gap: "4px" }}>
-                    <button style={btnStyle("outline", true)} onClick={() => openDepsPanel(sg.id, sg.name, "security_group")} title="View dependencies">
+                  <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                    <button style={btnStyle("outline", true)} onClick={() => { setSelectedSgRules({ sgId: sg.id, sgName: sg.name, rules: sg.rules || [] }); setShowAddRule(false); setDepsPanelResource(null); }} title="Manage rules">
+                      📋 Rules
+                    </button>
+                    <button style={btnStyle("outline", true)} onClick={() => { openDepsPanel(sg.id, sg.name, "security_group"); setSelectedSgRules(null); }} title="View dependencies">
                       🔗 Deps
                     </button>
                     <button style={btnStyle("danger", true)} onClick={() => openDeleteConfirm(sg.id, sg.name, "security_group")}>
@@ -1307,7 +1371,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
                                     setQuotaEdits({ ...quotaEdits, [item.key]: parseInt(val) });
                                   }
                                 }}
-                                style={{ ...inputStyle, width: "80px", padding: "2px 6px", fontSize: "12px" }}
+                                style={{ ...inputStyle, width: "80px", minWidth: "0", padding: "2px 6px", fontSize: "12px" }}
                               />
                             ) : (
                               <span style={{ fontSize: "11px", color: "#6b7280" }}>Read-only</span>
@@ -1518,12 +1582,12 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               return (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
                   {Object.entries(byType).map(([type, nodes]) => (
-                    <div key={type} style={{ minWidth: "180px", background: "var(--pf9-card-bg, #1f2937)", borderRadius: "6px", padding: "8px 12px" }}>
+                    <div key={type} style={{ minWidth: "180px", background: "var(--pf9-bg-card, #f3f4f6)", borderRadius: "6px", padding: "8px 12px", border: "1px solid var(--pf9-border, #e0e0e0)" }}>
                       <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--pf9-text-secondary)", marginBottom: "6px", textTransform: "uppercase" }}>
                         {typeIcon[type] || "◦"} {type.replace(/_/g, " ")} ({nodes.length})
                       </div>
                       {nodes.map((n: any) => (
-                        <div key={n.id} style={{ fontSize: "12px", padding: "2px 0", borderBottom: "1px solid var(--pf9-border, #374151)" }}>
+                        <div key={n.id} style={{ fontSize: "12px", padding: "2px 0", borderBottom: "1px solid var(--pf9-border, #e0e0e0)", color: "var(--pf9-text, #111827)" }}>
                           <span>{n.label}</span>
                           {n.status && <span style={{ marginLeft: "6px", fontSize: "10px", color: n.status === "ACTIVE" || n.status === "available" ? "#10b981" : "#f59e0b" }}>({n.status})</span>}
                         </div>
@@ -1537,6 +1601,109 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               <div style={{ marginTop: "10px", fontSize: "11px", color: "var(--pf9-text-secondary)" }}>
                 {depsData.node_count} node(s) · {depsData.edge_count} edge(s){depsData.truncated ? " · truncated" : ""}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Security Group Rules panel */}
+        {selectedSgRules && (
+          <div style={{ ...formPanelStyle, marginBottom: "16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <h4 style={{ margin: 0, fontSize: "14px" }}>📋 Rules — {selectedSgRules.sgName}</h4>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button style={btnStyle("primary", true)} onClick={() => setShowAddRule(!showAddRule)}>
+                  {showAddRule ? "✕ Cancel" : "+ Add Rule"}
+                </button>
+                <button style={btnStyle("outline", true)} onClick={() => { setSelectedSgRules(null); setShowAddRule(false); }}>Close</button>
+              </div>
+            </div>
+
+            {/* Add Rule form */}
+            {showAddRule && (
+              <div style={{ background: "var(--pf9-bg-muted, #f5f7fa)", borderRadius: "8px", padding: "12px", marginBottom: "12px", border: "1px solid var(--pf9-border, #d1d5db)" }}>
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <div style={formGroupStyle}>
+                    <span style={labelStyle}>Direction</span>
+                    <select value={newRuleDirection} onChange={(e) => setNewRuleDirection(e.target.value as "ingress" | "egress")} style={{ ...selectStyle, width: "100px" }}>
+                      <option value="ingress">Ingress</option>
+                      <option value="egress">Egress</option>
+                    </select>
+                  </div>
+                  <div style={formGroupStyle}>
+                    <span style={labelStyle}>Protocol</span>
+                    <select value={newRuleProtocol} onChange={(e) => setNewRuleProtocol(e.target.value)} style={{ ...selectStyle, width: "90px" }}>
+                      <option value="">Any</option>
+                      <option value="tcp">TCP</option>
+                      <option value="udp">UDP</option>
+                      <option value="icmp">ICMP</option>
+                    </select>
+                  </div>
+                  <div style={formGroupStyle}>
+                    <span style={labelStyle}>Port Min</span>
+                    <input value={newRulePortMin} onChange={(e) => setNewRulePortMin(e.target.value)} style={{ ...selectStyle, width: "80px", minWidth: "0" }} placeholder="e.g. 80" type="number" min={1} max={65535} />
+                  </div>
+                  <div style={formGroupStyle}>
+                    <span style={labelStyle}>Port Max</span>
+                    <input value={newRulePortMax} onChange={(e) => setNewRulePortMax(e.target.value)} style={{ ...selectStyle, width: "80px", minWidth: "0" }} placeholder="e.g. 80" type="number" min={1} max={65535} />
+                  </div>
+                  <div style={formGroupStyle}>
+                    <span style={labelStyle}>Remote IP / CIDR</span>
+                    <input value={newRuleRemoteIp} onChange={(e) => setNewRuleRemoteIp(e.target.value)} style={{ ...selectStyle, width: "150px", minWidth: "0" }} placeholder="e.g. 0.0.0.0/0" />
+                  </div>
+                  <div style={formGroupStyle}>
+                    <span style={labelStyle}>Ethertype</span>
+                    <select value={newRuleEthertype} onChange={(e) => setNewRuleEthertype(e.target.value)} style={{ ...selectStyle, width: "80px" }}>
+                      <option value="IPv4">IPv4</option>
+                      <option value="IPv6">IPv6</option>
+                    </select>
+                  </div>
+                  <button style={btnStyle("success", true)} onClick={handleAddRule} disabled={ruleCreating}>
+                    {ruleCreating ? "Adding…" : "Add Rule"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Rules table */}
+            {selectedSgRules.rules.length === 0 ? (
+              <div style={{ fontSize: "13px", color: "var(--pf9-text-secondary)", padding: "8px 0" }}>No rules defined.</div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...thStyle, padding: "4px 8px" }}>Direction</th>
+                    <th style={{ ...thStyle, padding: "4px 8px" }}>Protocol</th>
+                    <th style={{ ...thStyle, padding: "4px 8px" }}>Port Range</th>
+                    <th style={{ ...thStyle, padding: "4px 8px" }}>Remote IP</th>
+                    <th style={{ ...thStyle, padding: "4px 8px" }}>Ethertype</th>
+                    <th style={{ ...thStyle, padding: "4px 8px" }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedSgRules.rules.map((rule: any) => (
+                    <tr key={rule.id}>
+                      <td style={{ ...tdStyle, padding: "3px 8px" }}>
+                        <span style={statusBadge(rule.direction === "ingress" ? "#3b82f6" : "#8b5cf6")}>{rule.direction}</span>
+                      </td>
+                      <td style={{ ...tdStyle, padding: "3px 8px" }}>{rule.protocol || "any"}</td>
+                      <td style={{ ...tdStyle, padding: "3px 8px" }}>
+                        {rule.port_range_min && rule.port_range_max
+                          ? rule.port_range_min === rule.port_range_max
+                            ? rule.port_range_min
+                            : `${rule.port_range_min}–${rule.port_range_max}`
+                          : "any"}
+                      </td>
+                      <td style={{ ...tdStyle, padding: "3px 8px" }}>{rule.remote_ip_prefix || (rule.remote_group_id ? "SG-ref" : "any")}</td>
+                      <td style={{ ...tdStyle, padding: "3px 8px" }}>{rule.ethertype || "—"}</td>
+                      <td style={{ ...tdStyle, padding: "3px 8px" }}>
+                        {isAdmin && (
+                          <button style={btnStyle("danger", true)} onClick={() => handleDeleteRule(rule.id)}>Delete</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         )}
