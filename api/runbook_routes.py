@@ -190,7 +190,9 @@ def _call_billing_gate(
         try:
             import base64, hashlib
             from cryptography.fernet import Fernet
-            secret = os.environ.get("JWT_SECRET", "changeme-default-secret")
+            secret = os.environ.get("JWT_SECRET", "") or os.environ.get("JWT_SECRET_KEY", "")
+            if not secret:
+                return ct
             key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
             return Fernet(key).decrypt(ct.encode()).decode()
         except Exception:

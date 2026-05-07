@@ -1,7 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.95.11 — API OOMKill fix (2 Gi), SG rule management restored in Resources, deps panel light-mode, quota input overflow  
-> Previous: v1.95.10 — Metering rebrand, per-VM hours detail, domain filter, tenant portal lifecycle changes
+> **Version**: v1.95.12 — Security hardening: JWT fallback keys removed, infra IPs anonymized in docs, bandit results untracked  
+> Previous: v1.95.11 — API OOMKill fix (2 Gi), SG rule management restored in Resources, deps panel light-mode, quota input overflow
 
 ## Base URL
 ```

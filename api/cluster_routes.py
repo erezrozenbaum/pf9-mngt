@@ -68,7 +68,10 @@ def _fernet():
     """Return a Fernet instance keyed from JWT_SECRET, or None if unavailable."""
     try:
         from cryptography.fernet import Fernet
-        secret = os.environ.get("JWT_SECRET", "") or os.environ.get("JWT_SECRET_KEY", "changeme")
+        secret = os.environ.get("JWT_SECRET", "") or os.environ.get("JWT_SECRET_KEY", "")
+        if not secret:
+            logger.error("JWT_SECRET_KEY is not configured — Fernet encryption unavailable")
+            return None
         key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
         return Fernet(key)
     except ImportError:

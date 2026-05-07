@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.12] - 2026-05-07
+
+### Security
+- **JWT encryption hardening**: Removed hardcoded fallback keys from Fernet encryption in `cluster_routes.py` and `runbook_routes.py`. Service now logs an error and returns `None` / raw ciphertext when `JWT_SECRET_KEY` is not configured, instead of silently encrypting with a publicly-known key.
+- **Documentation IP anonymization**: Replaced real infrastructure IPs with generic RFC 1918 addresses (`10.0.0.11`, `10.0.0.12`, `10.0.1.x`) in Helm chart comments, monitoring deployment template, and all docs.
+- **Bandit scan results removed**: Untracked `bandit_new.json` and `bandit_targeted.json` from git — these files contain code snippets flagging potential vulnerabilities and should not be public. Both added to `.gitignore`.
+
+---
+
 ## [1.95.11] - 2026-05-07
 ### Fixed
 - **API stability**: Increased API pod memory limit from 1Gi to 2Gi (was OOMKilling under load, causing 503 errors and login failures)
@@ -372,8 +381,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.93.46] - 2026-04-30
 
 ### Fixed
-- **Tenant Portal Current Usage showing allocation-based banner / metrics N/A in K8s**: Root cause was `hostNetwork: true` on the monitoring pod. With hostNetwork the pod's K8s Service endpoint becomes the physical node IP (`172.17.30.164`), and kube-proxy DNAT to a host-network endpoint breaks cross-node connectivity — every pod on `pf9-worker02` received `EAGAIN` (timeout) when trying to reach `pf9-monitoring:8001`, including both the tenant-portal pod and the API pod. Fixed by:
-  1. **Disabling `hostNetwork`** on the monitoring pod (`values.yaml`: `hostNetwork: false`). The pod now gets a pod-CIDR IP; the Flannel masquerade rule NATSs outbound pod traffic through the node IP for non-pod destinations, so hypervisor scrapes (172.17.95.x) continue to work. The `nodeSelector: pf9-worker01` is kept so the pod always runs on the node with a route to the hypervisor subnet.
+- **Tenant Portal Current Usage showing allocation-based banner / metrics N/A in K8s**: Root cause was `hostNetwork: true` on the monitoring pod. With hostNetwork the pod's K8s Service endpoint becomes the physical node IP (`10.0.0.11`), and kube-proxy DNAT to a host-network endpoint breaks cross-node connectivity — every pod on `pf9-worker02` received `EAGAIN` (timeout) when trying to reach `pf9-monitoring:8001`, including both the tenant-portal pod and the API pod. Fixed by:
+  1. **Disabling `hostNetwork`** on the monitoring pod (`values.yaml`: `hostNetwork: false`). The pod now gets a pod-CIDR IP; the Flannel masquerade rule NATSs outbound pod traffic through the node IP for non-pod destinations, so hypervisor scrapes (10.0.1.x) continue to work. The `nodeSelector: pf9-worker01` is kept so the pod always runs on the node with a route to the hypervisor subnet.
   2. **API gateway pattern for tenant-portal metrics**: `tenant_portal/metrics_routes.py` now routes all K8s metrics fetches through `pf9-api:8000/internal/monitoring/vm-metrics` (single gateway) instead of calling `pf9-monitoring:8001` directly. This removes the direct pod-to-pod dependency, centralises auth and enrichment in the API, and correctly propagates `source: "monitoring"` so the live-metrics banner shows instead of the allocation-based banner.
   3. **API NetworkPolicy egress**: Added egress rule in `network-policies.yaml` allowing the API pod to call `pf9-monitoring:8001` so the proxy endpoint can fetch live Prometheus data.
 
@@ -382,7 +391,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.93.45] - 2026-04-29
 
 ### Fixed
-- **Monitoring pod landing on wrong node — all metrics N/A**: When the monitoring pod scheduled to `pf9-worker02` (172.17.30.165), every Prometheus scrape to hypervisors (172.17.95.x) timed out because worker02 has no route to that subnet. Only `pf9-worker01` (172.17.30.164) has the required route. Added `nodeSelector: kubernetes.io/hostname: pf9-worker01` to the monitoring Helm deployment so the pod always runs on the node that can reach the hypervisors. This restores live libvirt metrics (storage, memory, network) to all surfaces: Dashboard VM Hotspots, Inventory VM table, Monitoring Resource Metrics, and Tenant Portal Current Usage.
+- **Monitoring pod landing on wrong node — all metrics N/A**: When the monitoring pod scheduled to `pf9-worker02` (10.0.0.12), every Prometheus scrape to hypervisors (10.0.1.x) timed out because worker02 has no route to that subnet. Only `pf9-worker01` (10.0.0.11) has the required route. Added `nodeSelector: kubernetes.io/hostname: pf9-worker01` to the monitoring Helm deployment so the pod always runs on the node that can reach the hypervisors. This restores live libvirt metrics (storage, memory, network) to all surfaces: Dashboard VM Hotspots, Inventory VM table, Monitoring Resource Metrics, and Tenant Portal Current Usage.
 
 ---
 
@@ -396,7 +405,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.93.43] - 2026-04-30
 
 ### Fixed
-- **Live VM metrics — storage, memory, and network all `None`**: The monitoring pod ran with a standard pod IP (192.168.x.x) which is blocked by hypervisor firewall rules. Enabled `hostNetwork: true` on the monitoring pod so it uses the K8s node IP (172.17.30.x) for outbound connections; the libvirt-exporter on port 9177 is now reachable and real storage/memory/network metrics flow through.
+- **Live VM metrics — storage, memory, and network all `None`**: The monitoring pod ran with a standard pod IP (192.168.x.x) which is blocked by hypervisor firewall rules. Enabled `hostNetwork: true` on the monitoring pod so it uses the K8s node IP (10.0.0.x) for outbound connections; the libvirt-exporter on port 9177 is now reachable and real storage/memory/network metrics flow through.
 - **Restore job audit — no way to clear stale or failed jobs**: Added `DELETE /restore/jobs/{job_id}` endpoint that permanently removes PLANNED, FAILED, INTERRUPTED, CANCELED, or SUCCEEDED jobs (steps deleted first to respect FK constraint). Added a ✕ Clear button per row in the Snapshot Restore Audit table for eligible statuses.
 - **Metering overview VM count included deleted VMs**: `GET /metering/overview` was counting `DISTINCT vm_id` from `metering_resources` — a historical records table that retains rows for deleted VMs. The count now queries the live `servers` table (`status NOT IN ('DELETED', 'SOFT_DELETED')`), joined to `projects` and `domains` to honour domain/project filters.
 - **Docs tab — no syntax highlighting on code blocks**: Integrated `highlight.js` (via `marked-highlight` extension for marked v14) into the Docs viewer. Code fences are now highlighted with the `github-dark` theme.
@@ -510,7 +519,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.93.36] - 2026-04-28
 
 ### Fixed
-- **Monitoring — live Prometheus metrics now working**: The `pf9-monitoring` Kubernetes NetworkPolicy was missing egress rules for ports 9177 (libvirt-exporter) and 9388 (node-exporter) on the PF9 compute nodes (172.17.95.x). Every scrape cycle silently timed out (`asyncio.TimeoutError` → empty error string), keeping the cache permanently at `source: database`. Added `to: [] ports: [9177, 9388]` egress rules so the monitoring pod can now reach the PF9 hypervisor exporters and collect real CPU/memory/storage metrics for VMs.
+- **Monitoring — live Prometheus metrics now working**: The `pf9-monitoring` Kubernetes NetworkPolicy was missing egress rules for ports 9177 (libvirt-exporter) and 9388 (node-exporter) on the PF9 compute nodes (10.0.1.x). Every scrape cycle silently timed out (`asyncio.TimeoutError` → empty error string), keeping the cache permanently at `source: database`. Added `to: [] ports: [9177, 9388]` egress rules so the monitoring pod can now reach the PF9 hypervisor exporters and collect real CPU/memory/storage metrics for VMs.
 - **Monitoring Current Usage — allocation cache no longer blocks Gnocchi/real metrics**: The tenant portal was using the monitoring cache (source=allocation) to serve VMs even when Prometheus was unavailable, preventing the Gnocchi (Platform9 native telemetry) fallback from ever running. Cache is now only used when `source == "monitoring"` (real Prometheus data); otherwise the code falls through to Gnocchi → DB allocation.
 
 ---
