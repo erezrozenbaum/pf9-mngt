@@ -108,11 +108,11 @@ api:
   allowedOrigins: ""
   resources:
     limits:
-      cpu: "1500m"
-      memory: "1Gi"
+      cpu: "2000m"
+      memory: "2Gi"
     requests:
       cpu: "250m"
-      memory: "256Mi"
+      memory: "512Mi"
   logFile: /app/logs/pf9_api.log
   enableAuthentication: "true"
   defaultAdminUser: admin

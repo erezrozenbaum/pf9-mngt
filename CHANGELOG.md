@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.11] - 2026-05-07
+### Fixed
+- **API stability**: Increased API pod memory limit from 1Gi to 2Gi (was OOMKilling under load, causing 503 errors and login failures)
+- **Resources > Security Groups**: Restored Add Rule / Delete Rule functionality in the Technical Tools Resources panel
+- **Resources > Security Groups**: Fixed Dependencies panel — cards were unreadable in light mode (dark background with dark text)
+- **Resources > Quotas**: Fixed quota input fields overflowing outside the card boxes (minWidth CSS override)
+
 ## [1.95.10] - 2026-05-06
 
 ### Fixed
