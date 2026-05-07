@@ -474,7 +474,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   };
 
   // SG rule management handlers
-  const refreshSgRulesPanel = async (sgId: string, sgName: string) => {
+  const refreshSgRulesPanel = async (sgId: string) => {
     try {
       const result = await apiFetch<{ data: any[] }>("/api/resources/security-groups");
       const sg = result.data.find((s: any) => s.id === sgId);
@@ -503,7 +503,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
       setSuccess("Rule added");
       setShowAddRule(false);
       setNewRuleProtocol(""); setNewRulePortMin(""); setNewRulePortMax(""); setNewRuleRemoteIp("");
-      await refreshSgRulesPanel(selectedSgRules.sgId, selectedSgRules.sgName);
+      await refreshSgRulesPanel(selectedSgRules.sgId);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -517,7 +517,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
     try {
       await apiFetch(`/api/resources/security-groups/rules/${ruleId}`, { method: "DELETE" });
       setSuccess("Rule deleted");
-      await refreshSgRulesPanel(selectedSgRules.sgId, selectedSgRules.sgName);
+      await refreshSgRulesPanel(selectedSgRules.sgId);
     } catch (e: any) {
       setError(e.message);
     }
