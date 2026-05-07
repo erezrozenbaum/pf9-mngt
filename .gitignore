@@ -103,6 +103,8 @@ MIGRATION_PLANNER_PHASES.md
 # Security scan scratch files
 bandit_results.json
 bandit_out.json
+bandit_new.json
+bandit_targeted.json
 parse_bandit.py
 
 

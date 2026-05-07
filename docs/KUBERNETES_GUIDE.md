@@ -1007,11 +1007,11 @@ internally, which breaks Grafana's datasource that calls the root API path.
 
 **Root cause:** Kubernetes assigns the monitoring pod a pod-CIDR IP (e.g. `192.168.x.x`).
 PF9 hypervisor firewalls typically DROP inbound connections from pod-CIDR ranges — only
-connections from known node IPs (e.g. `172.17.30.x`) are permitted. The libvirt-exporter
+connections from known node IPs (e.g. `10.0.0.x`) are permitted. The libvirt-exporter
 on port 9177 therefore never responds, so all per-VM metrics arrive as `None`.
 
 **Fix:** Flannel's masquerade rules NAT outbound pod traffic to the K8s node IP when
-connecting to non-pod-CIDR destinations (such as the hypervisors at 172.17.95.x). No
+connecting to non-pod-CIDR destinations (such as the hypervisors at 10.0.1.x). No
 `hostNetwork` change is needed — simply ensure `hostNetwork: false` (the default since
 v1.93.46) and pin the pod to the node with the hypervisor route using `nodeSelector`.
 
@@ -1020,7 +1020,7 @@ v1.93.46) and pin the pod to the node with the hypervisor route using `nodeSelec
 monitoring:
   hostNetwork: false   # Flannel masquerade NATSs outbound to node IP; no hostNetwork needed
   nodeSelector:
-    kubernetes.io/hostname: pf9-worker01   # node with route to 172.17.95.0/24
+    kubernetes.io/hostname: pf9-worker01   # node with route to 10.0.1.0/24
 ```
 
 > **Note:** `hostNetwork: true` was used prior to v1.93.46 but broke ClusterIP routing
@@ -1097,7 +1097,7 @@ warnings and verify `API_BASE_URL` resolves from within the monitoring pod.
 API pod and tenant-portal pod cannot reach the monitoring service.
 
 **Root cause (v1.93.46):** `hostNetwork: true` on the monitoring pod caused its K8s Service
-endpoint to be registered as the physical node IP `172.17.30.164` instead of a pod-CIDR IP.
+endpoint to be registered as the physical node IP `10.0.0.11` instead of a pod-CIDR IP.
 When kube-proxy on `pf9-worker02` attempted to DNAT ClusterIP→monitoring traffic to that
 node IP, connections failed with errno=11 (timeout) — kube-proxy cannot DNAT to a
 host-network endpoint on a different node. All pods on `pf9-worker02` (including
@@ -1118,7 +1118,7 @@ the default never resolved.
        kubernetes.io/hostname: pf9-worker01
    ```
    Flannel's masquerade rule NATs the monitoring pod's outbound connections to the node IP
-   when reaching non-pod-CIDR addresses (hypervisors at 172.17.95.x), so scraping continues.
+   when reaching non-pod-CIDR addresses (hypervisors at 10.0.1.x), so scraping continues.
 
 2. Tenant portal now routes all metrics through the main API:
    ```
@@ -1143,7 +1143,7 @@ Hotspots, Inventory VM bars, Monitoring Resource Metrics, and Tenant Portal Curr
 show allocation-based estimates.
 
 **Root cause:** The monitoring pod rescheduled to a K8s node that has no route to the
-hypervisor subnet (172.17.95.0/24). Even with Flannel masquerade active, if the node's
+hypervisor subnet (10.0.1.0/24). Even with Flannel masquerade active, if the node's
 routing table lacks a path to the hypervisors, all Prometheus scrapes time out silently.
 
 **Fix (v1.93.45):** Add a `nodeSelector` to pin the monitoring pod to the specific node that
@@ -1153,7 +1153,7 @@ has the route:
 # k8s/helm/pf9-mngt/values.yaml
 monitoring:
   nodeSelector:
-    kubernetes.io/hostname: pf9-worker01   # the node with a route to 172.17.95.0/24
+    kubernetes.io/hostname: pf9-worker01   # the node with a route to 10.0.1.0/24
 ```
 
 This is set by default in `values.yaml`. Verify the node name with `kubectl get nodes -o wide`

@@ -197,15 +197,15 @@ monitoring:
   # hostNetwork: when true the pod uses the node's IP for all traffic.
   # Disabled: the CNI overlay handles cross-pod routing correctly and the
   # Flannel masquerade rule NATSs outbound pod traffic (192.168.x.x) to the
-  # node IP (172.17.30.x) for connections to external addresses such as the
-  # hypervisor subnet (172.17.95.x), so hypervisor scraping still works.
+  # node IP (10.0.0.x) for connections to external addresses such as the
+  # hypervisor subnet (10.0.1.x), so hypervisor scraping still works.
   # Setting this to true breaks ClusterIP routing for hostNetwork pods when
   # the caller is on a different node (all ports time out), which is why it
   # is disabled here.
   hostNetwork: false
   # nodeSelector: pin the monitoring pod to a specific node.
-  # Only pf9-worker01 (172.17.30.164) has a route to the hypervisor subnet 172.17.95.0/24.
-  # pf9-worker02 (172.17.30.165) lacks this route, causing all scrapes to time out.
+  # Only pf9-worker01 (10.0.0.11) has a route to the hypervisor subnet 10.0.1.0/24.
+  # pf9-worker02 (10.0.0.12) lacks this route, causing all scrapes to time out.
   nodeSelector:
     kubernetes.io/hostname: pf9-worker01
   resources:

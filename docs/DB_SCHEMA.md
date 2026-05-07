@@ -379,10 +379,11 @@ CREATE TABLE inventory_runs (
 
 ## Operational Features
 
-### Billing System (v1.95.11) ⭐
+### Billing System (v1.95.12) ⭐
 
 Complete enterprise billing management with tenant configuration, prepaid accounts, regional pricing, and webhook integration.
 
+> **v1.95.12**: Security hardening — JWT Fernet fallback keys removed (`cluster_routes.py`, `runbook_routes.py`); infrastructure IPs anonymized in docs; bandit results removed from git.  
 > **v1.95.11**: API pod memory limit raised to 2 Gi (`k8s/helm/pf9-mngt/values.yaml`); SG rule management endpoints active (`/api/resources/security-groups/rules`).  
 > **v1.95.10**: `billing_routes.py` now returns `period_changes` in the tenant billing-aware chargeback response, containing `vms_added`, `vms_removed`, and `storage_resized` arrays derived from `metering_resources`.
 > **v1.95.9**: `metering_routes.py` chargeback-summary now returns `metered_hours`, `down_hours`, `first_seen`, `last_seen` per VM in `vm_details`. Tenant portal billing route returns the same fields per VM.

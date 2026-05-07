@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.95.11  
-**Last Updated**: May 4, 2026  
+**Version**: 1.95.12  
+**Last Updated**: May 7, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -850,12 +850,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ### v1.93.46 — Tenant Portal live metrics + API gateway + hostNetwork fix (✅ Complete)
 
-- **Tenant Portal "allocation-based usage" banner (metrics N/A from worker02)** — Root cause: `hostNetwork: true` on the monitoring pod made the K8s Service endpoint resolve to the physical node IP `172.17.30.164`. kube-proxy on `pf9-worker02` could not DNAT ClusterIP traffic to a host-network endpoint on a different node — all TCP connections from tenant-portal and API pods (both on worker02) timed out with errno=11. Fixed: (1) `hostNetwork` disabled in `values.yaml` — Flannel masquerades pod source IPs to the node IP for non-pod-CIDR destinations so hypervisor scrapes still reach 172.17.95.x; (2) the tenant portal now proxies all metrics through the main API (`pf9-api:8000/internal/monitoring/vm-metrics`) — single gateway, no cross-node pod-to-pod routing; (3) added API→monitoring:8001 egress in the `pf9-api` NetworkPolicy.
+- **Tenant Portal "allocation-based usage" banner (metrics N/A from worker02)** — Root cause: `hostNetwork: true` on the monitoring pod made the K8s Service endpoint resolve to the physical node IP `10.0.0.11`. kube-proxy on `pf9-worker02` could not DNAT ClusterIP traffic to a host-network endpoint on a different node — all TCP connections from tenant-portal and API pods (both on worker02) timed out with errno=11. Fixed: (1) `hostNetwork` disabled in `values.yaml` — Flannel masquerades pod source IPs to the node IP for non-pod-CIDR destinations so hypervisor scrapes still reach 10.0.1.x; (2) the tenant portal now proxies all metrics through the main API (`pf9-api:8000/internal/monitoring/vm-metrics`) — single gateway, no cross-node pod-to-pod routing; (3) added API→monitoring:8001 egress in the `pf9-api` NetworkPolicy.
 - **Wrong default `MONITORING_SERVICE_URL` fallback** — Three code locations used `http://pf9_monitoring:8001` (underscore) as the default, which never resolves in Kubernetes. Fixed to `http://pf9-monitoring:8001` (hyphen) in `api/main.py` (×2) and `api/dashboards.py`.
 
 ### v1.93.45 — Monitoring pod node placement (✅ Complete)
 
-- **Monitoring pod scheduled to wrong K8s node — all metrics N/A** — The monitoring pod rescheduled to `pf9-worker02` (172.17.30.165) which has no route to the hypervisor subnet (172.17.95.0/24). All Prometheus scrapes timed out; the cache stayed at `source: database` with storage/memory/network fields all `None`. Added `nodeSelector: kubernetes.io/hostname: pf9-worker01` to the monitoring Helm deployment to guarantee the pod always runs on the node that has the required route. All four data surfaces (Dashboard VM Hotspots, Inventory VM table, Monitoring Resource Metrics, Tenant Portal Current Usage) now receive live libvirt-sourced metrics.
+- **Monitoring pod scheduled to wrong K8s node — all metrics N/A** — The monitoring pod rescheduled to `pf9-worker02` (10.0.0.12) which has no route to the hypervisor subnet (10.0.1.0/24). All Prometheus scrapes timed out; the cache stayed at `source: database` with storage/memory/network fields all `None`. Added `nodeSelector: kubernetes.io/hostname: pf9-worker01` to the monitoring Helm deployment to guarantee the pod always runs on the node that has the required route. All four data surfaces (Dashboard VM Hotspots, Inventory VM table, Monitoring Resource Metrics, Tenant Portal Current Usage) now receive live libvirt-sourced metrics.
 
 ### v1.93.44 — Dashboard live metrics in K8s (✅ Complete)
 
@@ -863,7 +863,7 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ### v1.93.43 — Live VM metrics, restore job cleanup, metering VM count, docs highlighting (✅ Complete)
 
-- **Live VM metrics (storage / memory / network `None`)** — The monitoring pod was assigned a pod-CIDR IP (192.168.x.x) which hypervisor firewalls block. Added `hostNetwork: true` to the Helm deployment so the pod uses the K8s node IP (172.17.30.x); the libvirt-exporter on port 9177 is reachable and live metrics flow correctly.
+- **Live VM metrics (storage / memory / network `None`)** — The monitoring pod was assigned a pod-CIDR IP (192.168.x.x) which hypervisor firewalls block. Added `hostNetwork: true` to the Helm deployment so the pod uses the K8s node IP (10.0.0.x); the libvirt-exporter on port 9177 is reachable and live metrics flow correctly.
 - **SSH + virsh fallback for VM metrics** — When `PF9_SSH_KEY_FILE` is configured, monitoring can collect VM metrics via `virsh domstats` over SSH as a fallback path. Set `PF9_SSH_USER` and `PF9_SSH_KEY_FILE` env vars and mount the key into the monitoring pod.
 - **Restore job deletion** — `DELETE /restore/jobs/{job_id}` allows permanently removing non-active job records. A ✕ Clear button appears per row in the Restore Audit table for PLANNED, FAILED, INTERRUPTED, CANCELED, and SUCCEEDED jobs.
 - **Stale restore job auto-timeout** — The scheduler marks PLANNED jobs older than 2 hours (`RESTORE_PLANNED_TIMEOUT_H`, default 2) and RUNNING/PENDING jobs older than 6 hours (`RESTORE_RUNNING_TIMEOUT_H`, default 6) as FAILED. Prevents orphaned jobs from remaining stuck indefinitely.
