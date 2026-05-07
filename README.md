@@ -202,7 +202,7 @@ helm install pf9-mngt pf9-mngt/pf9-mngt \
 
 ## 🎬 Video Walkthrough
 
-▶️ [**PF9 Management System — Full UI Walkthrough (15 min)**](https://www.youtube.com/watch?v=68-LQ9ugU_E)
+▶️ [**PF9 Management System — Full UI Walkthrough (15 min)**](https://www.youtube.com/watch?v=V0z5-HKVWts)
 
 ---
 
