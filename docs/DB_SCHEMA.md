@@ -1074,6 +1074,61 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_health_snapshots_date
 
 ---
 
+## Portfolio Metering (v1.95.13)
+
+### portfolio_metering_monthly
+Pre-aggregated monthly resource and cost summary per tenant. Written by `metering_worker` at the start of each new calendar month (UPSERT). Read by the portfolio intelligence endpoints to power quota vs usage, MoM growth, and fleet metering KPIs.
+
+```sql
+CREATE TABLE IF NOT EXISTS portfolio_metering_monthly (
+    tenant_id              TEXT           NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    month                  DATE           NOT NULL,  -- first day of month (YYYY-MM-01)
+    avg_vcpus              NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    avg_ram_gb             NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    avg_disk_gb            NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    peak_vcpus             INTEGER        NOT NULL DEFAULT 0,
+    peak_ram_gb            NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    quota_vcpu_limit       INTEGER,
+    quota_vcpu_used        INTEGER,
+    quota_ram_limit_mb     INTEGER,
+    quota_ram_used_mb      INTEGER,
+    quota_storage_limit_gb INTEGER,
+    quota_storage_used_gb  NUMERIC(10,2),
+    estimated_cost         NUMERIC(14,4)  NOT NULL DEFAULT 0,
+    currency               TEXT           NOT NULL DEFAULT 'USD',
+    vm_count               INTEGER        NOT NULL DEFAULT 0,
+    computed_at            TIMESTAMPTZ    NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, month)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pmm_tenant_month ON portfolio_metering_monthly(tenant_id, month DESC);
+CREATE INDEX IF NOT EXISTS idx_pmm_month        ON portfolio_metering_monthly(month DESC);
+```
+
+| Column | Description |
+|---|---|
+| `tenant_id` | FK → `projects.id`, cascades on delete |
+| `month` | Always the first calendar day of the month (e.g. `2026-05-01`) |
+| `avg_vcpus` / `avg_ram_gb` / `avg_disk_gb` | Mean allocated resources across all daily metering snapshots for the month |
+| `peak_vcpus` / `peak_ram_gb` | Highest single-day observed allocation |
+| `quota_vcpu_limit` / `quota_vcpu_used` | Snapshot of `project_quotas` at month-end |
+| `quota_ram_limit_mb` / `quota_ram_used_mb` | RAM quota snapshot (megabytes) |
+| `quota_storage_limit_gb` / `quota_storage_used_gb` | Storage quota snapshot |
+| `estimated_cost` | Computed from `metering_config` unit rates × allocated resource-hours |
+| `currency` | ISO 4217 currency code (default `USD`) |
+| `vm_count` | Distinct VMs observed during the month |
+| `computed_at` | Timestamp of last UPSERT |
+
+**Write pattern**: `metering_worker` calls an internal `_aggregate_monthly(tenant_id, month)` helper on the first collection cycle of each new month. Uses `ON CONFLICT (tenant_id, month) DO UPDATE` to allow re-computation if rates change.
+
+**Read pattern**:
+- `GET /api/sla/portfolio/summary` — LEFT JOINs current and previous month rows per tenant to compute MoM vCPU / RAM / cost growth.
+- `GET /api/sla/portfolio/fleet-metering?months=N` — aggregates all tenants' rows for the last N months to produce fleet totals, monthly trend, and top-growing tenants.
+
+**Access control**: Both endpoints require the `sla:read` permission (enforced via `require_permission("sla", "read")`). No direct table grants are needed beyond the existing `pf9` superuser role.
+
+---
+
 ## Enriched Views
 
 ### Volume Attachments
@@ -1190,4 +1245,4 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v1.94.11** (May 4, 2026)
+Current schema version: **v1.95.13** (May 10, 2026)

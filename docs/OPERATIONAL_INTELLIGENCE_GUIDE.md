@@ -21,6 +21,7 @@
 12. [Intelligence Settings](#intelligence-settings)
 13. [Copilot Integration](#copilot-integration)
 14. [Role-Based Dashboard Views](#role-based-dashboard-views)
+15. [Portfolio Metering and Growth Intelligence](#portfolio-metering-and-growth-intelligence)
 
 ---
 
@@ -440,18 +441,25 @@ Land on the main **Dashboard** then navigate to **Insights** from the sidebar. T
 Land directly on **My Portfolio** — a per-tenant portfolio table showing every client with:
 
 ```
-Client         SLA Status     Contract Usage   Open Criticals   Leakage Alerts
-──────────────────────────────────────────────────────────────────────────────
-Acme Corp      ⚠ AT RISK      94% vCPU         2                1
-Initech        🚨 BREACHED    112% vCPU        5                3
-GlobalTech     ✅ OK          61% vCPU         0                0
+Client       SLA   vCPU Quota   RAM Quota   Storage   VMs   Cost/mo   vCPU Growth
+────────────────────────────────────────────────────────────────────────────────────
+Acme Corp    ⚠     ████░ 84%    ██░░ 46%    ██░░ 38%  24    $3,420    ▲ 12.4% MoM
+Initech      🚨    █████ 112%   ████ 91%    ███░ 67%  41    $7,890    ▲ 28.1% MoM
+GlobalTech   ✅    ██░░░ 41%    █░░░ 22%    █░░░ 19%   9    $1,180    ▼  3.2% MoM
 ```
 
-Filter by status (All / OK / At Risk / Breached / Not Configured) or search by client name. The KPI strip at the top shows aggregate counts for fast triage.
+The KPI strip at the top adds:
+- **Quota Under Pressure** — count of tenants with ≥80% utilization on any resource dimension.
+- **Growing Tenants** — count with positive MoM vCPU growth.
+- **Est. Fleet Cost** — total estimated monthly cost across all tenants.
+
+All columns are sortable. Filter by SLA status (All / OK / At Risk / Breached / Not Configured) or search by client name.
 
 ### MSP Executives
 
-Land on **Portfolio Health** — a fleet-wide executive summary with six KPI cards:
+Land on **Portfolio Health** — a fleet-wide executive summary with multiple sections:
+
+**SLA Fleet Health** — stacked bar showing the proportion of clients in each SLA state plus six KPI cards:
 
 - **Fleet Health %** — percentage of clients meeting SLA commitments
 - **SLA Breached** — count requiring immediate action
@@ -460,9 +468,21 @@ Land on **Portfolio Health** — a fleet-wide executive summary with six KPI car
 - **Est. Revenue Leakage** — monthly dollar estimate (requires contract unit prices configured)
 - **Avg MTTR** — fleet mean time-to-recover vs contracted commitment
 
-A stacked health bar at the top shows the proportion of clients in each SLA state at a glance.
+**Metering Summary** *(v1.95.13)* — fleet-wide resource consumption this month:
+
+- Avg vCPUs / RAM / Disk allocated across all tenants
+- Metered VM count
+- Estimated fleet cost with month-over-month growth chips (▲/▼)
+
+**Quota Utilisation** *(v1.95.13)* — horizontal progress bars for fleet-total vCPU, RAM, and storage quota fill rates. Bars turn amber at 75% and red at 90%.
+
+**6-Month Fleet Trend** *(v1.95.13)* — SVG sparkline charts for vCPUs, cost, and VM count over the last 6 months. Requires metering data in `portfolio_metering_monthly`.
+
+**Fastest-Growing Tenants** *(v1.95.13)* — table of up to 10 tenants ranked by MoM vCPU growth, showing previous/current vCPU allocation, growth percentage, and estimated cost.
 
 > **Revenue leakage dollar amounts** are computed from `contracted × unit_price × overage_pct`. If no `unit_price` is set on contract entitlements (Admin → Intelligence Settings → Contract Entitlements), the card shows `—` with a prompt to configure pricing.
+>
+> **Metering figures** require `portfolio_metering_monthly` rows. The metering worker populates this table automatically each month. A "No metering data yet" placeholder is shown on new deployments until the first monthly collection runs.
 
 ---
 
@@ -495,3 +515,59 @@ If a resolved insight's underlying condition returns, it is automatically re-ope
 - [Tenant Portal Guide](TENANT_PORTAL_GUIDE.md) — full observer portal setup and usage.
 - [Admin Guide](ADMIN_GUIDE.md) — user management, role assignment, system configuration.
 - [API Reference](API_REFERENCE.md) — intelligence API endpoints for integrations.
+
+---
+
+## Portfolio Metering and Growth Intelligence
+
+*Added in v1.95.13.*
+
+### Overview
+
+Portfolio Metering provides month-over-month resource and cost intelligence across your entire client fleet. It answers three questions:
+
+1. **How much are my clients actually consuming?** (metering summary vs contracted entitlements)
+2. **Are they approaching quota limits?** (quota vs real usage — per tenant and fleet total)
+3. **Which clients are growing fastest?** (MoM vCPU and cost growth rankings)
+
+### Data source: `portfolio_metering_monthly`
+
+The `metering_worker` aggregates metering data from `metering_resources` and `project_quotas` once per calendar month and writes a single row per tenant into `portfolio_metering_monthly`. Each row contains:
+
+- Average and peak vCPU / RAM / disk allocation for the month
+- End-of-month quota snapshot (limit and used for vCPU, RAM, storage)
+- Estimated cost computed from `metering_config` unit rates
+- Distinct VM count
+
+The table is empty on new deployments. A "No metering data yet" placeholder appears in the dashboard until the first monthly collection runs.
+
+### Growth computation
+
+Month-over-month growth is computed by the API by joining the current month's row with the previous month's row for the same tenant:
+
+$$\text{growth\_pct} = \frac{\text{current} - \text{previous}}{\text{previous}} \times 100$$
+
+If a tenant has no row for the previous month (e.g. new tenant), growth is shown as `—`.
+
+### API endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/sla/portfolio/summary` | Per-tenant summary with quota, metering, and MoM growth. Accepts `month_start` and `prev_month_start` query params. |
+| `GET /api/sla/portfolio/fleet-metering?months=N` | Fleet-wide totals, quota health, monthly trend (up to 24 months), and top-10 growing tenants. |
+
+Both endpoints require the `sla:read` permission.
+
+### Configuring cost estimates
+
+Cost figures require unit prices in `metering_config`. Navigate to **Admin → Metering Config** to set per-unit rates for vCPU-hours, RAM-GB-hours, and disk-GB-hours per currency. Without rates, `estimated_cost` rows are stored as `0` and the Cost columns display `—`.
+
+### Quota under pressure
+
+A tenant is flagged as **Quota Under Pressure** in the My Portfolio KPI strip when any of the following conditions is true for that tenant:
+
+- vCPU quota utilisation ≥ 80%
+- RAM quota utilisation ≥ 80%
+- Storage quota utilisation ≥ 80%
+
+This maps directly to the `capacity` and `capacity_quota` insight types in the Insight Feed — the dashboard count and the insight feed count will agree.

@@ -1,10 +1,10 @@
 /*
  * ExecutiveDashboard.tsx — Portfolio Health
  * ==========================================
- * Fleet-wide executive view: SLA health, revenue leakage estimate,
- * critical alert count, and MTTR performance.
+ * Fleet-wide executive view: SLA health, metering summary, quota utilisation,
+ * resource growth trends, revenue leakage, and MTTR performance.
  *
- * v1.92.0 (Phase 6)
+ * v1.95.13
  */
 import React, { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/api";
@@ -33,6 +33,52 @@ interface ExecutiveSummaryResponse {
   month: string;
 }
 
+interface FleetTotals {
+  avg_vcpus: number | null;
+  avg_ram_gb: number | null;
+  avg_disk_gb: number | null;
+  cost_this_month: number | null;
+  vm_count: number;
+  currency: string;
+  vcpu_growth_pct: number | null;
+  cost_growth_pct: number | null;
+}
+
+interface QuotaResource {
+  limit: number | null;
+  used: number | null;
+  utilization_pct: number | null;
+}
+
+interface TrendPoint {
+  month: string;
+  tenant_count: number;
+  total_avg_vcpus: number | null;
+  total_avg_ram_gb: number | null;
+  total_avg_disk_gb: number | null;
+  total_cost: number | null;
+  total_vms: number;
+}
+
+interface GrowthTenant {
+  tenant_name: string;
+  vcpus_this_month: number | null;
+  vcpus_prev_month: number | null;
+  vcpu_growth_pct: number | null;
+  cost_this_month: number | null;
+  cost_prev_month: number | null;
+  cost_growth_pct: number | null;
+}
+
+interface FleetMeteringResponse {
+  month: string;
+  fleet_totals: FleetTotals;
+  contracted_totals: Record<string, number>;
+  quota_health: Record<string, QuotaResource>;
+  monthly_trend: TrendPoint[];
+  top_growing_tenants: GrowthTenant[];
+}
+
 interface Props {
   userRole: string;
 }
@@ -45,14 +91,25 @@ function mttrStatus(actual: number | null, commitment: number | null): { label: 
   if (actual === null) return { label: "No data", color: "#94a3b8" };
   if (commitment === null) return { label: `${actual.toFixed(1)}h avg`, color: "#60a5fa" };
   const ratio = actual / commitment;
-  if (ratio <= 0.8)  return { label: `${actual.toFixed(1)}h (well within ${commitment}h)`, color: "#22c55e" };
-  if (ratio <= 1.0)  return { label: `${actual.toFixed(1)}h (within ${commitment}h)`,      color: "#f59e0b" };
+  if (ratio <= 0.8) return { label: `${actual.toFixed(1)}h (well within ${commitment}h)`, color: "#22c55e" };
+  if (ratio <= 1.0) return { label: `${actual.toFixed(1)}h (within ${commitment}h)`, color: "#f59e0b" };
   return { label: `${actual.toFixed(1)}h (EXCEEDS ${commitment}h)`, color: "#ef4444" };
 }
 
 function formatMoney(value: number | null): string {
   if (value === null) return "N/A — configure contract pricing";
   return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function growthChip(pct: number | null): React.ReactElement {
+  if (pct === null) return <span style={{ color: "#94a3b8" }}>—</span>;
+  const up = pct > 0;
+  const color = up ? "#22c55e" : pct < -5 ? "#ef4444" : "#94a3b8";
+  return (
+    <span style={{ color, fontWeight: 600, fontSize: "0.82rem" }}>
+      {up ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}% MoM
+    </span>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +162,6 @@ function SlaDonut({ summary }: { summary: ExecutiveSummary }) {
 
   return (
     <div style={{ display: "flex", gap: "1rem", alignItems: "center", flexWrap: "wrap" }}>
-      {/* Bar chart (horizontal stacked) */}
       <div
         style={{
           display: "flex",
@@ -125,7 +181,6 @@ function SlaDonut({ summary }: { summary: ExecutiveSummary }) {
           />
         ))}
       </div>
-      {/* Legend */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem" }}>
         {segments.map((s) => (
           <span key={s.label} style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "0.82rem" }}>
@@ -138,21 +193,74 @@ function SlaDonut({ summary }: { summary: ExecutiveSummary }) {
   );
 }
 
+/** Horizontal bar showing used vs limit for a quota resource */
+function QuotaBar({ label, resource }: { label: string; resource: QuotaResource | undefined }) {
+  if (!resource || resource.limit == null) {
+    return (
+      <div style={{ flex: "1 1 180px" }}>
+        <div style={{ fontSize: "0.78rem", color: "#94a3b8", marginBottom: "4px" }}>{label}</div>
+        <div style={{ fontSize: "0.85rem", color: "#475569" }}>No quota data</div>
+      </div>
+    );
+  }
+  const pct = resource.utilization_pct ?? 0;
+  const capped = Math.min(pct, 100);
+  const barColor = pct >= 90 ? "#ef4444" : pct >= 75 ? "#f59e0b" : "#22c55e";
+  return (
+    <div style={{ flex: "1 1 180px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "#94a3b8", marginBottom: "4px" }}>
+        <span>{label}</span>
+        <span style={{ color: barColor, fontWeight: 600 }}>{pct}%</span>
+      </div>
+      <div style={{ height: "10px", background: "#334155", borderRadius: "4px", overflow: "hidden" }}>
+        <div style={{ width: `${capped}%`, height: "100%", background: barColor, borderRadius: "4px" }} />
+      </div>
+      <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: "3px" }}>
+        {(resource.used ?? 0).toLocaleString()} / {resource.limit.toLocaleString()} used
+      </div>
+    </div>
+  );
+}
+
+/** Mini SVG sparkline for a numeric trend series */
+function Sparkline({ values, color = "#60a5fa", height = 40 }: { values: number[]; color?: string; height?: number }) {
+  if (values.length < 2) return null;
+  const w = 200;
+  const h = height;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max - min || 1;
+  const xs = values.map((_, i) => (i / (values.length - 1)) * w);
+  const ys = values.map((v) => h - ((v - min) / range) * (h - 4) - 2);
+  const d = xs.map((x, i) => `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${ys[i].toFixed(1)}`).join(" ");
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: "block" }}>
+      <path d={d} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={xs[xs.length - 1]} cy={ys[ys.length - 1]} r="3" fill={color} />
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
 export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
-  const [data, setData] = useState<ExecutiveSummaryResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [data, setData]         = useState<ExecutiveSummaryResponse | null>(null);
+  const [metering, setMetering] = useState<FleetMeteringResponse | null>(null);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await apiFetch<ExecutiveSummaryResponse>("/api/sla/portfolio/executive-summary");
-      setData(resp);
+      const [summaryResp, meteringResp] = await Promise.all([
+        apiFetch<ExecutiveSummaryResponse>("/api/sla/portfolio/executive-summary"),
+        apiFetch<FleetMeteringResponse>("/api/sla/portfolio/fleet-metering?months=6"),
+      ]);
+      setData(summaryResp);
+      setMetering(meteringResp);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load executive summary");
     } finally {
@@ -162,8 +270,18 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
 
   useEffect(() => { load(); }, [load]);
 
-  const s = data?.summary;
+  const s    = data?.summary;
+  const m    = metering;
   const mttr = s ? mttrStatus(s.avg_mttr_hours, s.avg_mttr_commitment_hours) : null;
+
+  const trendMonths = m?.monthly_trend.map((t) => t.month.slice(0, 7)) ?? [];
+  const vcpuTrend   = m?.monthly_trend.map((t) => t.total_avg_vcpus ?? 0) ?? [];
+  const costTrend   = m?.monthly_trend.map((t) => t.total_cost ?? 0) ?? [];
+  const vmTrend     = m?.monthly_trend.map((t) => t.total_vms ?? 0) ?? [];
+
+  const hasMeteringData = m !== null && (
+    m.fleet_totals.avg_vcpus != null || m.fleet_totals.cost_this_month != null
+  );
 
   return (
     <div className="pf9-intelligence-view">
@@ -187,14 +305,15 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
       {error && (
         <div className="pf9-alert pf9-alert-error" style={{ marginBottom: "0.8rem" }}>{error}</div>
       )}
-
       {loading && !data && (
         <div className="pf9-loading">Loading executive summary…</div>
       )}
 
       {s && (
         <>
-          {/* SLA health overview */}
+          {/* ----------------------------------------------------------------
+              SLA Fleet Health
+          ---------------------------------------------------------------- */}
           <section style={{ marginBottom: "1.5rem" }}>
             <h3 style={{ fontSize: "0.95rem", color: "#94a3b8", marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
               SLA Fleet Health
@@ -202,7 +321,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
             <SlaDonut summary={s} />
           </section>
 
-          {/* KPI grid */}
+          {/* KPI grid — SLA */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem", marginBottom: "1.5rem" }}>
             <KpiCard
               label="Fleet Health"
@@ -246,7 +365,160 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
             />
           </div>
 
-          {/* Revenue leakage detail */}
+          {/* ----------------------------------------------------------------
+              Metering Summary
+          ---------------------------------------------------------------- */}
+          <section style={{ marginBottom: "1.5rem" }}>
+            <h3 style={{ fontSize: "0.95rem", color: "#94a3b8", marginBottom: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              📡 Metering Summary — Fleet This Month
+            </h3>
+            {!hasMeteringData ? (
+              <div style={{ color: "#475569", fontSize: "0.88rem", padding: "0.75rem 1rem", background: "var(--pf9-card-bg, #1e293b)", borderRadius: "8px" }}>
+                No metering data collected yet. The metering worker populates this section monthly.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem" }}>
+                <KpiCard
+                  label="Avg vCPUs Allocated"
+                  value={m!.fleet_totals.avg_vcpus != null ? m!.fleet_totals.avg_vcpus.toLocaleString() : "—"}
+                  accent="#60a5fa"
+                  sub={undefined}
+                />
+                <KpiCard
+                  label="Avg RAM Allocated"
+                  value={m!.fleet_totals.avg_ram_gb != null ? `${m!.fleet_totals.avg_ram_gb.toLocaleString()} GB` : "—"}
+                  accent="#a78bfa"
+                  sub="Across all tenants"
+                />
+                <KpiCard
+                  label="Avg Disk Allocated"
+                  value={m!.fleet_totals.avg_disk_gb != null ? `${m!.fleet_totals.avg_disk_gb.toLocaleString()} GB` : "—"}
+                  accent="#34d399"
+                  sub="Across all tenants"
+                />
+                <KpiCard
+                  label="Metered VMs"
+                  value={m!.fleet_totals.vm_count.toLocaleString()}
+                  accent="#fb923c"
+                  sub="Distinct VMs this month"
+                />
+                <KpiCard
+                  label="Est. Fleet Cost (mo.)"
+                  value={
+                    m!.fleet_totals.cost_this_month != null
+                      ? `${m!.fleet_totals.currency} ${m!.fleet_totals.cost_this_month.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                      : "—"
+                  }
+                  accent="#f59e0b"
+                  sub={undefined}
+                />
+              </div>
+            )}
+            {/* MoM growth chips below the card row */}
+            {hasMeteringData && (
+              <div style={{ display: "flex", gap: "1rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
+                  vCPU growth: {growthChip(m!.fleet_totals.vcpu_growth_pct)}
+                </span>
+                <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
+                  Cost growth: {growthChip(m!.fleet_totals.cost_growth_pct)}
+                </span>
+              </div>
+            )}
+          </section>
+
+          {/* ----------------------------------------------------------------
+              Quota Health Fleet Total
+          ---------------------------------------------------------------- */}
+          {m && Object.keys(m.quota_health).length > 0 && (
+            <section style={{ marginBottom: "1.5rem" }}>
+              <h3 style={{ fontSize: "0.95rem", color: "#94a3b8", marginBottom: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                📊 Quota Utilisation — Fleet Total
+              </h3>
+              <div style={{ background: "var(--pf9-card-bg, #1e293b)", borderRadius: "8px", padding: "1rem 1.2rem" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem" }}>
+                  <QuotaBar label="vCPU Cores"  resource={m.quota_health["cores"]}      />
+                  <QuotaBar label="RAM"          resource={m.quota_health["ram"]}        />
+                  <QuotaBar label="Storage (GB)" resource={m.quota_health["storage_gb"]} />
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* ----------------------------------------------------------------
+              6-Month Resource Trend sparklines
+          ---------------------------------------------------------------- */}
+          {m && m.monthly_trend.length >= 2 && (
+            <section style={{ marginBottom: "1.5rem" }}>
+              <h3 style={{ fontSize: "0.95rem", color: "#94a3b8", marginBottom: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                📈 6-Month Fleet Trend
+              </h3>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem" }}>
+                {([
+                  { label: "vCPUs", values: vcpuTrend, color: "#60a5fa" },
+                  { label: "Cost",  values: costTrend, color: "#f59e0b" },
+                  { label: "VMs",   values: vmTrend,   color: "#34d399" },
+                ] as const).map(({ label, values, color }) => (
+                  <div
+                    key={label}
+                    style={{ background: "var(--pf9-card-bg, #1e293b)", borderRadius: "8px", padding: "0.8rem 1rem", flex: "1 1 200px" }}
+                  >
+                    <div style={{ fontSize: "0.8rem", color: "#94a3b8", marginBottom: "6px" }}>{label}</div>
+                    <Sparkline values={[...values]} color={color} />
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "#475569", marginTop: "4px" }}>
+                      <span>{trendMonths[0]}</span>
+                      <span>{trendMonths[trendMonths.length - 1]}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* ----------------------------------------------------------------
+              Top Growing Tenants
+          ---------------------------------------------------------------- */}
+          {m && m.top_growing_tenants.length > 0 && (
+            <section style={{ marginBottom: "1.5rem" }}>
+              <h3 style={{ fontSize: "0.95rem", color: "#94a3b8", marginBottom: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                🚀 Fastest-Growing Tenants (vCPU, MoM)
+              </h3>
+              <div style={{ overflowX: "auto" }}>
+                <table className="pf9-table">
+                  <thead>
+                    <tr>
+                      <th>Client</th>
+                      <th style={{ textAlign: "right" }}>vCPUs (prev)</th>
+                      <th style={{ textAlign: "right" }}>vCPUs (curr)</th>
+                      <th style={{ textAlign: "right" }}>vCPU Growth</th>
+                      <th style={{ textAlign: "right" }}>Cost (curr)</th>
+                      <th style={{ textAlign: "right" }}>Cost Growth</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {m.top_growing_tenants.map((t) => (
+                      <tr key={t.tenant_name}>
+                        <td style={{ fontWeight: 500 }}>{t.tenant_name}</td>
+                        <td style={{ textAlign: "right" }}>{t.vcpus_prev_month?.toLocaleString() ?? "—"}</td>
+                        <td style={{ textAlign: "right" }}>{t.vcpus_this_month?.toLocaleString() ?? "—"}</td>
+                        <td style={{ textAlign: "right" }}>{growthChip(t.vcpu_growth_pct)}</td>
+                        <td style={{ textAlign: "right" }}>
+                          {t.cost_this_month != null
+                            ? `$${t.cost_this_month.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                            : "—"}
+                        </td>
+                        <td style={{ textAlign: "right" }}>{growthChip(t.cost_growth_pct)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* ----------------------------------------------------------------
+              Revenue leakage detail
+          ---------------------------------------------------------------- */}
           {s.leakage_insight_count > 0 && (
             <section
               style={{
