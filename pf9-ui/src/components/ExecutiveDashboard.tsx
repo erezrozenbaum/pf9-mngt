@@ -6,7 +6,7 @@
  *
  * v1.95.13
  */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { apiFetch } from "../lib/api";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +42,7 @@ interface FleetTotals {
   currency: string;
   vcpu_growth_pct: number | null;
   cost_growth_pct: number | null;
+  is_partial_month?: boolean;
 }
 
 interface QuotaResource {
@@ -68,9 +69,11 @@ interface GrowthTenant {
   cost_this_month: number | null;
   cost_prev_month: number | null;
   cost_growth_pct: number | null;
+  currency: string;
 }
 
 interface FleetMeteringResponse {
+  period?: string;
   month: string;
   fleet_totals: FleetTotals;
   contracted_totals: Record<string, number>;
@@ -245,30 +248,36 @@ function Sparkline({ values, color = "#60a5fa", height = 40 }: { values: number[
 // Main component
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Period selector config
+// ---------------------------------------------------------------------------
+type Period = "7d" | "30d" | "3m" | "6m" | "12m";
+const PERIOD_OPTIONS: { key: Period; label: string; days?: number; months?: number }[] = [
+  { key: "7d",  label: "7 days",    days: 7 },
+  { key: "30d", label: "30 days",   days: 30 },
+  { key: "3m",  label: "3 months",  months: 3 },
+  { key: "6m",  label: "6 months",  months: 6 },
+  { key: "12m", label: "12 months", months: 12 },
+];
+
 export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
   const [data, setData]         = useState<ExecutiveSummaryResponse | null>(null);
   const [metering, setMetering] = useState<FleetMeteringResponse | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
-  const [trendMonths, setTrendMonths]   = useState<number>(6);
-  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
-
-  const currentMonthValue = () => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  };
+  const [period, setPeriod]     = useState<Period>("6m");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const meteringParams = new URLSearchParams({ months: String(trendMonths), month: selectedMonth });
+      const pd = PERIOD_OPTIONS.find((x) => x.key === period)!;
+      const params = new URLSearchParams();
+      if (pd.days)   params.set("days",   String(pd.days));
+      else           params.set("months", String(pd.months));
       const [summaryResp, meteringResp] = await Promise.all([
         apiFetch<ExecutiveSummaryResponse>("/api/sla/portfolio/executive-summary"),
-        apiFetch<FleetMeteringResponse>(`/api/sla/portfolio/fleet-metering?${meteringParams}`),
+        apiFetch<FleetMeteringResponse>(`/api/sla/portfolio/fleet-metering?${params}`),
       ]);
       setData(summaryResp);
       setMetering(meteringResp);
@@ -277,7 +286,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [trendMonths, selectedMonth]);
+  }, [period]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -290,9 +299,31 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
   const costTrend   = m?.monthly_trend.map((t) => t.total_cost ?? 0) ?? [];
   const vmTrend     = m?.monthly_trend.map((t) => t.total_vms ?? 0) ?? [];
 
-  const hasMeteringData = m !== null && (
-    m.fleet_totals.avg_vcpus != null || m.fleet_totals.cost_this_month != null
-  );
+  // For multi-month periods (3m/6m/12m) derive aggregated fleet KPIs from trend data
+  const isMultiMonth = ["3m", "6m", "12m"].includes(period);
+  const periodFleetTotals = useMemo((): FleetTotals | null => {
+    if (!m) return null;
+    if (!isMultiMonth || m.monthly_trend.length === 0) return m.fleet_totals;
+    const trend = m.monthly_trend;
+    const count = trend.length;
+    return {
+      ...m.fleet_totals,
+      avg_vcpus:  count > 0 ? Math.round(trend.reduce((s, t) => s + (t.total_avg_vcpus ?? 0), 0) / count * 10) / 10 : null,
+      avg_ram_gb: count > 0 ? Math.round(trend.reduce((s, t) => s + (t.total_avg_ram_gb ?? 0), 0) / count * 10) / 10 : null,
+      avg_disk_gb: count > 0 ? Math.round(trend.reduce((s, t) => s + (t.total_avg_disk_gb ?? 0), 0) / count * 10) / 10 : null,
+      cost_this_month: trend.reduce((s, t) => s + (t.total_cost ?? 0), 0),
+      vm_count: Math.max(...trend.map((t) => t.total_vms ?? 0)),
+    };
+  }, [m, isMultiMonth]);
+
+  const ft = periodFleetTotals ?? m?.fleet_totals ?? null;
+
+  const hasMeteringData = ft !== null && (ft.avg_vcpus != null || ft.cost_this_month != null);
+
+  const periodLabel = PERIOD_OPTIONS.find((x) => x.key === period)?.label ?? period;
+  const costKpiLabel = isMultiMonth
+    ? `Total Fleet Cost (${periodLabel})`
+    : `Fleet Cost (${periodLabel})`;
 
   return (
     <div className="pf9-intelligence-view">
@@ -303,42 +334,26 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
             {data.month}
           </span>
         )}
-        <input
-          type="month"
-          value={selectedMonth}
-          max={currentMonthValue()}
-          onChange={(e) => setSelectedMonth(e.target.value)}
-          style={{
-            background: "var(--pf9-card-bg, #1e293b)",
-            border: "1px solid #334155",
-            borderRadius: "6px",
-            color: "#e2e8f0",
-            padding: "0.25rem 0.4rem",
-            fontSize: "0.82rem",
-            marginLeft: "0.75rem",
-            cursor: "pointer",
-          }}
-        />
-        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", color: "#94a3b8", marginLeft: "1rem" }}>
-          Trend
-          <select
-            value={trendMonths}
-            onChange={(e) => setTrendMonths(Number(e.target.value))}
-            style={{
-              background: "var(--pf9-card-bg, #1e293b)",
-              border: "1px solid #334155",
-              borderRadius: "6px",
-              color: "#e2e8f0",
-              padding: "0.25rem 0.4rem",
-              fontSize: "0.82rem",
-              cursor: "pointer",
-            }}
-          >
-            {[3, 6, 12].map((n) => (
-              <option key={n} value={n}>{n} months</option>
-            ))}
-          </select>
-        </label>
+        <div style={{ display: "flex", gap: "0.3rem", marginLeft: "0.75rem" }}>
+          {PERIOD_OPTIONS.map((pd) => (
+            <button
+              key={pd.key}
+              onClick={() => setPeriod(pd.key)}
+              style={{
+                background: period === pd.key ? "#3b82f6" : "var(--pf9-card-bg, #1e293b)",
+                border: `1px solid ${period === pd.key ? "#3b82f6" : "#334155"}`,
+                borderRadius: "6px",
+                color: period === pd.key ? "#fff" : "#94a3b8",
+                padding: "0.25rem 0.55rem",
+                fontSize: "0.78rem",
+                cursor: "pointer",
+                fontWeight: period === pd.key ? 600 : 400,
+              }}
+            >
+              {pd.label}
+            </button>
+          ))}
+        </div>
         <button
           className="pf9-btn pf9-btn-sm"
           onClick={load}
@@ -417,7 +432,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
           ---------------------------------------------------------------- */}
           <section style={{ marginBottom: "1.5rem" }}>
             <h3 style={{ fontSize: "0.95rem", color: "#94a3b8", marginBottom: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              📡 Metering Summary — Fleet {m?.month ? m.month.slice(0, 7) : selectedMonth}
+              📡 Metering Summary — Last {periodLabel}
             </h3>
             {!hasMeteringData ? (
               <div style={{ color: "#475569", fontSize: "0.88rem", padding: "0.75rem 1rem", background: "var(--pf9-card-bg, #1e293b)", borderRadius: "8px" }}>
@@ -427,49 +442,56 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem" }}>
                 <KpiCard
                   label="Avg vCPUs Allocated"
-                  value={m!.fleet_totals.avg_vcpus != null ? m!.fleet_totals.avg_vcpus.toLocaleString() : "—"}
+                  value={ft!.avg_vcpus != null ? ft!.avg_vcpus.toLocaleString() : "—"}
                   accent="#60a5fa"
                   sub={undefined}
                 />
                 <KpiCard
                   label="Avg RAM Allocated"
-                  value={m!.fleet_totals.avg_ram_gb != null ? `${m!.fleet_totals.avg_ram_gb.toLocaleString()} GB` : "—"}
+                  value={ft!.avg_ram_gb != null ? `${ft!.avg_ram_gb.toLocaleString()} GB` : "—"}
                   accent="#a78bfa"
                   sub="Across all tenants"
                 />
                 <KpiCard
                   label="Avg Disk Allocated"
-                  value={m!.fleet_totals.avg_disk_gb != null ? `${m!.fleet_totals.avg_disk_gb.toLocaleString()} GB` : "—"}
+                  value={ft!.avg_disk_gb != null ? `${ft!.avg_disk_gb.toLocaleString()} GB` : "—"}
                   accent="#34d399"
                   sub="Across all tenants"
                 />
                 <KpiCard
                   label="Metered VMs"
-                  value={m!.fleet_totals.vm_count.toLocaleString()}
+                  value={ft!.vm_count.toLocaleString()}
                   accent="#fb923c"
-                  sub="Distinct VMs this month"
+                  sub="Distinct VMs this period"
                 />
                 <KpiCard
-                  label="Est. Fleet Cost (mo.)"
+                  label={costKpiLabel}
                   value={
-                    m!.fleet_totals.cost_this_month != null
-                      ? `${m!.fleet_totals.currency} ${m!.fleet_totals.cost_this_month.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                    ft!.cost_this_month != null
+                      ? `${ft!.currency} ${ft!.cost_this_month.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
                       : "—"
                   }
                   accent="#f59e0b"
-                  sub={undefined}
+                  sub={ft!.is_partial_month ? "Accrued so far this month" : undefined}
                 />
               </div>
             )}
-            {/* MoM growth chips below the card row */}
-            {hasMeteringData && (
+            {/* MoM growth chips — only when API provides them (monthly mode, non-null) */}
+            {hasMeteringData && (m!.fleet_totals.vcpu_growth_pct !== null || m!.fleet_totals.cost_growth_pct !== null) && (
               <div style={{ display: "flex", gap: "1rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
-                <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
-                  vCPU growth: {growthChip(m!.fleet_totals.vcpu_growth_pct)}
-                </span>
-                <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
-                  Cost growth: {growthChip(m!.fleet_totals.cost_growth_pct)}
-                </span>
+                {m!.fleet_totals.vcpu_growth_pct !== null && (
+                  <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
+                    vCPU growth: {growthChip(m!.fleet_totals.vcpu_growth_pct)}
+                  </span>
+                )}
+                {m!.fleet_totals.cost_growth_pct !== null && (
+                  <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
+                    Cost growth: {growthChip(m!.fleet_totals.cost_growth_pct)}
+                    {m!.fleet_totals.is_partial_month && (
+                      <span style={{ color: "#94a3b8", fontSize: "0.72rem", marginLeft: "0.3rem" }}>(projected full month)</span>
+                    )}
+                  </span>
+                )}
               </div>
             )}
           </section>
@@ -498,7 +520,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
           {m && m.monthly_trend.length >= 2 && (
             <section style={{ marginBottom: "1.5rem" }}>
               <h3 style={{ fontSize: "0.95rem", color: "#94a3b8", marginBottom: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                📈 6-Month Fleet Trend
+                📈 {periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Fleet Trend
               </h3>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem" }}>
                 {([
@@ -551,7 +573,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
                         <td style={{ textAlign: "right" }}>{growthChip(t.vcpu_growth_pct)}</td>
                         <td style={{ textAlign: "right" }}>
                           {t.cost_this_month != null
-                            ? `$${t.cost_this_month.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                            ? `${t.currency ?? m!.fleet_totals.currency} ${t.cost_this_month.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
                             : "—"}
                         </td>
                         <td style={{ textAlign: "right" }}>{growthChip(t.cost_growth_pct)}</td>

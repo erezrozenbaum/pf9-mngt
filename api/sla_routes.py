@@ -794,13 +794,98 @@ def get_portfolio_fleet_metering(
         description="Target month in YYYY-MM or YYYY-MM-DD format. Defaults to current month.",
         pattern=r"^\d{4}-\d{2}(-\d{2})?$",
     ),
+    days: Optional[int] = Query(
+        None,
+        ge=1,
+        le=90,
+        description="Rolling window in days (alternative to month). Queries metering_resources directly.",
+    ),
     _user: User = Depends(require_permission("sla", "read")),
 ):
     """Fleet-wide metering summary: resource totals, cost estimate, quota health,
     and month-over-month trends for the last N months."""
     from datetime import date
+    import calendar
 
     today = date.today()
+
+    # -----------------------------------------------------------------------
+    # Rolling-window mode: query metering_resources directly
+    # -----------------------------------------------------------------------
+    if days is not None:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    WITH vm_snap AS (
+                        SELECT DISTINCT ON (mr.vm_id, date_trunc('hour', mr.collected_at))
+                            mr.vm_id, mr.flavor,
+                            date_trunc('hour', mr.collected_at) AS hour,
+                            COALESCE(mr.vcpus_allocated, 0) AS vcpus,
+                            COALESCE(mr.ram_allocated_mb, 0) AS ram_mb,
+                            COALESCE(mr.disk_allocated_gb, 0) AS disk_gb
+                        FROM metering_resources mr
+                        WHERE mr.collected_at >= NOW() - (%s * INTERVAL '1 day')
+                        ORDER BY mr.vm_id, date_trunc('hour', mr.collected_at), mr.collected_at DESC
+                    ),
+                    vm_priced AS (
+                        SELECT vs.*, COALESCE(mp.cost_per_hour, 0) AS cph, mp.currency
+                        FROM vm_snap vs LEFT JOIN metering_pricing mp ON mp.item_name = vs.flavor
+                    ),
+                    hourly_agg AS (
+                        SELECT hour, SUM(vcpus) AS h_vcpus, SUM(ram_mb) AS h_ram, SUM(disk_gb) AS h_disk
+                        FROM vm_priced GROUP BY hour
+                    )
+                    SELECT
+                        COALESCE((SELECT AVG(h_vcpus) FROM hourly_agg), 0) AS avg_vcpus,
+                        COALESCE((SELECT AVG(h_ram) / 1024.0 FROM hourly_agg), 0) AS avg_ram_gb,
+                        COALESCE((SELECT AVG(h_disk) FROM hourly_agg), 0) AS avg_disk_gb,
+                        COUNT(DISTINCT vm_id) AS vm_count,
+                        COALESCE(SUM(cph), 0) AS total_cost,
+                        MAX(currency) AS currency
+                    FROM vm_priced
+                """, (days,))
+                live_row = dict(cur.fetchone() or {})
+
+                cur.execute("""
+                    SELECT resource, SUM(quota_limit) AS total_limit, SUM(in_use) AS total_used
+                    FROM project_quotas WHERE service = 'nova' AND resource IN ('cores', 'ram')
+                    GROUP BY resource
+                    UNION ALL
+                    SELECT 'storage_gb', SUM(quota_limit), SUM(in_use)
+                    FROM project_quotas WHERE service = 'cinder' AND resource = 'gigabytes'
+                """)
+                qrows = cur.fetchall()
+
+        def _f(v) -> float | None:
+            return round(float(v), 2) if v is not None else None
+
+        qhealth: dict = {}
+        for qr in qrows:
+            resource = qr["resource"]
+            limit = int(qr["total_limit"] or 0) if qr["total_limit"] else None
+            used  = int(qr["total_used"]  or 0) if qr["total_used"]  else None
+            pct   = round(used / limit * 100, 1) if limit and used is not None else None
+            qhealth[resource] = {"limit": limit, "used": used, "utilization_pct": pct}
+
+        return {
+            "period": f"{days}d",
+            "month": str(today),
+            "fleet_totals": {
+                "avg_vcpus":        _f(live_row.get("avg_vcpus")),
+                "avg_ram_gb":       _f(live_row.get("avg_ram_gb")),
+                "avg_disk_gb":      _f(live_row.get("avg_disk_gb")),
+                "cost_this_month":  _f(live_row.get("total_cost")),
+                "vm_count":         int(live_row.get("vm_count") or 0),
+                "currency":         live_row.get("currency") or "USD",
+                "vcpu_growth_pct":  None,
+                "cost_growth_pct":  None,
+                "is_partial_month": False,
+            },
+            "contracted_totals": {},
+            "quota_health":      qhealth,
+            "monthly_trend":     [],
+            "top_growing_tenants": [],
+        }
 
     # Parse optional month parameter
     if month:
@@ -898,7 +983,8 @@ def get_portfolio_fleet_metering(
                     cur.avg_vcpus  AS vcpus_this_month,
                     prev.avg_vcpus AS vcpus_prev_month,
                     cur.estimated_cost  AS cost_this_month,
-                    prev.estimated_cost AS cost_prev_month
+                    prev.estimated_cost AS cost_prev_month,
+                    COALESCE(cur.currency, 'USD') AS currency
                 FROM projects p
                 JOIN portfolio_metering_monthly cur  ON cur.tenant_id  = p.id AND cur.month  = %s
                 JOIN portfolio_metering_monthly prev ON prev.tenant_id = p.id AND prev.month = %s
@@ -927,6 +1013,14 @@ def get_portfolio_fleet_metering(
             return None
         return round((float(cur_val) - float(prev_val)) / float(prev_val) * 100, 1)
 
+    # Determine if selected month is the current (partial) month; normalize for fair growth comparison
+    days_in_month = calendar.monthrange(month_start.year, month_start.month)[1]
+    is_current_month = month_start == today.replace(day=1)
+    days_elapsed = today.day if is_current_month else days_in_month
+
+    raw_fleet_cost = float(fleet_row.get("fleet_cost_this_month") or 0)
+    norm_fleet_cost = raw_fleet_cost * days_in_month / days_elapsed if is_current_month and days_elapsed > 0 else raw_fleet_cost
+
     # Quota health map
     quota_health: dict = {}
     for qr in quota_rows:
@@ -951,7 +1045,13 @@ def get_portfolio_fleet_metering(
     # Format growth rows
     def _growth_row(r: dict) -> dict:
         vcpu_growth = _growth(r.get("vcpus_this_month"), r.get("vcpus_prev_month"))
-        cost_growth = _growth(r.get("cost_this_month"),  r.get("cost_prev_month"))
+        raw_cost = r.get("cost_this_month")
+        # Normalize current-month cost to projected full-month for fair comparison
+        if is_current_month and days_elapsed > 0 and raw_cost is not None:
+            norm_cost = float(raw_cost) * days_in_month / days_elapsed
+        else:
+            norm_cost = raw_cost
+        cost_growth = _growth(norm_cost, r.get("cost_prev_month"))
         return {
             "tenant_name":      r["tenant_name"],
             "vcpus_this_month": _f(r.get("vcpus_this_month")),
@@ -960,12 +1060,14 @@ def get_portfolio_fleet_metering(
             "cost_this_month":  _f(r.get("cost_this_month")),
             "cost_prev_month":  _f(r.get("cost_prev_month")),
             "cost_growth_pct":  cost_growth,
+            "currency":         r.get("currency", "USD"),
         }
 
     fleet_vcpu_prev = float(prev_row.get("fleet_avg_vcpus") or 0)
     fleet_cost_prev = float(prev_row.get("fleet_cost") or 0)
 
     return {
+        "period": f"{months}m",
         "month": str(month_start),
         "fleet_totals": {
             "avg_vcpus":           _f(fleet_row.get("fleet_avg_vcpus")),
@@ -975,7 +1077,8 @@ def get_portfolio_fleet_metering(
             "vm_count":            int(fleet_row.get("fleet_vm_count") or 0),
             "currency":            fleet_row.get("currency") or "USD",
             "vcpu_growth_pct":     _growth(fleet_row.get("fleet_avg_vcpus"), fleet_vcpu_prev),
-            "cost_growth_pct":     _growth(fleet_row.get("fleet_cost_this_month"), fleet_cost_prev),
+            "cost_growth_pct":     _growth(norm_fleet_cost, fleet_cost_prev),
+            "is_partial_month":    is_current_month,
         },
         "contracted_totals": contract_rows,
         "quota_health":      quota_health,
