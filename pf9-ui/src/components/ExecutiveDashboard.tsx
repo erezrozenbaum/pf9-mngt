@@ -250,6 +250,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
   const [metering, setMetering] = useState<FleetMeteringResponse | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
+  const [trendMonths, setTrendMonths] = useState<number>(6);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -257,7 +258,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
     try {
       const [summaryResp, meteringResp] = await Promise.all([
         apiFetch<ExecutiveSummaryResponse>("/api/sla/portfolio/executive-summary"),
-        apiFetch<FleetMeteringResponse>("/api/sla/portfolio/fleet-metering?months=6"),
+        apiFetch<FleetMeteringResponse>(`/api/sla/portfolio/fleet-metering?months=${trendMonths}`),
       ]);
       setData(summaryResp);
       setMetering(meteringResp);
@@ -266,7 +267,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [trendMonths]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -274,7 +275,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
   const m    = metering;
   const mttr = s ? mttrStatus(s.avg_mttr_hours, s.avg_mttr_commitment_hours) : null;
 
-  const trendMonths = m?.monthly_trend.map((t) => t.month.slice(0, 7)) ?? [];
+  const trendLabels = m?.monthly_trend.map((t) => t.month.slice(0, 7)) ?? [];
   const vcpuTrend   = m?.monthly_trend.map((t) => t.total_avg_vcpus ?? 0) ?? [];
   const costTrend   = m?.monthly_trend.map((t) => t.total_cost ?? 0) ?? [];
   const vmTrend     = m?.monthly_trend.map((t) => t.total_vms ?? 0) ?? [];
@@ -292,6 +293,26 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
             {data.month}
           </span>
         )}
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", color: "#94a3b8", marginLeft: "1rem" }}>
+          Trend
+          <select
+            value={trendMonths}
+            onChange={(e) => setTrendMonths(Number(e.target.value))}
+            style={{
+              background: "var(--pf9-card-bg, #1e293b)",
+              border: "1px solid #334155",
+              borderRadius: "6px",
+              color: "#e2e8f0",
+              padding: "0.25rem 0.4rem",
+              fontSize: "0.82rem",
+              cursor: "pointer",
+            }}
+          >
+            {[3, 6, 12].map((n) => (
+              <option key={n} value={n}>{n} months</option>
+            ))}
+          </select>
+        </label>
         <button
           className="pf9-btn pf9-btn-sm"
           onClick={load}
@@ -466,8 +487,8 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
                     <div style={{ fontSize: "0.8rem", color: "#94a3b8", marginBottom: "6px" }}>{label}</div>
                     <Sparkline values={[...values]} color={color} />
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem", color: "#475569", marginTop: "4px" }}>
-                      <span>{trendMonths[0]}</span>
-                      <span>{trendMonths[trendMonths.length - 1]}</span>
+                      <span>{trendLabels[0]}</span>
+                      <span>{trendLabels[trendLabels.length - 1]}</span>
                     </div>
                   </div>
                 ))}
