@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New backend endpoint `GET /api/sla/portfolio/fleet-metering` — returns fleet totals, quota health, monthly trend (up to 24 months), and top-growing tenant ranking.
   - Enhanced `GET /api/sla/portfolio/summary` — now returns per-tenant quota limits/used for vCPU, RAM, and storage; contracted RAM and storage entitlements; metering aggregates from `portfolio_metering_monthly`; and MoM growth percentages for vCPU, RAM, and cost.
 
+### Security
+- **CVE-2026-44405**: Bumped `paramiko` from `3.4.0` to `5.0.0`. Paramiko through 4.0.0 allowed SHA-1 in RSA key operations (`rsakey.py`); fixed upstream in commit a448945 and released in 5.0.0. Verified no breaking API changes in `log_collector.py` (the sole paramiko consumer). API health confirmed after upgrade on local Docker dev environment.
+
 ---
 
 ## [1.95.12] - 2026-05-07
