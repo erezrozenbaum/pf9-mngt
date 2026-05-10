@@ -63,6 +63,7 @@ interface PortfolioSummaryResponse {
   portfolio: PortfolioTenant[];
   month: string;
   total: number;
+  domains: string[];
 }
 
 type SortKey = "name" | "tier" | "status" | "quota_vcpu" | "quota_ram" | "vcpu_growth" | "cost" | "critical";
@@ -130,6 +131,11 @@ function costCell(cost: number | null, currency: string, growth: number | null):
 // Component
 // ---------------------------------------------------------------------------
 
+function currentMonthValue(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export default function AccountManagerDashboard({ userRole: _userRole }: Props) {
   const [data, setData] = useState<PortfolioSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -138,19 +144,24 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAsc, setSortAsc] = useState(true);
+  const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthValue());
+  const [selectedDomain, setSelectedDomain] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await apiFetch<PortfolioSummaryResponse>("/api/sla/portfolio/summary");
+      const params = new URLSearchParams();
+      params.set("month", selectedMonth);
+      if (selectedDomain) params.set("domain", selectedDomain);
+      const resp = await apiFetch<PortfolioSummaryResponse>(`/api/sla/portfolio/summary?${params}`);
       setData(resp);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load portfolio");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedMonth, selectedDomain]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -242,6 +253,49 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
         >
           {loading ? "Loading…" : "↻ Refresh"}
         </button>
+      </div>
+
+      {/* Month + domain filters */}
+      <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center", marginBottom: "1rem" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem", color: "#94a3b8" }}>
+          📅 Month
+          <input
+            type="month"
+            value={selectedMonth}
+            max={currentMonthValue()}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            style={{
+              background: "var(--pf9-card-bg, #1e293b)",
+              border: "1px solid #334155",
+              borderRadius: "6px",
+              color: "#e2e8f0",
+              padding: "0.3rem 0.5rem",
+              fontSize: "0.85rem",
+              cursor: "pointer",
+            }}
+          />
+        </label>
+        {data && data.domains.length > 1 && (
+          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem", color: "#94a3b8" }}>
+            🏢 Org
+            <select
+              value={selectedDomain}
+              onChange={(e) => setSelectedDomain(e.target.value)}
+              style={{
+                background: "var(--pf9-card-bg, #1e293b)",
+                border: "1px solid #334155",
+                borderRadius: "6px",
+                color: "#e2e8f0",
+                padding: "0.3rem 0.5rem",
+                fontSize: "0.85rem",
+                cursor: "pointer",
+              }}
+            >
+              <option value="">All orgs</option>
+              {data.domains.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </label>
+        )}
       </div>
 
       {/* KPI strip */}

@@ -404,23 +404,45 @@ def generate_compliance_report(
 
 @router.get("/portfolio/summary")
 def get_portfolio_summary(
+    month: Optional[str] = Query(
+        None,
+        description="Target month in YYYY-MM or YYYY-MM-DD format. Defaults to current month.",
+        pattern=r"^\d{4}-\d{2}(-\d{2})?$",
+    ),
+    domain: Optional[str] = Query(None, description="Filter by domain/org name (case-insensitive)."),
     _user: User = Depends(require_permission("sla", "read")),
 ):
     """Per-tenant portfolio summary: SLA status, contract usage, quota vs real usage,
     metering cost, resource growth, and open insights."""
     from datetime import date
-    from calendar import monthrange
     today = date.today()
-    month_start = today.replace(day=1)
-    # Previous month for growth comparison
-    if today.month == 1:
-        prev_month_start = today.replace(year=today.year - 1, month=12, day=1)
+
+    # Parse optional month parameter
+    if month:
+        try:
+            parts = month.split("-")
+            month_start = date(int(parts[0]), int(parts[1]), 1)
+        except (ValueError, IndexError):
+            month_start = today.replace(day=1)
     else:
-        prev_month_start = today.replace(month=today.month - 1, day=1)
+        month_start = today.replace(day=1)
+
+    # Previous month for growth comparison
+    if month_start.month == 1:
+        prev_month_start = month_start.replace(year=month_start.year - 1, month=12, day=1)
+    else:
+        prev_month_start = month_start.replace(month=month_start.month - 1, day=1)
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
+            # Build optional domain filter
+            domain_clause = ""
+            domain_params: list = []
+            if domain:
+                domain_clause = "LEFT JOIN domains d ON d.id = p.domain_id WHERE LOWER(d.name) = LOWER(%s)"
+                domain_params = [domain]
+
+            cur.execute(f"""
                 SELECT
                     p.id                                        AS tenant_id,
                     p.name                                      AS tenant_name,
@@ -460,6 +482,7 @@ def get_portfolio_summary(
                     pmm_prev.estimated_cost                     AS prev_metered_cost
 
                 FROM projects p
+                {domain_clause}
                 LEFT JOIN sla_commitments sc ON sc.tenant_id = p.id
                     AND sc.effective_to IS NULL
                 LEFT JOIN sla_compliance_monthly cm ON cm.tenant_id = p.id
@@ -519,7 +542,7 @@ def get_portfolio_summary(
                     ON pmm_prev.tenant_id = p.id AND pmm_prev.month = %s
 
                 ORDER BY p.name ASC
-            """, (month_start, month_start, prev_month_start))
+            """, domain_params + [month_start, month_start, prev_month_start])
             rows = cur.fetchall()
 
     def _f(v) -> float | None:
@@ -631,7 +654,25 @@ def get_portfolio_summary(
             "leakage_insight_count": int(row.get("leakage_insight_count") or 0),
         })
 
-    return {"portfolio": results, "month": str(month_start), "total": len(results)}
+    # Build available domains list for the UI filter dropdown
+    try:
+        with get_connection() as conn2:
+            with conn2.cursor() as cur2:
+                cur2.execute("""
+                    SELECT DISTINCT d.name FROM domains d
+                    JOIN projects p ON p.domain_id = d.id
+                    ORDER BY d.name
+                """)
+                domain_list = [r[0] for r in cur2.fetchall() if r[0]]
+    except Exception:
+        domain_list = []
+
+    return {
+        "portfolio": results,
+        "month":     str(month_start),
+        "total":     len(results),
+        "domains":   domain_list,
+    }
 
 
 # ---------------------------------------------------------------------------

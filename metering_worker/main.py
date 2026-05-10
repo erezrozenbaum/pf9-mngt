@@ -931,6 +931,234 @@ def prune_old_records(conn, retention_days: int):
     conn.commit()
 
 
+# ---------------------------------------------------------------------------
+# Portfolio metering monthly aggregation
+# ---------------------------------------------------------------------------
+
+def compute_portfolio_metering_monthly(conn, target_month: Optional[datetime.date] = None) -> int:
+    """
+    Aggregate per-tenant metering data for a calendar month and upsert into
+    portfolio_metering_monthly.
+
+    Logic:
+      1. For each project, bucket metering_resources readings by hour so that
+         VMs counted once per hour avoid inflating counts from 60-s polls.
+      2. Average the hourly totals across the month → avg_vcpus / avg_ram_gb / avg_disk_gb.
+      3. Peak = max hourly total in the month.
+      4. VM count = max distinct VMs seen in any single hour.
+      5. Join with project_quotas for live quota limits/used.
+      6. Estimate cost from msp_contract_entitlements.unit_price (vcpu × hours × price).
+         Falls back to NULL when no pricing is configured (shown as "—" in the UI).
+      7. Upsert (INSERT … ON CONFLICT DO UPDATE) so the current month row stays fresh.
+
+    Called every collection cycle for the current month and once at startup for
+    the previous 6 months (backfill).
+    """
+    if target_month is None:
+        today = datetime.date.today()
+        target_month = today.replace(day=1)
+
+    # Compute next month boundary
+    if target_month.month == 12:
+        next_month = target_month.replace(year=target_month.year + 1, month=1)
+    else:
+        next_month = target_month.replace(month=target_month.month + 1)
+
+    month_ts     = datetime.datetime(target_month.year, target_month.month, 1,
+                                     tzinfo=datetime.timezone.utc)
+    next_month_ts = datetime.datetime(next_month.year, next_month.month, 1,
+                                      tzinfo=datetime.timezone.utc)
+
+    # Hours in the month (for cost = avg_vcpus × hours × unit_price)
+    hours_in_month = int((next_month_ts - month_ts).total_seconds() / 3600)
+
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # -------------------------------------------------------------------
+            # Step 1: hourly-bucketed totals per project
+            # -------------------------------------------------------------------
+            cur.execute("""
+                WITH hourly AS (
+                    SELECT
+                        mr.project_name,
+                        mr.domain,
+                        date_trunc('hour', mr.collected_at) AS hour,
+                        SUM(COALESCE(mr.vcpus_allocated,  0))            AS h_vcpus,
+                        SUM(COALESCE(mr.ram_allocated_mb, 0)) / 1024.0   AS h_ram_gb,
+                        SUM(COALESCE(mr.disk_allocated_gb,0))            AS h_disk_gb,
+                        COUNT(DISTINCT mr.vm_id)                         AS h_vm_count
+                    FROM metering_resources mr
+                    WHERE mr.collected_at >= %s
+                      AND mr.collected_at <  %s
+                      AND mr.project_name IS NOT NULL
+                      AND mr.project_name != ''
+                    GROUP BY mr.project_name, mr.domain,
+                             date_trunc('hour', mr.collected_at)
+                ),
+                monthly AS (
+                    SELECT
+                        project_name,
+                        domain,
+                        ROUND(AVG(h_vcpus)::numeric,    2) AS avg_vcpus,
+                        ROUND(AVG(h_ram_gb)::numeric,   2) AS avg_ram_gb,
+                        ROUND(AVG(h_disk_gb)::numeric,  2) AS avg_disk_gb,
+                        MAX(h_vcpus)                        AS peak_vcpus,
+                        ROUND(MAX(h_ram_gb)::numeric,   2) AS peak_ram_gb,
+                        MAX(h_vm_count)                     AS vm_count
+                    FROM hourly
+                    GROUP BY project_name, domain
+                )
+                SELECT
+                    p.id                                   AS tenant_id,
+                    m.avg_vcpus,
+                    m.avg_ram_gb,
+                    m.avg_disk_gb,
+                    m.peak_vcpus,
+                    m.peak_ram_gb,
+                    m.vm_count,
+                    -- Quota limits (from project_quotas, OpenStack-synced)
+                    pq_cpu.quota_limit                     AS quota_vcpu_limit,
+                    pq_cpu.in_use                          AS quota_vcpu_used,
+                    pq_ram.quota_limit                     AS quota_ram_limit_mb,
+                    pq_ram.in_use                          AS quota_ram_used_mb,
+                    pq_stor.quota_limit                    AS quota_storage_limit_gb,
+                    pq_stor.in_use                         AS quota_storage_used_gb,
+                    -- Cost: avg_vcpus × hours × unit_price per vCPU
+                    CASE
+                        WHEN ce.unit_price IS NOT NULL AND ce.unit_price > 0
+                        THEN ROUND((m.avg_vcpus * %s * ce.unit_price)::numeric, 2)
+                        ELSE 0
+                    END                                    AS estimated_cost,
+                    'USD'                                  AS currency
+                FROM monthly m
+                -- Map project_name → project id via projects + domains tables
+                JOIN projects p ON p.name = m.project_name
+                LEFT JOIN domains d ON d.id = p.domain_id
+                    AND (m.domain IS NULL OR m.domain = '' OR d.name = m.domain)
+                -- Quota limits (nova: cores = vCPU, ram = MB)
+                LEFT JOIN project_quotas pq_cpu
+                    ON pq_cpu.project_id = p.id
+                   AND pq_cpu.service = 'nova' AND pq_cpu.resource = 'cores'
+                LEFT JOIN project_quotas pq_ram
+                    ON pq_ram.project_id = p.id
+                   AND pq_ram.service = 'nova' AND pq_ram.resource = 'ram'
+                LEFT JOIN project_quotas pq_stor
+                    ON pq_stor.project_id = p.id
+                   AND pq_stor.service = 'cinder' AND pq_stor.resource = 'gigabytes'
+                -- Contract unit price (most recent active vcpu entitlement)
+                LEFT JOIN LATERAL (
+                    SELECT unit_price
+                    FROM   msp_contract_entitlements
+                    WHERE  tenant_id = p.id
+                      AND  resource  = 'vcpu'
+                      AND  effective_to IS NULL
+                      AND  unit_price IS NOT NULL
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ) ce ON TRUE
+            """, (month_ts, next_month_ts, hours_in_month))
+            agg_rows = cur.fetchall()
+
+        if not agg_rows:
+            log.debug("Portfolio monthly aggregation for %s: no metering_resources data yet", target_month)
+            return 0
+
+        upsert_sql = """
+            INSERT INTO portfolio_metering_monthly (
+                tenant_id, month,
+                avg_vcpus, avg_ram_gb, avg_disk_gb,
+                peak_vcpus, peak_ram_gb,
+                quota_vcpu_limit,    quota_vcpu_used,
+                quota_ram_limit_mb,  quota_ram_used_mb,
+                quota_storage_limit_gb, quota_storage_used_gb,
+                estimated_cost, currency,
+                vm_count, computed_at
+            ) VALUES (
+                %(tenant_id)s, %(month)s,
+                %(avg_vcpus)s, %(avg_ram_gb)s, %(avg_disk_gb)s,
+                %(peak_vcpus)s, %(peak_ram_gb)s,
+                %(quota_vcpu_limit)s,    %(quota_vcpu_used)s,
+                %(quota_ram_limit_mb)s,  %(quota_ram_used_mb)s,
+                %(quota_storage_limit_gb)s, %(quota_storage_used_gb)s,
+                %(estimated_cost)s, %(currency)s,
+                %(vm_count)s, now()
+            )
+            ON CONFLICT (tenant_id, month) DO UPDATE SET
+                avg_vcpus              = EXCLUDED.avg_vcpus,
+                avg_ram_gb             = EXCLUDED.avg_ram_gb,
+                avg_disk_gb            = EXCLUDED.avg_disk_gb,
+                peak_vcpus             = EXCLUDED.peak_vcpus,
+                peak_ram_gb            = EXCLUDED.peak_ram_gb,
+                quota_vcpu_limit       = EXCLUDED.quota_vcpu_limit,
+                quota_vcpu_used        = EXCLUDED.quota_vcpu_used,
+                quota_ram_limit_mb     = EXCLUDED.quota_ram_limit_mb,
+                quota_ram_used_mb      = EXCLUDED.quota_ram_used_mb,
+                quota_storage_limit_gb = EXCLUDED.quota_storage_limit_gb,
+                quota_storage_used_gb  = EXCLUDED.quota_storage_used_gb,
+                estimated_cost         = EXCLUDED.estimated_cost,
+                currency               = EXCLUDED.currency,
+                vm_count               = EXCLUDED.vm_count,
+                computed_at            = now()
+        """
+
+        batch = []
+        for row in agg_rows:
+            batch.append({
+                "tenant_id":              row["tenant_id"],
+                "month":                  target_month,
+                "avg_vcpus":              row["avg_vcpus"],
+                "avg_ram_gb":             row["avg_ram_gb"],
+                "avg_disk_gb":            row["avg_disk_gb"],
+                "peak_vcpus":             row["peak_vcpus"],
+                "peak_ram_gb":            row["peak_ram_gb"],
+                "quota_vcpu_limit":       row["quota_vcpu_limit"],
+                "quota_vcpu_used":        row["quota_vcpu_used"],
+                "quota_ram_limit_mb":     row["quota_ram_limit_mb"],
+                "quota_ram_used_mb":      row["quota_ram_used_mb"],
+                "quota_storage_limit_gb": row["quota_storage_limit_gb"],
+                "quota_storage_used_gb":  row["quota_storage_used_gb"],
+                "estimated_cost":         row["estimated_cost"] or 0,
+                "currency":               row["currency"],
+                "vm_count":               row["vm_count"],
+            })
+
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_batch(cur, upsert_sql, batch, page_size=100)
+        conn.commit()
+        log.info("Portfolio monthly aggregation for %s: upserted %d tenant rows", target_month, len(batch))
+        return len(batch)
+
+    except Exception as exc:
+        log.error("compute_portfolio_metering_monthly(%s) failed: %s", target_month, exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+
+
+def backfill_portfolio_metering_monthly(conn, months: int = 6) -> None:
+    """
+    Compute portfolio_metering_monthly for the past N calendar months.
+    Safe to call repeatedly; each month is an upsert.
+    Skips the current month (handled by run_collection_cycle every cycle).
+    """
+    today = datetime.date.today()
+    for i in range(1, months + 1):
+        # Walk back month by month
+        m = today.month - i
+        y = today.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        target = datetime.date(y, m, 1)
+        n = compute_portfolio_metering_monthly(conn, target_month=target)
+        if n:
+            log.info("Backfilled %d tenant rows for %s", n, target)
+        else:
+            log.debug("No data to backfill for %s", target)
+
+
 _ALIVE_FILE = "/tmp/alive"
 
 
@@ -1016,6 +1244,10 @@ def run_collection_cycle():
 
         prune_old_records(conn, retention_days)
 
+        # Aggregate current month into portfolio_metering_monthly (upsert — safe every cycle)
+        n = compute_portfolio_metering_monthly(conn)
+        log.info("Portfolio metering monthly (current month): %d tenant rows upserted", n)
+
         log.info("=== Metering collection cycle complete ===")
 
     except Exception as exc:
@@ -1066,6 +1298,17 @@ def main():
         conn.close()
     except Exception as exc:
         log.warning("Startup quota backfill failed (non-fatal): %s", exc)
+
+    # Startup backfill: populate portfolio_metering_monthly for the past 6 months
+    # using existing metering_resources data. Safe if the table already has rows —
+    # each month is an upsert. Provides immediate data on first deploy / pod restart.
+    try:
+        conn = get_conn()
+        log.info("Running portfolio metering monthly backfill (last 6 months)…")
+        backfill_portfolio_metering_monthly(conn, months=6)
+        conn.close()
+    except Exception as exc:
+        log.warning("Portfolio metering monthly backfill failed (non-fatal): %s", exc)
 
     # POLL_INTERVAL (env var, Helm-controlled) governs the actual cadence.
     # collection_interval_min from the DB is a display-only admin setting;

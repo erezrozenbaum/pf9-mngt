@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.14] - 2026-05-10
+
+### Fixed
+- **Metering data pipeline** (`metering_worker`): `portfolio_metering_monthly` was never populated because the monthly aggregation function was documented but not implemented. Added `compute_portfolio_metering_monthly()` that hourly-buckets `metering_resources` rows per tenant, averages them across the month (avg/peak vCPUs, RAM, disk; distinct VM count), joins `project_quotas` for quota limits/used, and upserts via `INSERT … ON CONFLICT DO UPDATE` on every collection cycle.
+- **Startup backfill**: on pod/container restart the metering worker now backfills the past 6 calendar months immediately using existing `metering_resources` data so dashboards show historical data from first boot.
+- **`GET /api/sla/portfolio/summary`**: added optional `month` query parameter (format `YYYY-MM` or `YYYY-MM-DD`, defaults to current month) so the UI can display any historical month.
+- **`GET /api/sla/portfolio/summary`**: added optional `domain` query parameter to filter results by OpenStack domain/org (case-insensitive).
+- **`GET /api/sla/portfolio/summary`**: response now includes a `domains` array for the UI filter dropdown.
+- **My Portfolio** (`AccountManagerDashboard`): added 📅 month picker (HTML `<input type="month">`, capped at current month) and 🏢 org filter dropdown (shown only when multiple domains exist). Changing either re-fetches from the API automatically.
+- **Portfolio Health** (`ExecutiveDashboard`): added "Trend" selector (3 / 6 / 12 months) to control how many months the sparkline charts cover; changing it re-fetches the fleet-metering endpoint.
+
+---
+
 ## [1.95.13] - 2026-05-10
 
 ### Added
