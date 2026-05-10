@@ -679,4 +679,39 @@ WHERE bc.billing_model != 'prepaid';
 
 ---
 
+## 📊 **Portfolio Intelligence Integration (v1.95.13)**
+
+The `portfolio_metering_monthly` table extends the metering system with a pre-aggregated monthly summary that powers the intelligence dashboards.
+
+### **Table: `portfolio_metering_monthly`**
+
+One row per (tenant, month) pair. Written by `metering_worker` at the start of each calendar month using UPSERT.
+
+| Column | Type | Description |
+|---|---|---|
+| `tenant_id` | TEXT | FK → `projects.id` |
+| `month` | DATE | First day of month (e.g. `2026-05-01`) |
+| `avg_vcpus` | NUMERIC(10,2) | Mean vCPUs across daily metering snapshots |
+| `avg_ram_gb` | NUMERIC(10,2) | Mean RAM in GB |
+| `avg_disk_gb` | NUMERIC(10,2) | Mean disk in GB |
+| `peak_vcpus` | INTEGER | Highest single-day vCPU count |
+| `peak_ram_gb` | NUMERIC(10,2) | Highest single-day RAM in GB |
+| `quota_vcpu_limit/used` | INTEGER | Snapshot from `project_quotas` at month-end |
+| `quota_ram_limit/used_mb` | INTEGER | RAM quota in MB |
+| `quota_storage_limit_gb/used_gb` | INTEGER/NUMERIC | Storage quota snapshot |
+| `estimated_cost` | NUMERIC(14,4) | Computed from `metering_config` unit rates |
+| `currency` | TEXT | ISO 4217 currency code |
+| `vm_count` | INTEGER | Distinct VMs observed this month |
+
+### **Dashboard endpoints powered by this table**
+
+| Endpoint | Dashboard | Data used |
+|----------|-----------|-----------|
+| `GET /api/sla/portfolio/summary` | My Portfolio | Per-tenant metering, quota, and MoM growth |
+| `GET /api/sla/portfolio/fleet-metering?months=N` | Portfolio Health | Fleet totals, quota health, trend, top growers |
+
+Both endpoints perform LEFT JOINs so tenants with no metering data still appear — metering fields return `null` and growth shows as `—`.
+
+---
+
 *This guide documents the complete v1.95 billing enhancement system. For technical support or additional configuration assistance, refer to the API documentation and database schema references provided in this guide.*

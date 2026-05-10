@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-1.95.12-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-1.95.13-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -283,6 +283,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v1.95.13** — Intelligence Views: metering summary, quota vs real usage, resource growth MoM, cost growth MoM — My Portfolio and Portfolio Health dashboards (May 2026)
 - **v1.95.12** — Security hardening: removed hardcoded JWT fallback keys, anonymized infra IPs in docs, untracked bandit scan results (May 2026)
 - **v1.95.11** — Fix API OOMKill (2 Gi memory), SG rule management in Resources panel, deps panel light-mode contrast, quota input overflow (May 2026)
 - **v1.95.10** — Chargeback tab restored (label fix), tenant portal shows VM hours in row + lifecycle changes panel (May 2026)

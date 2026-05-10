@@ -4461,3 +4461,39 @@ CREATE TABLE IF NOT EXISTS dashboard_health_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_dashboard_health_snapshots_date
     ON dashboard_health_snapshots(snapshot_date DESC);
+
+-- ---------------------------------------------------------------------------
+-- Portfolio Metering Monthly (v1.95.13)
+-- Pre-aggregated per-tenant monthly resource and cost summary.
+-- Written by metering_worker (UPSERT on first collection of each month).
+-- Read by /api/sla/portfolio/summary and /api/sla/portfolio/fleet-metering.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS portfolio_metering_monthly (
+    tenant_id              TEXT           NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    month                  DATE           NOT NULL,  -- first day of month (YYYY-MM-01)
+    -- Allocated resources (averaged over the month from metering_resources)
+    avg_vcpus              NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    avg_ram_gb             NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    avg_disk_gb            NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    -- Peak resources
+    peak_vcpus             INTEGER        NOT NULL DEFAULT 0,
+    peak_ram_gb            NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    -- Quota snapshot at end of month (from project_quotas)
+    quota_vcpu_limit       INTEGER,
+    quota_vcpu_used        INTEGER,
+    quota_ram_limit_mb     INTEGER,
+    quota_ram_used_mb      INTEGER,
+    quota_storage_limit_gb INTEGER,
+    quota_storage_used_gb  NUMERIC(10,2),
+    -- Estimated cost (metering_config rates × allocated resources × hours)
+    estimated_cost         NUMERIC(14,4)  NOT NULL DEFAULT 0,
+    currency               TEXT           NOT NULL DEFAULT 'USD',
+    -- Distinct VMs observed this month
+    vm_count               INTEGER        NOT NULL DEFAULT 0,
+    computed_at            TIMESTAMPTZ    NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, month)
+);
+CREATE INDEX IF NOT EXISTS idx_pmm_tenant_month
+    ON portfolio_metering_monthly(tenant_id, month DESC);
+CREATE INDEX IF NOT EXISTS idx_pmm_month
+    ON portfolio_metering_monthly(month DESC);

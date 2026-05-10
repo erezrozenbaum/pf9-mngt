@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.13] - 2026-05-10
+
+### Added
+- **Intelligence Views — Metering & Growth enhancements** (`My Portfolio` + `Portfolio Health`)
+  - New DB table `portfolio_metering_monthly`: pre-aggregated per-tenant monthly metering totals (vCPUs, RAM, disk, cost, VM count) written by the metering worker. Serves as the data source for all growth and cost calculations.
+  - **My Portfolio** (`AccountManagerDashboard`): added vCPU quota vs usage bar, RAM quota vs usage bar, storage quota vs usage bar, metered VM count, estimated monthly cost, and month-over-month vCPU / cost growth badge per tenant. Table is now sortable by any column. KPI strip extended with "Quota Under Pressure" and "Growing Tenants" counts plus fleet cost total.
+  - **Portfolio Health** (`ExecutiveDashboard`): added Metering Summary section (fleet avg vCPUs, RAM, disk, VM count, estimated cost with MoM growth chips), Quota Utilisation section (fleet-wide vCPU/RAM/storage bars), 6-Month Fleet Trend sparklines (vCPUs, cost, VMs), and Fastest-Growing Tenants table (top 10 by MoM vCPU growth).
+  - New backend endpoint `GET /api/sla/portfolio/fleet-metering` — returns fleet totals, quota health, monthly trend (up to 24 months), and top-growing tenant ranking.
+  - Enhanced `GET /api/sla/portfolio/summary` — now returns per-tenant quota limits/used for vCPU, RAM, and storage; contracted RAM and storage entitlements; metering aggregates from `portfolio_metering_monthly`; and MoM growth percentages for vCPU, RAM, and cost.
+
+---
+
 ## [1.95.12] - 2026-05-07
 
 ### Security

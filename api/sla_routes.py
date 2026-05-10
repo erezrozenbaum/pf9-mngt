@@ -406,9 +406,17 @@ def generate_compliance_report(
 def get_portfolio_summary(
     _user: User = Depends(require_permission("sla", "read")),
 ):
-    """Per-tenant portfolio summary: SLA status, contract usage, open insights."""
+    """Per-tenant portfolio summary: SLA status, contract usage, quota vs real usage,
+    metering cost, resource growth, and open insights."""
     from datetime import date
-    month_start = date.today().replace(day=1)
+    from calendar import monthrange
+    today = date.today()
+    month_start = today.replace(day=1)
+    # Previous month for growth comparison
+    if today.month == 1:
+        prev_month_start = today.replace(year=today.year - 1, month=12, day=1)
+    else:
+        prev_month_start = today.replace(month=today.month - 1, day=1)
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -419,28 +427,73 @@ def get_portfolio_summary(
                     sc.tier,
                     cm.breach_fields,
                     cm.at_risk_fields,
-                    COALESCE(ce.total_contracted_vcpu, 0)       AS contracted_vcpu,
-                    COALESCE(pq.used_vcpu, 0)                   AS used_vcpu,
+
+                    -- Contracted resources
+                    COALESCE(ce_vcpu.contracted, 0)             AS contracted_vcpu,
+                    COALESCE(ce_ram.contracted,  0)             AS contracted_ram_mb,
+                    COALESCE(ce_stor.contracted, 0)             AS contracted_storage_gb,
+
+                    -- Live quota limits (project_quotas)
+                    pq_cpu.quota_limit                          AS quota_vcpu_limit,
+                    pq_cpu.in_use                               AS quota_vcpu_used,
+                    pq_ram.quota_limit                          AS quota_ram_limit_mb,
+                    pq_ram.in_use                               AS quota_ram_used_mb,
+                    pq_stor.quota_limit                         AS quota_storage_limit_gb,
+                    pq_stor.in_use                              AS quota_storage_used_gb,
+
+                    -- Open insights
                     COALESCE(oi.critical_count, 0)              AS open_critical_count,
                     COALESCE(oi.total_count, 0)                 AS open_total_count,
-                    COALESCE(lk.leakage_count, 0)               AS leakage_insight_count
+                    COALESCE(lk.leakage_count, 0)               AS leakage_insight_count,
+
+                    -- Current-month metering aggregates
+                    pmm_cur.avg_vcpus                           AS metered_avg_vcpus,
+                    pmm_cur.avg_ram_gb                          AS metered_avg_ram_gb,
+                    pmm_cur.avg_disk_gb                         AS metered_avg_disk_gb,
+                    pmm_cur.estimated_cost                      AS metered_cost_this_month,
+                    pmm_cur.currency                            AS metered_currency,
+                    pmm_cur.vm_count                            AS metered_vm_count,
+
+                    -- Previous-month metering aggregates (for growth)
+                    pmm_prev.avg_vcpus                          AS prev_avg_vcpus,
+                    pmm_prev.avg_ram_gb                         AS prev_avg_ram_gb,
+                    pmm_prev.estimated_cost                     AS prev_metered_cost
+
                 FROM projects p
                 LEFT JOIN sla_commitments sc ON sc.tenant_id = p.id
                     AND sc.effective_to IS NULL
                 LEFT JOIN sla_compliance_monthly cm ON cm.tenant_id = p.id
                     AND cm.month = %s AND cm.region_id = ''
+
+                -- Contracted resources (separate joins per resource type)
                 LEFT JOIN (
-                    SELECT tenant_id, SUM(contracted) AS total_contracted_vcpu
+                    SELECT tenant_id, SUM(contracted) AS contracted
                     FROM   msp_contract_entitlements
                     WHERE  resource = 'vcpu' AND effective_to IS NULL
                     GROUP BY tenant_id
-                ) ce ON ce.tenant_id = p.id
+                ) ce_vcpu ON ce_vcpu.tenant_id = p.id
                 LEFT JOIN (
-                    SELECT project_id, SUM(in_use) AS used_vcpu
-                    FROM   project_quotas
-                    WHERE  resource = 'cores' AND service = 'nova'
-                    GROUP BY project_id
-                ) pq ON pq.project_id = p.id
+                    SELECT tenant_id, SUM(contracted) AS contracted
+                    FROM   msp_contract_entitlements
+                    WHERE  resource IN ('ram', 'ram_mb') AND effective_to IS NULL
+                    GROUP BY tenant_id
+                ) ce_ram ON ce_ram.tenant_id = p.id
+                LEFT JOIN (
+                    SELECT tenant_id, SUM(contracted) AS contracted
+                    FROM   msp_contract_entitlements
+                    WHERE  resource IN ('storage', 'storage_gb', 'gigabytes') AND effective_to IS NULL
+                    GROUP BY tenant_id
+                ) ce_stor ON ce_stor.tenant_id = p.id
+
+                -- Live quota from project_quotas (OpenStack)
+                LEFT JOIN project_quotas pq_cpu ON pq_cpu.project_id = p.id
+                    AND pq_cpu.service = 'nova' AND pq_cpu.resource = 'cores'
+                LEFT JOIN project_quotas pq_ram ON pq_ram.project_id = p.id
+                    AND pq_ram.service = 'nova' AND pq_ram.resource = 'ram'
+                LEFT JOIN project_quotas pq_stor ON pq_stor.project_id = p.id
+                    AND pq_stor.service = 'cinder' AND pq_stor.resource = 'gigabytes'
+
+                -- Insights
                 LEFT JOIN (
                     SELECT
                         metadata->>'tenant_id'                            AS tenant_id,
@@ -456,9 +509,32 @@ def get_portfolio_summary(
                     WHERE  type = 'leakage' AND status = 'open'
                     GROUP BY metadata->>'tenant_id'
                 ) lk ON lk.tenant_id = p.id
+
+                -- Metering aggregates — current month
+                LEFT JOIN portfolio_metering_monthly pmm_cur
+                    ON pmm_cur.tenant_id = p.id AND pmm_cur.month = %s
+
+                -- Metering aggregates — previous month
+                LEFT JOIN portfolio_metering_monthly pmm_prev
+                    ON pmm_prev.tenant_id = p.id AND pmm_prev.month = %s
+
                 ORDER BY p.name ASC
-            """, (month_start,))
+            """, (month_start, month_start, prev_month_start))
             rows = cur.fetchall()
+
+    def _f(v) -> float | None:
+        return round(float(v), 2) if v is not None else None
+
+    def _i(v) -> int | None:
+        return int(v) if v is not None else None
+
+    def _growth_pct(cur_val, prev_val) -> float | None:
+        """Return month-over-month growth percentage, or None if not computable."""
+        if prev_val is None or cur_val is None:
+            return None
+        if float(prev_val) == 0:
+            return None
+        return round((float(cur_val) - float(prev_val)) / float(prev_val) * 100, 1)
 
     results = []
     for row in rows:
@@ -473,9 +549,42 @@ def get_portfolio_summary(
         else:
             sla_status = "ok"
 
-        contracted = int(row.get("contracted_vcpu") or 0)
-        used = int(row.get("used_vcpu") or 0)
-        usage_pct = round((used / contracted * 100), 1) if contracted > 0 else None
+        contracted_vcpu = int(row.get("contracted_vcpu") or 0)
+        # Prefer live quota used if available, else fall back to 0
+        quota_vcpu_used = _i(row.get("quota_vcpu_used"))
+        used_vcpu = quota_vcpu_used if quota_vcpu_used is not None else 0
+        quota_vcpu_limit = _i(row.get("quota_vcpu_limit"))
+
+        # Contract usage pct: use contracted vcpu as denominator when set,
+        # else quota limit; fall back to None (not computable).
+        denom_vcpu = contracted_vcpu or quota_vcpu_limit
+        contract_usage_pct = round((used_vcpu / denom_vcpu * 100), 1) if denom_vcpu else None
+
+        # Quota utilisation pct (quota limit vs quota used)
+        quota_vcpu_pct = (
+            round(quota_vcpu_used / quota_vcpu_limit * 100, 1)
+            if quota_vcpu_used is not None and quota_vcpu_limit
+            else None
+        )
+        quota_ram_limit = _i(row.get("quota_ram_limit_mb"))
+        quota_ram_used  = _i(row.get("quota_ram_used_mb"))
+        quota_ram_pct   = (
+            round(quota_ram_used / quota_ram_limit * 100, 1)
+            if quota_ram_used is not None and quota_ram_limit
+            else None
+        )
+        quota_stor_limit = _i(row.get("quota_storage_limit_gb"))
+        quota_stor_used  = _f(row.get("quota_storage_used_gb"))
+        quota_stor_pct   = (
+            round(quota_stor_used / quota_stor_limit * 100, 1)
+            if quota_stor_used is not None and quota_stor_limit
+            else None
+        )
+
+        # Growth (MoM)
+        vcpu_growth_pct = _growth_pct(row.get("metered_avg_vcpus"), row.get("prev_avg_vcpus"))
+        ram_growth_pct  = _growth_pct(row.get("metered_avg_ram_gb"), row.get("prev_avg_ram_gb"))
+        cost_growth_pct = _growth_pct(row.get("metered_cost_this_month"), row.get("prev_metered_cost"))
 
         results.append({
             "tenant_id":             row["tenant_id"],
@@ -484,9 +593,39 @@ def get_portfolio_summary(
             "sla_status":            sla_status,
             "breach_fields":         breach,
             "at_risk_fields":        at_risk,
-            "contracted_vcpu":       contracted,
-            "used_vcpu":             used,
-            "contract_usage_pct":    usage_pct,
+
+            # Contract vs reality (vCPU)
+            "contracted_vcpu":       contracted_vcpu,
+            "contracted_ram_mb":     int(row.get("contracted_ram_mb") or 0),
+            "contracted_storage_gb": int(row.get("contracted_storage_gb") or 0),
+            "used_vcpu":             used_vcpu,
+            "contract_usage_pct":    contract_usage_pct,
+
+            # Quota vs real usage
+            "quota_vcpu_limit":      quota_vcpu_limit,
+            "quota_vcpu_used":       quota_vcpu_used,
+            "quota_vcpu_pct":        quota_vcpu_pct,
+            "quota_ram_limit_mb":    quota_ram_limit,
+            "quota_ram_used_mb":     quota_ram_used,
+            "quota_ram_pct":         quota_ram_pct,
+            "quota_storage_limit_gb": quota_stor_limit,
+            "quota_storage_used_gb": quota_stor_used,
+            "quota_storage_pct":     quota_stor_pct,
+
+            # Metering
+            "metered_avg_vcpus":     _f(row.get("metered_avg_vcpus")),
+            "metered_avg_ram_gb":    _f(row.get("metered_avg_ram_gb")),
+            "metered_avg_disk_gb":   _f(row.get("metered_avg_disk_gb")),
+            "metered_cost_this_month": _f(row.get("metered_cost_this_month")),
+            "metered_currency":      row.get("metered_currency") or "USD",
+            "metered_vm_count":      _i(row.get("metered_vm_count")),
+
+            # Growth (month-over-month %)
+            "vcpu_growth_pct":       vcpu_growth_pct,
+            "ram_growth_pct":        ram_growth_pct,
+            "cost_growth_pct":       cost_growth_pct,
+
+            # Insights
             "open_critical_count":   int(row.get("open_critical_count") or 0),
             "open_total_count":      int(row.get("open_total_count") or 0),
             "leakage_insight_count": int(row.get("leakage_insight_count") or 0),
@@ -599,5 +738,192 @@ def get_portfolio_executive_summary(
             "avg_mttr_commitment_hours": avg_mttr_commitment,
         },
         "month": str(month_start),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/sla/portfolio/fleet-metering — fleet-wide metering & growth view
+# ---------------------------------------------------------------------------
+
+@router.get("/portfolio/fleet-metering")
+def get_portfolio_fleet_metering(
+    months: int = Query(6, ge=1, le=24),
+    _user: User = Depends(require_permission("sla", "read")),
+):
+    """Fleet-wide metering summary: resource totals, cost estimate, quota health,
+    and month-over-month trends for the last N months."""
+    from datetime import date
+
+    today = date.today()
+    month_start = today.replace(day=1)
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            # ---------------------------------------------------------------
+            # Monthly trend: last N months from portfolio_metering_monthly
+            # ---------------------------------------------------------------
+            cur.execute("""
+                SELECT
+                    pmm.month,
+                    COUNT(*)                          AS tenant_count,
+                    COALESCE(SUM(pmm.avg_vcpus), 0)   AS total_avg_vcpus,
+                    COALESCE(SUM(pmm.avg_ram_gb), 0)   AS total_avg_ram_gb,
+                    COALESCE(SUM(pmm.avg_disk_gb), 0)  AS total_avg_disk_gb,
+                    COALESCE(SUM(pmm.estimated_cost), 0) AS total_cost,
+                    COALESCE(SUM(pmm.vm_count), 0)    AS total_vms
+                FROM portfolio_metering_monthly pmm
+                WHERE pmm.month >= (date_trunc('month', now()) - ((%s - 1) * interval '1 month'))::date
+                GROUP BY pmm.month
+                ORDER BY pmm.month ASC
+            """, (months,))
+            trend_rows = [dict(r) for r in cur.fetchall()]
+
+            # ---------------------------------------------------------------
+            # Current-month fleet totals from portfolio_metering_monthly
+            # ---------------------------------------------------------------
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(avg_vcpus), 0)     AS fleet_avg_vcpus,
+                    COALESCE(SUM(avg_ram_gb), 0)     AS fleet_avg_ram_gb,
+                    COALESCE(SUM(avg_disk_gb), 0)    AS fleet_avg_disk_gb,
+                    COALESCE(SUM(estimated_cost), 0) AS fleet_cost_this_month,
+                    COALESCE(SUM(vm_count), 0)        AS fleet_vm_count,
+                    MIN(currency)                     AS currency
+                FROM portfolio_metering_monthly
+                WHERE month = %s
+            """, (month_start,))
+            fleet_row = dict(cur.fetchone() or {})
+
+            # ---------------------------------------------------------------
+            # Previous-month fleet totals (for MoM growth)
+            # ---------------------------------------------------------------
+            if today.month == 1:
+                prev_month = today.replace(year=today.year - 1, month=12, day=1)
+            else:
+                prev_month = today.replace(month=today.month - 1, day=1)
+
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(avg_vcpus), 0)     AS fleet_avg_vcpus,
+                    COALESCE(SUM(estimated_cost), 0) AS fleet_cost
+                FROM portfolio_metering_monthly
+                WHERE month = %s
+            """, (prev_month,))
+            prev_row = dict(cur.fetchone() or {})
+
+            # ---------------------------------------------------------------
+            # Fleet-wide quota health from project_quotas (live snapshot)
+            # ---------------------------------------------------------------
+            cur.execute("""
+                SELECT
+                    resource,
+                    SUM(quota_limit) AS total_limit,
+                    SUM(in_use)       AS total_used
+                FROM project_quotas
+                WHERE service = 'nova' AND resource IN ('cores', 'ram')
+                GROUP BY resource
+                UNION ALL
+                SELECT
+                    'storage_gb' AS resource,
+                    SUM(quota_limit) AS total_limit,
+                    SUM(in_use)       AS total_used
+                FROM project_quotas
+                WHERE service = 'cinder' AND resource = 'gigabytes'
+            """)
+            quota_rows = cur.fetchall()
+
+            # ---------------------------------------------------------------
+            # Per-tenant growth summary: top 5 fastest-growing tenants (vCPU)
+            # ---------------------------------------------------------------
+            cur.execute("""
+                SELECT
+                    p.name AS tenant_name,
+                    cur.avg_vcpus  AS vcpus_this_month,
+                    prev.avg_vcpus AS vcpus_prev_month,
+                    cur.estimated_cost  AS cost_this_month,
+                    prev.estimated_cost AS cost_prev_month
+                FROM projects p
+                JOIN portfolio_metering_monthly cur  ON cur.tenant_id  = p.id AND cur.month  = %s
+                JOIN portfolio_metering_monthly prev ON prev.tenant_id = p.id AND prev.month = %s
+                WHERE prev.avg_vcpus > 0
+                ORDER BY ((cur.avg_vcpus - prev.avg_vcpus) / prev.avg_vcpus) DESC
+                LIMIT 10
+            """, (month_start, prev_month))
+            growth_rows = [dict(r) for r in cur.fetchall()]
+
+            # ---------------------------------------------------------------
+            # Fleet contracted totals (MSP entitlements)
+            # ---------------------------------------------------------------
+            cur.execute("""
+                SELECT resource, SUM(contracted) AS total_contracted
+                FROM msp_contract_entitlements
+                WHERE effective_to IS NULL
+                GROUP BY resource
+            """)
+            contract_rows = {r["resource"]: int(r["total_contracted"] or 0) for r in cur.fetchall()}
+
+    def _f(v) -> float | None:
+        return round(float(v), 2) if v is not None else None
+
+    def _growth(cur_val, prev_val) -> float | None:
+        if not prev_val or float(prev_val) == 0 or cur_val is None:
+            return None
+        return round((float(cur_val) - float(prev_val)) / float(prev_val) * 100, 1)
+
+    # Quota health map
+    quota_health: dict = {}
+    for qr in quota_rows:
+        resource = qr["resource"]
+        limit = int(qr["total_limit"] or 0) if qr["total_limit"] else None
+        used  = int(qr["total_used"]  or 0) if qr["total_used"]  else None
+        pct   = round(used / limit * 100, 1) if limit and used is not None else None
+        quota_health[resource] = {"limit": limit, "used": used, "utilization_pct": pct}
+
+    # Format trend rows
+    def _trend_row(r: dict) -> dict:
+        return {
+            "month":          str(r["month"]),
+            "tenant_count":   int(r["tenant_count"] or 0),
+            "total_avg_vcpus": _f(r["total_avg_vcpus"]),
+            "total_avg_ram_gb": _f(r["total_avg_ram_gb"]),
+            "total_avg_disk_gb": _f(r["total_avg_disk_gb"]),
+            "total_cost":     _f(r["total_cost"]),
+            "total_vms":      int(r["total_vms"] or 0),
+        }
+
+    # Format growth rows
+    def _growth_row(r: dict) -> dict:
+        vcpu_growth = _growth(r.get("vcpus_this_month"), r.get("vcpus_prev_month"))
+        cost_growth = _growth(r.get("cost_this_month"),  r.get("cost_prev_month"))
+        return {
+            "tenant_name":      r["tenant_name"],
+            "vcpus_this_month": _f(r.get("vcpus_this_month")),
+            "vcpus_prev_month": _f(r.get("vcpus_prev_month")),
+            "vcpu_growth_pct":  vcpu_growth,
+            "cost_this_month":  _f(r.get("cost_this_month")),
+            "cost_prev_month":  _f(r.get("cost_prev_month")),
+            "cost_growth_pct":  cost_growth,
+        }
+
+    fleet_vcpu_prev = float(prev_row.get("fleet_avg_vcpus") or 0)
+    fleet_cost_prev = float(prev_row.get("fleet_cost") or 0)
+
+    return {
+        "month": str(month_start),
+        "fleet_totals": {
+            "avg_vcpus":           _f(fleet_row.get("fleet_avg_vcpus")),
+            "avg_ram_gb":          _f(fleet_row.get("fleet_avg_ram_gb")),
+            "avg_disk_gb":         _f(fleet_row.get("fleet_avg_disk_gb")),
+            "cost_this_month":     _f(fleet_row.get("fleet_cost_this_month")),
+            "vm_count":            int(fleet_row.get("fleet_vm_count") or 0),
+            "currency":            fleet_row.get("currency") or "USD",
+            "vcpu_growth_pct":     _growth(fleet_row.get("fleet_avg_vcpus"), fleet_vcpu_prev),
+            "cost_growth_pct":     _growth(fleet_row.get("fleet_cost_this_month"), fleet_cost_prev),
+        },
+        "contracted_totals": contract_rows,
+        "quota_health":      quota_health,
+        "monthly_trend":     [_trend_row(r) for r in trend_rows],
+        "top_growing_tenants": [_growth_row(r) for r in growth_rows],
     }
 
