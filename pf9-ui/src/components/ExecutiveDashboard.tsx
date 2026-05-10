@@ -417,7 +417,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
           ---------------------------------------------------------------- */}
           <section style={{ marginBottom: "1.5rem" }}>
             <h3 style={{ fontSize: "0.95rem", color: "#94a3b8", marginBottom: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              📡 Metering Summary — Fleet This Month
+              📡 Metering Summary — Fleet {m?.month ? m.month.slice(0, 7) : selectedMonth}
             </h3>
             {!hasMeteringData ? (
               <div style={{ color: "#475569", fontSize: "0.88rem", padding: "0.75rem 1rem", background: "var(--pf9-card-bg, #1e293b)", borderRadius: "8px" }}>
