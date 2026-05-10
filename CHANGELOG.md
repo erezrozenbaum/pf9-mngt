@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.16] - 2026-05-10
+
+### Fixed
+- **Metering cost was always $0**: `msp_contract_entitlements` is empty in production; the actual VM pricing lives in `metering_pricing` (per-flavor `cost_per_hour`). Rewrote the cost computation: `vm_snap` now also captures `flavor`; a new `vm_priced` CTE joins `metering_pricing` by flavor name so each (VM, hour) row carries the correct hourly rate; monthly cost = `SUM(cost_per_hour)` across all hours all VMs were running — identical logic to what the Metering/Chargeback view uses.
+- **Currency wrong for `service` and fleet**: Cost currency is now taken from `metering_pricing.currency` (the table that holds the prices, consistently ILS) instead of `tenant_billing_config.currency_code`. Falls back to `metering_config.cost_currency` then `'USD'`. The fleet-level `MIN(currency)` now correctly returns ILS because both tenants store ILS.
+- **"Fleet This Month" label was static**: The section header in Portfolio Health now shows the actual selected month (e.g. "Fleet 2026-04") instead of always saying "Fleet This Month".
+
+---
+
 ## [1.95.15] - 2026-05-10
 
 ### Fixed

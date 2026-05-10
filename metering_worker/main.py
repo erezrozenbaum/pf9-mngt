@@ -975,19 +975,18 @@ def compute_portfolio_metering_monthly(conn, target_month: Optional[datetime.dat
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # -------------------------------------------------------------------
-            # Step 1: de-duplicate per VM per hour, then aggregate per project
+            # Aggregate per-tenant metering for the target month.
             #
-            # Problem: metering_resources has ~60 rows/VM/hour (1-min polling).
-            # Naively summing vcpus_allocated inflates averages by 60×.
-            # Fix: DISTINCT ON (vm_id, hour) picks one canonical snapshot per
-            # VM per hour, then we SUM across VMs to get the true hourly total.
+            # vm_snap  — DISTINCT ON (vm_id, hour): one reading per VM per hour,
+            #   avoiding 60× inflation from 1-min polling. Includes flavor for
+            #   pricing lookup.
+            # vm_priced — joins metering_pricing by flavor name. Each vm_snap
+            #   row = VM ran for 1 hour, so cost_per_hour is the cost incurred.
+            # hourly   — sums resources + cost per project per hour.
+            # monthly  — avg/peak resource totals + SUM of all hourly costs.
             #
-            # Also: some VMs appear under different `domain` label values
-            # (e.g. 'ORG1', 'ccc.co.il', 'org1.com') for the same project_name.
-            # Grouping by domain would split them into separate rows and the
-            # upsert conflict would keep only the last batch item.
-            # Fix: group only by project_name; let the projects JOIN resolve
-            # the tenant_id.
+            # Currency comes from metering_pricing (where the rates live).
+            # Falls back to metering_config.cost_currency or 'USD'.
             # -------------------------------------------------------------------
             cur.execute("""
                 WITH vm_snap AS (
@@ -995,6 +994,7 @@ def compute_portfolio_metering_monthly(conn, target_month: Optional[datetime.dat
                     SELECT DISTINCT ON (mr.vm_id, date_trunc('hour', mr.collected_at))
                         mr.project_name,
                         mr.vm_id,
+                        mr.flavor,
                         date_trunc('hour', mr.collected_at)  AS hour,
                         COALESCE(mr.vcpus_allocated,  0)     AS vcpus,
                         COALESCE(mr.ram_allocated_mb, 0)     AS ram_mb,
@@ -1008,27 +1008,45 @@ def compute_portfolio_metering_monthly(conn, target_month: Optional[datetime.dat
                              date_trunc('hour', mr.collected_at),
                              mr.collected_at DESC
                 ),
+                vm_priced AS (
+                    -- Join flavor pricing: each row = VM ran 1 hour at cost_per_hour
+                    SELECT
+                        vs.project_name,
+                        vs.vm_id,
+                        vs.hour,
+                        vs.vcpus,
+                        vs.ram_mb,
+                        vs.disk_gb,
+                        COALESCE(mp.cost_per_hour, 0)  AS cost_per_hour,
+                        mp.currency                    AS price_currency
+                    FROM vm_snap vs
+                    LEFT JOIN metering_pricing mp ON mp.item_name = vs.flavor
+                ),
                 hourly AS (
-                    -- Sum true allocated resources per project per hour
+                    -- Sum resources and cost per project per hour
                     SELECT
                         project_name,
                         hour,
                         SUM(vcpus)             AS h_vcpus,
                         SUM(ram_mb) / 1024.0   AS h_ram_gb,
                         SUM(disk_gb)           AS h_disk_gb,
-                        COUNT(DISTINCT vm_id)  AS h_vm_count
-                    FROM vm_snap
+                        COUNT(DISTINCT vm_id)  AS h_vm_count,
+                        SUM(cost_per_hour)     AS h_cost,
+                        MAX(price_currency)    AS price_currency
+                    FROM vm_priced
                     GROUP BY project_name, hour
                 ),
                 monthly AS (
                     SELECT
                         project_name,
-                        ROUND(AVG(h_vcpus)::numeric,    2)             AS avg_vcpus,
-                        ROUND(AVG(h_ram_gb)::numeric,   2)             AS avg_ram_gb,
-                        ROUND(AVG(h_disk_gb)::numeric,  2)             AS avg_disk_gb,
+                        ROUND(AVG(h_vcpus)::numeric,    2)               AS avg_vcpus,
+                        ROUND(AVG(h_ram_gb)::numeric,   2)               AS avg_ram_gb,
+                        ROUND(AVG(h_disk_gb)::numeric,  2)               AS avg_disk_gb,
                         CAST(ROUND(MAX(h_vcpus)::numeric, 0) AS integer) AS peak_vcpus,
-                        ROUND(MAX(h_ram_gb)::numeric,   2)             AS peak_ram_gb,
-                        MAX(h_vm_count)                                AS vm_count
+                        ROUND(MAX(h_ram_gb)::numeric,   2)               AS peak_ram_gb,
+                        MAX(h_vm_count)                                  AS vm_count,
+                        ROUND(SUM(h_cost)::numeric,     4)               AS total_cost,
+                        MAX(price_currency)                              AS price_currency
                     FROM hourly
                     GROUP BY project_name
                 )
@@ -1047,18 +1065,15 @@ def compute_portfolio_metering_monthly(conn, target_month: Optional[datetime.dat
                     pq_ram.in_use                          AS quota_ram_used_mb,
                     pq_stor.quota_limit                    AS quota_storage_limit_gb,
                     pq_stor.in_use                         AS quota_storage_used_gb,
-                    -- Cost: avg_vcpus × hours × unit_price per vCPU
-                    CASE
-                        WHEN ce.unit_price IS NOT NULL AND ce.unit_price > 0
-                        THEN ROUND((m.avg_vcpus * %s * ce.unit_price)::numeric, 4)
-                        ELSE 0
-                    END                                    AS estimated_cost,
-                    -- Currency from per-domain billing config (falls back to USD)
-                    COALESCE(tbc.currency_code, 'USD')     AS currency
+                    COALESCE(m.total_cost, 0)              AS estimated_cost,
+                    -- Currency from pricing table; falls back to metering_config or USD
+                    COALESCE(
+                        m.price_currency,
+                        (SELECT cost_currency FROM metering_config LIMIT 1),
+                        'USD'
+                    )                                      AS currency
                 FROM monthly m
                 JOIN projects p ON p.name = m.project_name
-                -- Currency: billing config is keyed by domain_id
-                LEFT JOIN tenant_billing_config tbc ON tbc.tenant_id = p.domain_id
                 -- Quota limits (nova: cores = vCPU, ram = MB)
                 LEFT JOIN project_quotas pq_cpu
                     ON pq_cpu.project_id = p.id
@@ -1069,18 +1084,7 @@ def compute_portfolio_metering_monthly(conn, target_month: Optional[datetime.dat
                 LEFT JOIN project_quotas pq_stor
                     ON pq_stor.project_id = p.id
                    AND pq_stor.service = 'cinder' AND pq_stor.resource = 'gigabytes'
-                -- Contract unit price (most recent active vcpu entitlement)
-                LEFT JOIN LATERAL (
-                    SELECT unit_price
-                    FROM   msp_contract_entitlements
-                    WHERE  tenant_id = p.id
-                      AND  resource  = 'vcpu'
-                      AND  effective_to IS NULL
-                      AND  unit_price IS NOT NULL
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                ) ce ON TRUE
-            """, (month_ts, next_month_ts, hours_in_month))
+            """, (month_ts, next_month_ts))
             agg_rows = cur.fetchall()
 
         if not agg_rows:
