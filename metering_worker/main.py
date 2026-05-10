@@ -975,38 +975,62 @@ def compute_portfolio_metering_monthly(conn, target_month: Optional[datetime.dat
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # -------------------------------------------------------------------
-            # Step 1: hourly-bucketed totals per project
+            # Step 1: de-duplicate per VM per hour, then aggregate per project
+            #
+            # Problem: metering_resources has ~60 rows/VM/hour (1-min polling).
+            # Naively summing vcpus_allocated inflates averages by 60×.
+            # Fix: DISTINCT ON (vm_id, hour) picks one canonical snapshot per
+            # VM per hour, then we SUM across VMs to get the true hourly total.
+            #
+            # Also: some VMs appear under different `domain` label values
+            # (e.g. 'ORG1', 'ccc.co.il', 'org1.com') for the same project_name.
+            # Grouping by domain would split them into separate rows and the
+            # upsert conflict would keep only the last batch item.
+            # Fix: group only by project_name; let the projects JOIN resolve
+            # the tenant_id.
             # -------------------------------------------------------------------
             cur.execute("""
-                WITH hourly AS (
-                    SELECT
+                WITH vm_snap AS (
+                    -- One canonical reading per VM per hour (latest poll)
+                    SELECT DISTINCT ON (mr.vm_id, date_trunc('hour', mr.collected_at))
                         mr.project_name,
-                        mr.domain,
-                        date_trunc('hour', mr.collected_at) AS hour,
-                        SUM(COALESCE(mr.vcpus_allocated,  0))            AS h_vcpus,
-                        SUM(COALESCE(mr.ram_allocated_mb, 0)) / 1024.0   AS h_ram_gb,
-                        SUM(COALESCE(mr.disk_allocated_gb,0))            AS h_disk_gb,
-                        COUNT(DISTINCT mr.vm_id)                         AS h_vm_count
+                        mr.vm_id,
+                        date_trunc('hour', mr.collected_at)  AS hour,
+                        COALESCE(mr.vcpus_allocated,  0)     AS vcpus,
+                        COALESCE(mr.ram_allocated_mb, 0)     AS ram_mb,
+                        COALESCE(mr.disk_allocated_gb,0)     AS disk_gb
                     FROM metering_resources mr
                     WHERE mr.collected_at >= %s
                       AND mr.collected_at <  %s
                       AND mr.project_name IS NOT NULL
                       AND mr.project_name != ''
-                    GROUP BY mr.project_name, mr.domain,
-                             date_trunc('hour', mr.collected_at)
+                    ORDER BY mr.vm_id,
+                             date_trunc('hour', mr.collected_at),
+                             mr.collected_at DESC
+                ),
+                hourly AS (
+                    -- Sum true allocated resources per project per hour
+                    SELECT
+                        project_name,
+                        hour,
+                        SUM(vcpus)             AS h_vcpus,
+                        SUM(ram_mb) / 1024.0   AS h_ram_gb,
+                        SUM(disk_gb)           AS h_disk_gb,
+                        COUNT(DISTINCT vm_id)  AS h_vm_count
+                    FROM vm_snap
+                    GROUP BY project_name, hour
                 ),
                 monthly AS (
                     SELECT
                         project_name,
-                        domain,
-                        ROUND(AVG(h_vcpus)::numeric,    2) AS avg_vcpus,
-                        ROUND(AVG(h_ram_gb)::numeric,   2) AS avg_ram_gb,
-                        ROUND(AVG(h_disk_gb)::numeric,  2) AS avg_disk_gb,
-                        MAX(h_vcpus)                        AS peak_vcpus,
-                        ROUND(MAX(h_ram_gb)::numeric,   2) AS peak_ram_gb,
-                        MAX(h_vm_count)                     AS vm_count
+                        ROUND(AVG(h_vcpus)::numeric,    2)             AS avg_vcpus,
+                        ROUND(AVG(h_ram_gb)::numeric,   2)             AS avg_ram_gb,
+                        ROUND(AVG(h_disk_gb)::numeric,  2)             AS avg_disk_gb,
+                        CAST(ROUND(MAX(h_vcpus)::numeric, 0) AS integer) AS peak_vcpus,
+                        ROUND(MAX(h_ram_gb)::numeric,   2)             AS peak_ram_gb,
+                        MAX(h_vm_count)                                AS vm_count
                     FROM hourly
-                    GROUP BY project_name, domain
+                    GROUP BY project_name
                 )
                 SELECT
                     p.id                                   AS tenant_id,
@@ -1026,15 +1050,15 @@ def compute_portfolio_metering_monthly(conn, target_month: Optional[datetime.dat
                     -- Cost: avg_vcpus × hours × unit_price per vCPU
                     CASE
                         WHEN ce.unit_price IS NOT NULL AND ce.unit_price > 0
-                        THEN ROUND((m.avg_vcpus * %s * ce.unit_price)::numeric, 2)
+                        THEN ROUND((m.avg_vcpus * %s * ce.unit_price)::numeric, 4)
                         ELSE 0
                     END                                    AS estimated_cost,
-                    'USD'                                  AS currency
+                    -- Currency from per-domain billing config (falls back to USD)
+                    COALESCE(tbc.currency_code, 'USD')     AS currency
                 FROM monthly m
-                -- Map project_name → project id via projects + domains tables
                 JOIN projects p ON p.name = m.project_name
-                LEFT JOIN domains d ON d.id = p.domain_id
-                    AND (m.domain IS NULL OR m.domain = '' OR d.name = m.domain)
+                -- Currency: billing config is keyed by domain_id
+                LEFT JOIN tenant_billing_config tbc ON tbc.tenant_id = p.domain_id
                 -- Quota limits (nova: cores = vCPU, ram = MB)
                 LEFT JOIN project_quotas pq_cpu
                     ON pq_cpu.project_id = p.id
