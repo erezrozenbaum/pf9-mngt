@@ -789,6 +789,11 @@ def get_portfolio_executive_summary(
 @router.get("/portfolio/fleet-metering")
 def get_portfolio_fleet_metering(
     months: int = Query(6, ge=1, le=24),
+    month: Optional[str] = Query(
+        None,
+        description="Target month in YYYY-MM or YYYY-MM-DD format. Defaults to current month.",
+        pattern=r"^\d{4}-\d{2}(-\d{2})?$",
+    ),
     _user: User = Depends(require_permission("sla", "read")),
 ):
     """Fleet-wide metering summary: resource totals, cost estimate, quota health,
@@ -796,41 +801,51 @@ def get_portfolio_fleet_metering(
     from datetime import date
 
     today = date.today()
-    month_start = today.replace(day=1)
+
+    # Parse optional month parameter
+    if month:
+        try:
+            parts = month.split("-")
+            month_start = date(int(parts[0]), int(parts[1]), 1)
+        except (ValueError, IndexError):
+            month_start = today.replace(day=1)
+    else:
+        month_start = today.replace(day=1)
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
             # ---------------------------------------------------------------
-            # Monthly trend: last N months from portfolio_metering_monthly
+            # Monthly trend: last N months ending at month_start
             # ---------------------------------------------------------------
             cur.execute("""
                 SELECT
                     pmm.month,
-                    COUNT(*)                          AS tenant_count,
-                    COALESCE(SUM(pmm.avg_vcpus), 0)   AS total_avg_vcpus,
-                    COALESCE(SUM(pmm.avg_ram_gb), 0)   AS total_avg_ram_gb,
-                    COALESCE(SUM(pmm.avg_disk_gb), 0)  AS total_avg_disk_gb,
+                    COUNT(*)                             AS tenant_count,
+                    COALESCE(SUM(pmm.avg_vcpus), 0)      AS total_avg_vcpus,
+                    COALESCE(SUM(pmm.avg_ram_gb), 0)     AS total_avg_ram_gb,
+                    COALESCE(SUM(pmm.avg_disk_gb), 0)    AS total_avg_disk_gb,
                     COALESCE(SUM(pmm.estimated_cost), 0) AS total_cost,
-                    COALESCE(SUM(pmm.vm_count), 0)    AS total_vms
+                    COALESCE(SUM(pmm.vm_count), 0)       AS total_vms
                 FROM portfolio_metering_monthly pmm
-                WHERE pmm.month >= (date_trunc('month', now()) - ((%s - 1) * interval '1 month'))::date
+                WHERE pmm.month >= (date_trunc('month', %s::date) - ((%s - 1) * interval '1 month'))::date
+                  AND pmm.month <= %s
                 GROUP BY pmm.month
                 ORDER BY pmm.month ASC
-            """, (months,))
+            """, (month_start, months, month_start))
             trend_rows = [dict(r) for r in cur.fetchall()]
 
             # ---------------------------------------------------------------
-            # Current-month fleet totals from portfolio_metering_monthly
+            # Selected-month fleet totals from portfolio_metering_monthly
             # ---------------------------------------------------------------
             cur.execute("""
                 SELECT
-                    COALESCE(SUM(avg_vcpus), 0)     AS fleet_avg_vcpus,
+                    COALESCE(SUM(avg_vcpus), 0)      AS fleet_avg_vcpus,
                     COALESCE(SUM(avg_ram_gb), 0)     AS fleet_avg_ram_gb,
                     COALESCE(SUM(avg_disk_gb), 0)    AS fleet_avg_disk_gb,
                     COALESCE(SUM(estimated_cost), 0) AS fleet_cost_this_month,
-                    COALESCE(SUM(vm_count), 0)        AS fleet_vm_count,
-                    MIN(currency)                     AS currency
+                    COALESCE(SUM(vm_count), 0)       AS fleet_vm_count,
+                    MIN(currency)                    AS currency
                 FROM portfolio_metering_monthly
                 WHERE month = %s
             """, (month_start,))
@@ -839,14 +854,14 @@ def get_portfolio_fleet_metering(
             # ---------------------------------------------------------------
             # Previous-month fleet totals (for MoM growth)
             # ---------------------------------------------------------------
-            if today.month == 1:
-                prev_month = today.replace(year=today.year - 1, month=12, day=1)
+            if month_start.month == 1:
+                prev_month = month_start.replace(year=month_start.year - 1, month=12, day=1)
             else:
-                prev_month = today.replace(month=today.month - 1, day=1)
+                prev_month = month_start.replace(month=month_start.month - 1, day=1)
 
             cur.execute("""
                 SELECT
-                    COALESCE(SUM(avg_vcpus), 0)     AS fleet_avg_vcpus,
+                    COALESCE(SUM(avg_vcpus), 0)      AS fleet_avg_vcpus,
                     COALESCE(SUM(estimated_cost), 0) AS fleet_cost
                 FROM portfolio_metering_monthly
                 WHERE month = %s

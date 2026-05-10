@@ -250,15 +250,25 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
   const [metering, setMetering] = useState<FleetMeteringResponse | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
-  const [trendMonths, setTrendMonths] = useState<number>(6);
+  const [trendMonths, setTrendMonths]   = useState<number>(6);
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+
+  const currentMonthValue = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      const meteringParams = new URLSearchParams({ months: String(trendMonths), month: selectedMonth });
       const [summaryResp, meteringResp] = await Promise.all([
         apiFetch<ExecutiveSummaryResponse>("/api/sla/portfolio/executive-summary"),
-        apiFetch<FleetMeteringResponse>(`/api/sla/portfolio/fleet-metering?months=${trendMonths}`),
+        apiFetch<FleetMeteringResponse>(`/api/sla/portfolio/fleet-metering?${meteringParams}`),
       ]);
       setData(summaryResp);
       setMetering(meteringResp);
@@ -267,7 +277,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [trendMonths]);
+  }, [trendMonths, selectedMonth]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -293,6 +303,22 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
             {data.month}
           </span>
         )}
+        <input
+          type="month"
+          value={selectedMonth}
+          max={currentMonthValue()}
+          onChange={(e) => setSelectedMonth(e.target.value)}
+          style={{
+            background: "var(--pf9-card-bg, #1e293b)",
+            border: "1px solid #334155",
+            borderRadius: "6px",
+            color: "#e2e8f0",
+            padding: "0.25rem 0.4rem",
+            fontSize: "0.82rem",
+            marginLeft: "0.75rem",
+            cursor: "pointer",
+          }}
+        />
         <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", color: "#94a3b8", marginLeft: "1rem" }}>
           Trend
           <select

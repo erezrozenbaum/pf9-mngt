@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.15] - 2026-05-10
+
+### Fixed
+- **Metering aggregation — inflated avg_vcpus**: The hourly CTE was doing `SUM(vcpus_allocated)` across all rows per project per hour, but the metering worker polls every ~1 minute so there were ~60 rows/VM/hour. This inflated `avg_vcpus` by 60× (e.g. ORG1 showed 118 instead of 8). Fixed by adding a `DISTINCT ON (vm_id, hour)` CTE (`vm_snap`) that picks one canonical reading per VM per hour before summing.
+- **Metering aggregation — wrong vm_count**: The hourly CTE was grouping by `(project_name, domain)`, creating separate monthly rows when the same project's VMs were recorded under different domain labels (e.g. `'ORG1'`, `'ccc.co.il'`, `'org1.com'`). The UPSERT conflict caused only the last group to survive (vm_count=1 instead of 7). Fixed by removing `domain` from the grouping; all VMs for the same `project_name` are now consolidated before the `projects` JOIN.
+- **Metering aggregation — currency hardcoded USD**: Currency is now fetched from `tenant_billing_config.currency_code` (joined via `projects.domain_id`) so tenants configured with ILS (or any other currency) show the correct code. Falls back to `'USD'` when no billing config exists.
+- **`GET /api/sla/portfolio/fleet-metering`**: added optional `month` query parameter so the Portfolio Health KPI summary can display any historical month (defaults to current month). The trend window is now anchored to the selected month.
+- **Portfolio Health** (`ExecutiveDashboard`): added 📅 month picker to control which month's fleet KPI data is displayed (the "Metering Summary" section). Trend sparklines are anchored to the selected month.
+
+---
+
 ## [1.95.14] - 2026-05-10
 
 ### Fixed
