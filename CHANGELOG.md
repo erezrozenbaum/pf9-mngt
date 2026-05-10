@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.17] - 2026-05-10
+
+### Fixed
+- **"$" hardcoded in Fastest-Growing Tenants**: Cost column now uses the per-row currency from the API (`t.currency`) instead of a hardcoded `$` prefix. Resolves "ILS 319" showing as "$319".
+- **Currency added to `top_growing_tenants` API response**: `GET /portfolio/fleet-metering` now includes a `currency` field on each tenant row (taken from `portfolio_metering_monthly.currency`).
+- **Cost-growth misleading for partial month**: When the selected month is the current (in-progress) month, cost-growth is now computed using a *projected* full-month cost (`accrued × days_in_month / days_elapsed`) rather than the raw accrued value. The `fleet_totals` response now also includes `is_partial_month: true` so the UI can annotate the figure.
+- **Month picker replaced with period buttons**: The confusing native `<input type="month">` and separate Trend `<select>` are replaced by a clear period button strip: **7 days · 30 days · 3 months · 6 months · 12 months**. Clicking a button immediately reloads data for that window.
+
+### Added
+- **Rolling-window API mode** (`?days=N`): `GET /portfolio/fleet-metering?days=7` or `?days=30` now queries `metering_resources` directly using `DISTINCT ON (vm_id, hour)` deduplication, returning accurate fleet KPIs (avg vCPUs, RAM, cost, VM count) for the rolling window without needing monthly aggregates.
+- **Aggregated fleet KPIs for multi-month periods**: In 3-month, 6-month, and 12-month views the fleet KPI cards derive totals from `monthly_trend` already returned by the API: avg vCPUs/RAM/disk is the period average; cost is the period sum (e.g. "Total Fleet Cost (6 months)"); VM count is the peak across the period.
+- **`period` field in fleet-metering response**: e.g. `"period": "6m"` or `"period": "7d"` for client-side awareness of the response mode.
+
+---
+
 ## [1.95.16] - 2026-05-10
 
 ### Fixed
