@@ -176,16 +176,20 @@ class WasteEngine(BaseEngine):
                 cur.execute("""
                     SELECT v.id, v.name, v.project_id, v.size_gb,
                            p.name AS project_name,
-                           NOW() - v.updated_at AS idle_duration
+                           NOW() - v.last_seen_at AS idle_duration
                     FROM volumes v
                     LEFT JOIN projects p ON p.id = v.project_id
                     WHERE v.status = 'available'
-                      AND v.updated_at < NOW() - INTERVAL '14 days'
+                      AND v.last_seen_at < NOW() - INTERVAL '14 days'
                     ORDER BY v.size_gb DESC NULLS LAST
                 """)
                 rows = cur.fetchall()
         except Exception as exc:
             log.warning("unattached_volumes query failed: %s", exc)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
             return
 
         log.debug("WasteEngine B2: %d unattached volumes", len(rows))

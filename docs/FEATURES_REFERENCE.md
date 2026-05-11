@@ -1,6 +1,6 @@
 # Features Reference — Technical Deep Dive (v1.95)
 
-> **v1.95.19 NEW**: Notification worker SMTP config from DB; operational bug fixes across drift ticketing, insights, billing, and snapshot coverage
+> **v1.95.20 NEW**: Notification worker SMTP config from DB; operational bug fixes across drift ticketing, insights, billing, and snapshot coverage
 > **v1.95**: Advanced billing & metering system with enterprise tenant management
 > Complete technical reference for all pf9-mngt features.
 > For a high-level overview and quick start see [README.md](../README.md).
