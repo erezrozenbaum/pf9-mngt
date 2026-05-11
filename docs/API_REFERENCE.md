@@ -1,6 +1,6 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.95.19 — Notification worker SMTP config from DB; drift auto-ticket fix; stale insight cleanup; deleted-VM billing prorating; 30-day snapshot coverage window  
+> **Version**: v1.95.20 — Notification worker SMTP config from DB; drift auto-ticket fix; stale insight cleanup; deleted-VM billing prorating; 30-day snapshot coverage window  
 > Previous: v1.95.17 — Fleet metering rolling-window API mode, partial-month cost projection, period button strip
 
 ## Base URL

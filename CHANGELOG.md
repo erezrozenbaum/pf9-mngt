@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.20] - 2026-05-11
+
+### Fixed
+- **WasteEngine unattached-volumes SQL crash fixed** (`intelligence_worker/engines/waste.py`): `_check_unattached_volumes()` referenced `v.updated_at` — a column that does not exist on the `volumes` table (actual column: `v.last_seen_at`). This caused a PostgreSQL transaction abort that cascaded to kill `_check_old_snapshots()`, `_cleanup_stale_vm_insights()`, and all subsequent engines (`CapacityEngine`, `CrossRegionEngine`, etc.) with "current transaction is aborted". Replaced both occurrences of `v.updated_at` with `v.last_seen_at` and added `conn.rollback()` in the exception handler to prevent cascade aborts.
+- **Admin metering chargeback hours inflated** (`api/metering_routes.py`): The `/chargeback-summary` endpoint computed `metered_hours` as `COUNT(*)` of metering-resource collection rows — since the metering worker runs several times per hour, a VM running 24h showed as e.g. 1135h. Fixed to use wall-clock duration `(last_seen − max(first_seen, since)).total_seconds() / 3600`, capped at the selected period. PAYG compute costs and tenant-level totals now use `metered_h` instead of the full period `hours`.
+
+---
+
 ## [1.95.19] - 2026-05-11
 
 ### Fixed

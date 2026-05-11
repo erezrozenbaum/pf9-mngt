@@ -1320,9 +1320,11 @@ async def get_chargeback_summary(
             cur.execute(storage_sql, params)
             storage_data = {(row["domain"], row["project_name"]): row for row in cur.fetchall()}
 
-            # Metered hours per VM: count of collected snapshots = hours the VM was metered/running
+            # Metered hours per VM — store raw datetimes so we can compute wall-clock hours.
+            # COUNT(*) is NOT a reliable hour count: the metering worker collects several times
+            # per hour, so raw row count >> actual uptime hours.
             metered_hours_sql = f"""
-                SELECT vm_id, COUNT(*) AS metered_hours,
+                SELECT vm_id, COUNT(*) AS row_count,
                        MIN(collected_at) AS first_seen,
                        MAX(collected_at) AS last_seen
                 FROM metering_resources
@@ -1332,7 +1334,9 @@ async def get_chargeback_summary(
             cur.execute(metered_hours_sql, params)
             vm_metered_hours = {
                 row["vm_id"]: {
-                    "metered_hours": int(row["metered_hours"]),
+                    "row_count": int(row["row_count"]),
+                    "first_seen_dt": row["first_seen"],
+                    "last_seen_dt": row["last_seen"],
                     "first_seen": row["first_seen"].isoformat() if row["first_seen"] else None,
                     "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
                 }
@@ -1360,13 +1364,22 @@ async def get_chargeback_summary(
         # Calculate VM storage costs (allocated disk)
         vm_disk_gb = float(vm.get("disk_allocated_gb") or 0)
         vm_storage_cost = vm_disk_gb * storage_pricing["storage_per_gb_month"] * period_months
-        
-        total_vm_cost = (compute_cost_per_hour * hours) + vm_storage_cost
-        cost_breakdown["storage"] = vm_storage_cost
-        
+
         # Add VM details for per-VM breakdown
         mh_data = vm_metered_hours.get(vm.get("vm_id"), {})
-        metered_h = mh_data.get("metered_hours", 0)
+        # Wall-clock hours: (last_seen - max(first_seen, since)) / 3600, capped at period.
+        # COUNT(*) rows is NOT reliable — metering worker runs multiple times per hour.
+        _fs = mh_data.get("first_seen_dt")
+        _ls = mh_data.get("last_seen_dt")
+        if _fs and _ls:
+            _effective_start = max(_fs, since) if since.tzinfo else _fs
+            _wall = (_ls - _effective_start).total_seconds() / 3600.0
+            metered_h = round(max(0.0, min(float(hours), _wall)))
+        else:
+            metered_h = hours
+
+        total_vm_cost = (compute_cost_per_hour * metered_h) + vm_storage_cost
+        cost_breakdown["storage"] = vm_storage_cost
         vm_details.append({
             "vm_id": vm.get("vm_id"),
             "vm_name": vm.get("vm_name"),
@@ -1403,7 +1416,7 @@ async def get_chargeback_summary(
         entry["total_vcpus"] += float(vm.get("vcpus") or 0)
         entry["total_ram_gb"] += round(float(vm.get("ram_mb") or 0) / 1024, 2)
         entry["total_disk_gb"] += vm_disk_gb
-        entry["compute_cost"] += compute_cost_per_hour * hours
+        entry["compute_cost"] += compute_cost_per_hour * metered_h
         entry["storage_cost"] += vm_storage_cost
         entry["estimated_cost"] += total_vm_cost
 
