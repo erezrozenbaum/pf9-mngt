@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.18] - 2026-05-11
+
+### Added
+- **Notification worker reads SMTP config from DB at runtime** (`notifications/main.py`): Added `get_smtp_config(conn)` that queries `system_settings` keys `smtp.*` on every email send, with env-var fallback. DB values always win over env vars — SMTP configuration changed via the Admin UI now takes effect in Kubernetes immediately without a pod restart, Helm re-deploy, or K8s Secret rotation. Handles `fernet:`-encrypted passwords stored in the DB. Logs the effective SMTP config (no password) at worker startup for easy diagnosis.
+
+### Fixed
+- **K8s email notifications broken** (`notifications/main.py`): The notification worker read SMTP config once at import time from env vars only. In Kubernetes the Helm default `smtp.enabled: "false"` silently disabled all email sending even when SMTP was configured via the Admin UI (which writes to `system_settings`). Fixed by making `send_email()` call `get_smtp_config()` dynamically on each send, with DB as source of truth.
+- **Drift events not creating auto-tickets in Kubernetes** (`db_writer.py`): `_auto_ticket_for_drift()` attempted a dynamic import `from ticket_routes import _auto_ticket` which always fails in the scheduler container (the `api/` directory is not copied into the scheduler image). Fixed by replacing the import with direct SQL against `support_tickets`, `departments`, and the `ticket_sequence` counter — identical to what the API does, but self-contained.
+- **Stale operational insights for deleted VMs** (`intelligence_worker/engines/waste.py`): `WasteEngine` upserted idle-VM insights from `metering_efficiency` (which retains historical data) but never resolved them when the VM was deleted from `servers`. Open insights persisted forever after VM deletion. Fixed by adding `_cleanup_stale_vm_insights()` which runs after each cycle, cross-checks open `waste_idle_vm` insights against the `servers` table, and calls `suppress_resolved()` for any VM no longer present.
+- **Deleted VMs billed at full period cost in Tenant Portal** (`tenant_portal/billing_routes.py`): `_get_chargeback_data()` used only `metering_resources` (historical) to calculate cost — deleted VMs were charged for the full period (e.g. 720 h). Fixed by cross-referencing `metering_resources` with the `servers` table to detect deleted VMs and using `metered_h` (actual uptime hours) instead of `hours` (full period) for their cost. Response now includes `is_deleted: bool` and `effective_hours: int` per VM; `total_vms` counts only active VMs; `period_changes.vms_removed` is populated from absence in `servers`.
+- **VM snapshot coverage showing 4% for old VMs, 100% for new VMs** (`tenant_portal/environment_routes.py`): The `compliance_pct` sub-query in `list_vms()` had no time boundary — old VMs accumulated hundreds of historical snapshot records (including policy-change failures) yielding ~4%, while new VMs with only recent successes showed 100%. Fixed by adding `AND sr2.created_at >= NOW() - INTERVAL '30 days'` so coverage reflects only the rolling 30-day window for all VMs.
+
+### Changed
+- **`tenant-ui` TypeScript** (`tenant-ui/src/lib/api.ts`): `ChargebackVm` interface extended with `effective_hours?: number` and `is_deleted?: boolean`.
+- **`BillingAwareChargeback.tsx`**: Deleted VMs now render with reduced opacity, a red "DELETED" badge, prorated hours display, and correct cost formulas using `effective_hours`.
+
+---
+
 ## [1.95.17] - 2026-05-10
 
 ### Fixed

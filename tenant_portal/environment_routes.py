@@ -144,6 +144,7 @@ async def list_vms(ctx: TenantContext = Depends(get_tenant_context)):
                            )
                            FROM snapshot_records sr2
                            WHERE sr2.vm_id = s.id
+                             AND sr2.created_at >= NOW() - INTERVAL '30 days'
                        ) AS compliance_pct
                 FROM servers s
                 LEFT JOIN flavors f ON f.id = s.flavor_id

@@ -349,52 +349,67 @@ def _auto_ticket_for_drift(
     title          = f"Drift: {resource_type} '{resource_name}' — {field_changed} changed"
 
     try:
-        import logging
-        _log = logging.getLogger("db_writer")
-        import sys
-        import os
-        # Support calling when invoked directly (pf9_rvtools) or inside the API container
-        api_dir = os.path.join(os.path.dirname(__file__), "api")
-        if api_dir not in sys.path:
-            sys.path.insert(0, api_dir)
-
-        # Resolve department: try preferred name, fall back to any existing department
-        resolved_dept = to_dept_name
+        _conn = db_connect()
         try:
-            from db_pool import get_connection as _gc
-            with _gc() as _conn:
-                with _conn.cursor() as _cur:
-                    _cur.execute("SELECT name FROM departments WHERE name = %s LIMIT 1", (to_dept_name,))
-                    if not _cur.fetchone():
-                        _cur.execute("SELECT name FROM departments ORDER BY id LIMIT 1")
-                        row = _cur.fetchone()
-                        if row:
-                            resolved_dept = row[0]
-                            _log.info(
-                                "_auto_ticket_for_drift: dept '%s' not found, using '%s'",
-                                to_dept_name, resolved_dept,
-                            )
-        except Exception:
-            pass  # keep preferred name; _auto_ticket will log the missing-dept warning
+            with _conn.cursor(cursor_factory=RealDictCursor) as _cur:
+                # Dedup: skip if an open ticket already exists for this drift source
+                _cur.execute("""
+                    SELECT id FROM support_tickets
+                    WHERE auto_source = 'drift' AND auto_source_id = %s
+                      AND status NOT IN ('resolved', 'closed')
+                    LIMIT 1
+                """, (auto_source_id,))
+                if _cur.fetchone():
+                    return  # idempotent — ticket already open
 
-        from ticket_routes import _auto_ticket
-        _auto_ticket(
-            title=title,
-            description=description,
-            ticket_type="auto_incident",
-            priority=priority,
-            to_dept_name=resolved_dept,
-            auto_source="drift",
-            auto_source_id=auto_source_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            resource_name=resource_name,
-            project_id=project_id,
-            project_name=project_name,
-        )
+                # Resolve department ID; fall back to first available if preferred missing
+                _cur.execute("SELECT id FROM departments WHERE name = %s LIMIT 1", (to_dept_name,))
+                dept_row = _cur.fetchone()
+                if not dept_row:
+                    _cur.execute("SELECT id FROM departments ORDER BY id LIMIT 1")
+                    dept_row = _cur.fetchone()
+                if not dept_row:
+                    logger.warning("_auto_ticket_for_drift: no departments found — ticket not created")
+                    return
+                dept_id = dept_row["id"]
+
+                # Generate unique ticket ref via ticket_sequence table
+                year = datetime.now(timezone.utc).year
+                _cur.execute("""
+                    INSERT INTO ticket_sequence (year, last_seq)
+                    VALUES (%s, 1)
+                    ON CONFLICT (year) DO UPDATE
+                        SET last_seq = ticket_sequence.last_seq + 1
+                    RETURNING last_seq
+                """, (year,))
+                seq = _cur.fetchone()[0]
+                ticket_ref = f"TKT-{year}-{seq:05d}"
+
+                created_at = datetime.now(timezone.utc)
+                _cur.execute("""
+                    INSERT INTO support_tickets (
+                        ticket_ref, title, description, ticket_type, status, priority,
+                        to_dept_id, opened_by, auto_source, auto_source_id,
+                        resource_type, resource_id, resource_name, project_id, project_name,
+                        created_at, updated_at
+                    ) VALUES (
+                        %s, %s, %s, 'auto_incident', 'open', %s,
+                        %s, 'system', 'drift', %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s
+                    )
+                """, (
+                    ticket_ref, title, description, priority,
+                    dept_id, auto_source_id,
+                    resource_type, resource_id, resource_name, project_id, project_name,
+                    created_at, created_at,
+                ))
+            _conn.commit()
+            logger.debug("_auto_ticket_for_drift: created %s for %s", ticket_ref, auto_source_id)
+        finally:
+            _conn.close()
     except Exception as exc:
-        import logging
-        logging.getLogger("db_writer").warning("Auto-ticket for drift failed: %s", exc)
+        logger.warning("Auto-ticket for drift failed: %s", exc)
 
 
 def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],

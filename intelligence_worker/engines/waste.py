@@ -27,6 +27,34 @@ class WasteEngine(BaseEngine):
         self._check_idle_vms()
         self._check_unattached_volumes()
         self._check_old_snapshots()
+        self._cleanup_stale_vm_insights()
+
+    def _cleanup_stale_vm_insights(self) -> None:
+        """Resolve waste_idle_vm insights for VMs that no longer exist in the servers table."""
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT DISTINCT entity_id
+                    FROM operational_insights
+                    WHERE type = %s AND status IN ('open', 'acknowledged', 'snoozed')
+                """, (_TYPE_VM,))
+                insight_vm_ids = [r["entity_id"] for r in cur.fetchall()]
+        except Exception as exc:
+            log.warning("WasteEngine stale-insight lookup failed: %s", exc)
+            return
+
+        for vm_id in insight_vm_ids:
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT 1 FROM servers WHERE id = %s LIMIT 1",
+                        (vm_id,),
+                    )
+                    if not cur.fetchone():
+                        self.suppress_resolved(_TYPE_VM, "vm", vm_id)
+                        log.debug("WasteEngine: suppressed stale insight for deleted VM %s", vm_id)
+            except Exception as exc:
+                log.warning("WasteEngine stale-cleanup for VM %s failed: %s", vm_id, exc)
 
     # ------------------------------------------------------------------
     # B1 — Idle VMs
