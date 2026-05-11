@@ -331,6 +331,16 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
     )
     vm_rows = cur.fetchall()
 
+    # Current active VM IDs from the servers table (cross-reference for deletion detection)
+    cur.execute(
+        """SELECT s.id
+           FROM servers s
+           JOIN projects p ON p.id = s.project_id
+           WHERE p.id = ANY(%s)""",
+        (tenant_ctx.project_ids,),
+    )
+    active_vm_ids: set = {str(r["id"]) for r in cur.fetchall()}
+
     # Metered hours per VM + disk change detection for lifecycle tracking
     cur.execute(
         """SELECT vm_id, MIN(vm_name) AS vm_name,
@@ -359,10 +369,10 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
     period_start = now - timedelta(hours=hours)
     # "new" = first metered more than 10% into the period (not pre-existing at period start)
     new_threshold = period_start + timedelta(hours=max(1.0, hours * 0.10))
-    # "removed" = last metered more than 5% before the period end
-    removed_threshold = now - timedelta(hours=max(1.0, hours * 0.05))
 
     period_changes: Dict[str, Any] = {"vms_added": [], "vms_removed": [], "storage_resized": []}
+    removed_vm_ids: set = set()
+
     for r in lifecycle_rows:
         first_s = r["first_seen"]
         last_s = r["last_seen"]
@@ -373,12 +383,14 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
                 "vm_id": r["vm_id"], "vm_name": vm_label,
                 "added_at": first_s.isoformat(),
             })
-        # Removed VM (stopped being metered before period end)
-        if last_s and last_s < removed_threshold:
-            period_changes["vms_removed"].append({
-                "vm_id": r["vm_id"], "vm_name": vm_label,
-                "removed_at": last_s.isoformat(),
-            })
+        # Removed VM: no longer present in the servers table
+        if str(r["vm_id"]) not in active_vm_ids:
+            removed_vm_ids.add(str(r["vm_id"]))
+            if not any(v["vm_id"] == r["vm_id"] for v in period_changes["vms_removed"]):
+                period_changes["vms_removed"].append({
+                    "vm_id": r["vm_id"], "vm_name": vm_label,
+                    "removed_at": last_s.isoformat() if last_s else None,
+                })
         # Storage resize
         min_d = r["min_disk"]
         max_d = r["max_disk"]
@@ -410,28 +422,33 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
     total_snap = total_snap_gb * snapshot_per_gb_hr * hours
 
     for vm in vm_rows:
+        vm_id_str = str(vm["vm_id"])
+        is_deleted = vm_id_str in removed_vm_ids
         flavor = vm["flavor"] or ""
         vcpus = int(vm["vcpus_allocated"] or 0)
         ram_gb = float(vm["ram_allocated_mb"] or 0) / 1024.0
         disk_gb = float(vm["disk_allocated_gb"] or 0)
 
+        mh_data = vm_metered.get(vm["vm_id"], {})
+        metered_h = mh_data.get("metered_hours", 0)
+        # For deleted VMs prorate costs by actual metered hours; active VMs use full period
+        effective_hours = metered_h if is_deleted else hours
+
         fp = flavor_pricing.get(flavor)
         if fp:
             hr = fp["cost_per_hour"] if fp["cost_per_hour"] > 0 else fp["cost_per_month"] / 730.0
-            compute_cost = hr * hours
+            compute_cost = hr * effective_hours
             pricing_basis = f"flavor:{flavor}"
         else:
             compute_cost = 0.0
             pricing_basis = "no_pricing_configured"
 
-        storage_cost = disk_gb * storage_per_gb_hr * hours
+        storage_cost = disk_gb * storage_per_gb_hr * effective_hours
         snap_cost_vm = 0.0  # snapshots shown as domain total, not per-VM
-        network_cost = network_per_hr * hours  # 1 network port per VM
+        network_cost = network_per_hr * effective_hours  # 1 network port per VM
 
         vm_total = compute_cost + storage_cost + network_cost
 
-        mh_data = vm_metered.get(vm["vm_id"], {})
-        metered_h = mh_data.get("metered_hours", 0)
         vms_out.append({
             "vm_id": vm["vm_id"],
             "vm_name": vm["vm_name"] or vm["vm_id"],
@@ -451,9 +468,11 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
             "pricing_basis": pricing_basis,
             "last_metering": vm["collected_at"].isoformat() if vm["collected_at"] else None,
             "metered_hours": metered_h,
+            "effective_hours": effective_hours,
             "down_hours": max(0, hours - metered_h),
             "first_seen": mh_data.get("first_seen"),
             "last_seen": mh_data.get("last_seen"),
+            "is_deleted": is_deleted,
         })
         total_compute += compute_cost
         total_storage += storage_cost
@@ -462,7 +481,7 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
     total_cost = total_compute + total_storage + total_snap + total_network
 
     base["vms"] = vms_out
-    base["total_vms"] = len(vms_out)
+    base["total_vms"] = sum(1 for v in vms_out if not v["is_deleted"])
     base["total_estimated_cost"] = round(total_cost, 4)
     base["cost_breakdown"] = {
         "compute": round(total_compute, 4),

@@ -1,7 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.95.12 — Security hardening: JWT fallback keys removed, infra IPs anonymized in docs, bandit results untracked  
-> Previous: v1.95.11 — API OOMKill fix (2 Gi), SG rule management restored in Resources, deps panel light-mode, quota input overflow
+> **Version**: v1.95.18 — Notification worker SMTP config from DB; drift auto-ticket fix; stale insight cleanup; deleted-VM billing prorating; 30-day snapshot coverage window  
+> Previous: v1.95.17 — Fleet metering rolling-window API mode, partial-month cost projection, period button strip
 
 ## Base URL
 ```

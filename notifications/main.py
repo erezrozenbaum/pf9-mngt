@@ -91,6 +91,67 @@ DIGEST_HOUR_UTC = int(os.getenv("NOTIFICATION_DIGEST_HOUR_UTC", "8"))
 LOOKBACK_SECONDS = int(os.getenv("NOTIFICATION_LOOKBACK_SECONDS", "300"))
 
 # ---------------------------------------------------------------------------
+# SMTP config — DB overrides env vars (same pattern as api/smtp_helper.py)
+# ---------------------------------------------------------------------------
+
+def get_smtp_config(conn=None) -> dict:
+    """
+    Return effective SMTP configuration.  DB system_settings always win over
+    env vars so changes made in the Admin UI take effect without a pod restart.
+    """
+    db: dict = {}
+    try:
+        _conn = conn or get_db_connection()
+        _close = conn is None
+        with _conn.cursor() as cur:
+            cur.execute("SELECT key, value FROM system_settings WHERE key LIKE 'smtp.%%'")
+            db = {row[0]: row[1] for row in cur.fetchall()}
+        if _close:
+            _conn.close()
+    except Exception as exc:
+        logger.debug("SMTP DB override lookup failed: %s — using env vars", exc)
+
+    enabled_raw = db.get("smtp.enabled", "true" if SMTP_ENABLED else "false")
+    enabled = enabled_raw.lower() in ("true", "1", "yes")
+
+    host = db.get("smtp.host") or SMTP_HOST
+    port_raw = db.get("smtp.port")
+    port = int(port_raw) if port_raw and port_raw.isdigit() else SMTP_PORT
+    tls_raw = db.get("smtp.use_tls")
+    use_tls = (tls_raw.lower() in ("true", "1", "yes")) if tls_raw else SMTP_USE_TLS
+    username = db.get("smtp.username") or SMTP_USERNAME
+
+    stored_pw = db.get("smtp.password") or ""
+    if stored_pw.startswith("fernet:"):
+        # Decrypt the DB-stored password using the same key as the API
+        try:
+            from cryptography.fernet import Fernet
+            _key_env = os.getenv("SMTP_CONFIG_KEY", "")
+            if _key_env:
+                _fernet = Fernet(_key_env.encode() if isinstance(_key_env, str) else _key_env)
+                stored_pw = _fernet.decrypt(stored_pw[len("fernet:"):].encode()).decode()
+            else:
+                stored_pw = ""
+        except Exception as exc:
+            logger.warning("SMTP password decryption failed: %s", exc)
+            stored_pw = ""
+    password = stored_pw or SMTP_PASSWORD
+
+    from_address = db.get("smtp.from_address") or SMTP_FROM_ADDRESS
+    from_name = db.get("smtp.from_name") or SMTP_FROM_NAME
+
+    return {
+        "enabled": enabled,
+        "host": host,
+        "port": port,
+        "use_tls": use_tls,
+        "username": username,
+        "password": password,
+        "from_address": from_address,
+        "from_name": from_name,
+    }
+
+# ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 
@@ -183,42 +244,50 @@ def render_template(template_name: str, context: Dict[str, Any]) -> str:
     return tpl.render(**context)
 
 
-def send_email(to_address: str, subject: str, html_body: str) -> bool:
-    """Send a single email via SMTP. Returns True on success."""
-    if not SMTP_ENABLED:
-        logger.info(f"SMTP disabled — would send to {to_address}: {subject}")
+def send_email(to_address: str, subject: str, html_body: str, conn=None) -> bool:
+    """Send a single email via SMTP. Returns True on success.
+    Reads SMTP config fresh from DB on every call so admin-UI changes
+    take effect immediately without a pod restart."""
+    cfg = get_smtp_config(conn)
+
+    if not cfg["enabled"]:
+        logger.info("SMTP disabled — would send to %s: %s", to_address, subject)
         return True  # treat as success in dry-run mode
+
+    if not cfg["host"]:
+        logger.warning("SMTP host not configured — cannot send email to %s", to_address)
+        return False
 
     try:
         msg = MIMEMultipart("alternative")
-        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_ADDRESS}>"
+        msg["From"] = f"{cfg['from_name']} <{cfg['from_address']}>"
         msg["To"] = to_address
         msg["Subject"] = subject
         msg.attach(MIMEText(html_body, "html"))
 
-        if SMTP_USE_TLS:
+        if cfg["use_tls"]:
             ctx = ssl.create_default_context()
             ctx.check_hostname = True
             ctx.verify_mode = ssl.CERT_REQUIRED
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            with smtplib.SMTP(cfg["host"], cfg["port"], timeout=30) as server:
                 server.ehlo()
                 server.starttls(context=ctx)
                 server.ehlo()
-                if SMTP_USERNAME:
-                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.sendmail(SMTP_FROM_ADDRESS, [to_address], msg.as_string())
+                if cfg["username"]:
+                    server.login(cfg["username"], cfg["password"])
+                server.sendmail(cfg["from_address"], [to_address], msg.as_string())
         else:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            with smtplib.SMTP(cfg["host"], cfg["port"], timeout=30) as server:
                 server.ehlo()
-                if SMTP_USERNAME:
-                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.sendmail(SMTP_FROM_ADDRESS, [to_address], msg.as_string())
+                if cfg["username"]:
+                    server.login(cfg["username"], cfg["password"])
+                server.sendmail(cfg["from_address"], [to_address], msg.as_string())
 
-        logger.info(f"Email sent to {to_address}: {subject}")
+        logger.info("Email sent to %s: %s", to_address, subject)
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send email to {to_address}: {e}")
+        logger.error("Failed to send email to %s: %s", to_address, e)
         return False
 
 # ---------------------------------------------------------------------------
@@ -471,7 +540,7 @@ def dispatch_event(conn, event: Dict):
                     "user": user,
                     "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
                 })
-                success = send_email(user["email"], subject, html_body)
+                success = send_email(user["email"], subject, html_body, conn=conn)
                 status = "sent" if success else "failed"
                 log_notification(conn, user, event, dkey, subject, status)
             except Exception as e:
@@ -553,7 +622,7 @@ def send_digests(conn):
                 "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
             })
             subject = f"📬 PF9 Daily Digest: {len(events)} notification(s)"
-            success = send_email(row["email"], subject, html_body)
+            success = send_email(row["email"], subject, html_body, conn=conn)
 
             if success:
                 # Clear the digest bucket
@@ -603,7 +672,7 @@ def poll_cycle(conn):
 
 def main():
     logger.info("PF9 Notification Worker starting...")
-    logger.info(f"SMTP enabled: {SMTP_ENABLED}, poll interval: {POLL_INTERVAL}s")
+    logger.info(f"SMTP env-var enabled: {SMTP_ENABLED} (DB override may differ), poll interval: {POLL_INTERVAL}s")
     logger.info(f"Digest enabled: {DIGEST_ENABLED}, digest hour UTC: {DIGEST_HOUR_UTC}")
 
     # Wait for DB
@@ -622,6 +691,17 @@ def main():
         sys.exit(1)
 
     ensure_tables(conn)
+
+    # Log resolved SMTP config now that DB is available
+    try:
+        _smtp = get_smtp_config(conn)
+        logger.info(
+            "Effective SMTP config — enabled=%s host=%s port=%s tls=%s from=%s",
+            _smtp["enabled"], _smtp["host"] or "(not set)", _smtp["port"],
+            _smtp["use_tls"], _smtp["from_address"],
+        )
+    except Exception as _e:
+        logger.warning("Could not resolve SMTP config at startup: %s", _e)
 
     last_digest_date = None
 

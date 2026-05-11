@@ -152,23 +152,40 @@ function VmRow({ vm, max, currency, billingModel }: {
 }) {
   const [open, setOpen] = useState(false);
   const isPrepaid = billingModel === "prepaid";
-  
+  const isDeleted = vm.is_deleted === true;
+  const rowStyle = isDeleted ? { opacity: 0.65, background: "var(--color-surface-raised)" } : {};
+  const effectiveH = vm.effective_hours ?? vm.metered_hours;
+
   return (
     <>
       <tr
-        style={{ cursor: "pointer" }}
+        style={{ cursor: "pointer", ...rowStyle }}
         onClick={() => setOpen((o) => !o)}
-        title="Click for details"
+        title={isDeleted ? "VM deleted during this period — cost prorated to actual uptime" : "Click for details"}
       >
-        <td style={{ fontWeight: 500 }}>{vm.vm_name}</td>
+        <td style={{ fontWeight: 500 }}>
+          {vm.vm_name}
+          {isDeleted && (
+            <span style={{ marginLeft: ".4rem", fontSize: ".7rem", color: "#EF4444", fontWeight: 700,
+              background: "#FEF2F2", border: "1px solid #FCA5A5", borderRadius: ".25rem", padding: ".1rem .3rem" }}>
+              DELETED
+            </span>
+          )}
+        </td>
         <td style={{ color: "var(--color-text-secondary)", fontSize: ".8rem" }}>{vm.project_name}</td>
         <td style={{ color: "var(--color-text-secondary)", fontSize: ".8rem" }}>{vm.flavor}</td>
         <td style={{ fontSize: ".8rem" }}>
           {vm.vcpus} vCPU / {vm.ram_gb} GB / {vm.disk_gb} GB disk
-          {vm.metered_hours !== undefined && (
+          {effectiveH !== undefined && (
             <div style={{ marginTop: ".2rem", fontSize: ".72rem", display: "flex", gap: ".6rem" }}>
-              <span style={{ color: "#10B981", fontWeight: 600 }}>● {vm.metered_hours}h on</span>
-              {(vm.down_hours ?? 0) > 0 && <span style={{ color: "#9CA3AF" }}>● {vm.down_hours}h off</span>}
+              {isDeleted ? (
+                <span style={{ color: "#EF4444" }}>● {effectiveH}h (deleted {vm.last_seen ? new Date(vm.last_seen).toLocaleDateString() : ""})</span>
+              ) : (
+                <>
+                  <span style={{ color: "#10B981", fontWeight: 600 }}>● {effectiveH}h on</span>
+                  {(vm.down_hours ?? 0) > 0 && <span style={{ color: "#9CA3AF" }}>● {vm.down_hours}h off</span>}
+                </>
+              )}
             </div>
           )}
         </td>
@@ -185,22 +202,28 @@ function VmRow({ vm, max, currency, billingModel }: {
         <tr>
           <td colSpan={5} style={{ background: "var(--color-surface-raised)", padding: ".6rem 1rem" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: ".4rem .8rem", fontSize: ".8rem" }}>
-              {vm.metered_hours !== undefined && (
+              {effectiveH !== undefined && (
                 <span style={{ gridColumn: "1 / -1", display: "flex", gap: "1.5rem", paddingBottom: ".25rem",
                   borderBottom: "1px solid var(--color-border)", marginBottom: ".25rem" }}>
-                  <span><span style={{ color: "#10B981", fontWeight: 700 }}>🟢 Running:</span> <strong>{vm.metered_hours}h</strong></span>
-                  <span><span style={{ color: "#9CA3AF" }}>⬛ Idle/Off:</span> {vm.down_hours ?? 0}h</span>
+                  {isDeleted ? (
+                    <span style={{ color: "#EF4444", fontWeight: 600 }}>🗑 Deleted — {effectiveH}h billed (prorated to actual uptime)</span>
+                  ) : (
+                    <>
+                      <span><span style={{ color: "#10B981", fontWeight: 700 }}>🟢 Running:</span> <strong>{effectiveH}h</strong></span>
+                      <span><span style={{ color: "#9CA3AF" }}>⬛ Idle/Off:</span> {vm.down_hours ?? 0}h</span>
+                    </>
+                  )}
                   {vm.first_seen && <span style={{ color: "var(--color-text-secondary)" }}>From {new Date(vm.first_seen).toLocaleDateString()} to {vm.last_seen ? new Date(vm.last_seen).toLocaleDateString() : "now"}</span>}
                 </span>
               )}
               <span><strong>Compute:</strong>{" "}
                 {isPrepaid
                   ? `${fmt(vm.compute_cost, currency)} / month (flat)`
-                  : `${vm.metered_hours ?? "?"}h × ${fmt(vm.cost_per_hour, currency)}/hr = ${fmt(vm.compute_cost, currency)}`}
+                  : `${effectiveH ?? "?"}h × ${fmt(vm.cost_per_hour, currency)}/hr = ${fmt(vm.compute_cost, currency)}`}
               </span>
               <span><strong>Disk Storage:</strong> {fmt(vm.storage_cost, currency)} ({vm.disk_gb} GB × rate)</span>
               <span><strong>Snapshots:</strong> {fmt(vm.snapshot_cost, currency)} ({vm.snapshot_count} snapshots, {vm.snapshot_gb} GB)</span>
-              <span><strong>Network:</strong> {fmt(vm.network_cost, currency)} (1 port × rate × {vm.metered_hours ?? "?"}h)</span>
+              <span><strong>Network:</strong> {fmt(vm.network_cost, currency)} (1 port × rate × {effectiveH ?? "?"}h)</span>
               <span><strong>VM Total:</strong> {fmt(vm.estimated_cost, currency)}</span>
               {vm.last_metering && (
                 <span style={{ color: "var(--color-text-secondary)" }}>Last metered: {new Date(vm.last_metering).toLocaleString()}</span>
