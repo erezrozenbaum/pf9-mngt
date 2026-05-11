@@ -355,11 +355,16 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
     lifecycle_rows = cur.fetchall()
 
     # Build vm_metered lookup
+    # NOTE: metered_hours is COUNT(*) of collection rows — collection runs more than once
+    # per hour, so it is NOT a reliable hour count. We store raw datetimes separately
+    # for wall-clock effective_hours calculation.
     vm_metered: Dict[str, Any] = {
         r["vm_id"]: {
             "metered_hours": int(r["metered_hours"]),
             "first_seen": r["first_seen"].isoformat() if r["first_seen"] else None,
             "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None,
+            "_first_seen_dt": r["first_seen"],
+            "_last_seen_dt": r["last_seen"],
         }
         for r in lifecycle_rows
     }
@@ -431,8 +436,22 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
 
         mh_data = vm_metered.get(vm["vm_id"], {})
         metered_h = mh_data.get("metered_hours", 0)
-        # For deleted VMs prorate costs by actual metered hours; active VMs use full period
-        effective_hours = metered_h if is_deleted else hours
+        # For deleted VMs: prorate by wall-clock uptime within the period, not row count.
+        # COUNT(*) from metering_resources reflects collection frequency (e.g. every 5–15 min),
+        # so it far exceeds the actual number of hours and inflates costs.
+        if is_deleted:
+            _fs = mh_data.get("_first_seen_dt")
+            _ls = mh_data.get("_last_seen_dt")
+            if _fs and _ls:
+                # Clamp first_seen to period_start so we don't count time before the window
+                _effective_start = max(_fs, period_start)
+                _wall_hours = (_ls - _effective_start).total_seconds() / 3600.0
+                effective_hours = round(max(0.0, min(float(hours), _wall_hours)), 2)
+            else:
+                # No timestamps — fall back to capping row count at period length
+                effective_hours = min(metered_h, hours)
+        else:
+            effective_hours = hours
 
         fp = flavor_pricing.get(flavor)
         if fp:
@@ -468,8 +487,8 @@ async def _get_chargeback_data(cur, tenant_ctx: TenantContext, hours: int, curre
             "pricing_basis": pricing_basis,
             "last_metering": vm["collected_at"].isoformat() if vm["collected_at"] else None,
             "metered_hours": metered_h,
-            "effective_hours": effective_hours,
-            "down_hours": max(0, hours - metered_h),
+            "effective_hours": round(effective_hours),
+            "down_hours": max(0, hours - round(effective_hours)),
             "first_seen": mh_data.get("first_seen"),
             "last_seen": mh_data.get("last_seen"),
             "is_deleted": is_deleted,

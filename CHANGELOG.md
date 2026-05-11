@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.19] - 2026-05-11
+
+### Fixed
+- **Intelligence worker no longer crashes all engines** (`intelligence_worker/engines/capacity.py`): `_evaluate_hypervisors()` used non-existent columns `s.hypervisor_id` and `h.collected_at` in its SQL queries — replaced with the actual columns `s.hypervisor_hostname`, `h.hostname`, and `h.recorded_at`. The resulting PostgreSQL transaction abort was silently swallowed inside `CapacityEngine.run()` but left the shared DB connection in an aborted state, causing every subsequent engine (`WasteEngine`, `RiskEngine`, `CrossRegionEngine`, etc.) to fail with "current transaction is aborted" — meaning stale-insights cleanup, drift detection, and all intelligence insights were silently broken. Added `conn.rollback()` in the internal exception handler as a second line of defence.
+- **Cross-region engine SQL column** (`intelligence_worker/engines/cross_region.py`): Same wrong column — `JOIN hypervisors h2 ON h2.id = s.hypervisor_id` — replaced with `JOIN hypervisors h2 ON h2.hostname = s.hypervisor_hostname`.
+- **Deleted-VM billing hours inflated** (`tenant_portal/billing_routes.py`): `effective_hours` for deleted VMs was set to `COUNT(*)` of metering-resource rows — the metering worker collects data several times per hour so this count massively exceeded the actual uptime (e.g. 3373 rows shown as "3373h"). Fixed to use wall-clock duration `(last_seen − max(first_seen, period_start)).total_seconds() / 3600`, capped at the selected period (e.g. 720h for 30 days). Deleted VMs now show and are billed for their true running time within the period.
+
+---
+
 ## [1.95.18] - 2026-05-11
 
 ### Added

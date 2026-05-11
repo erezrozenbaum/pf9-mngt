@@ -76,7 +76,7 @@ class CrossRegionEngine(BaseEngine):
                         SELECT SUM(f.vcpus)
                         FROM servers s
                         JOIN flavors f ON f.id = s.flavor_id
-                        JOIN hypervisors h2 ON h2.id = s.hypervisor_id
+                        JOIN hypervisors h2 ON h2.hostname = s.hypervisor_hostname
                         WHERE h2.region_id = hypervisors.region_id
                           AND s.status = 'ACTIVE'
                     ), 0)                           AS allocated_vcpus,
