@@ -102,6 +102,11 @@ class CapacityEngine(BaseEngine):
             self._evaluate_hypervisors()
         except Exception as exc:
             log.warning("CapacityEngine: hypervisor evaluation failed: %s", exc)
+            # Rollback so subsequent engines in run_once() get a clean transaction.
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
     def _load_projects(self) -> list:
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
@@ -294,7 +299,7 @@ class CapacityEngine(BaseEngine):
                             (SELECT SUM(f.vcpus)
                              FROM flavors f
                              JOIN servers s ON s.flavor_id = f.id
-                                           AND s.hypervisor_id = h.id
+                                           AND s.hypervisor_hostname = h.hostname
                                            AND s.status = 'ACTIVE'), 0
                         )::numeric
                     )                                      AS allocated_vcpus,
@@ -303,7 +308,7 @@ class CapacityEngine(BaseEngine):
                             (SELECT SUM(f.ram_mb)
                              FROM flavors f
                              JOIN servers s ON s.flavor_id = f.id
-                                           AND s.hypervisor_id = h.id
+                                           AND s.hypervisor_hostname = h.hostname
                                            AND s.status = 'ACTIVE'), 0
                         )::numeric
                     )                                      AS allocated_ram_mb
@@ -334,15 +339,15 @@ class CapacityEngine(BaseEngine):
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
                 SELECT
-                    EXTRACT(EPOCH FROM h.collected_at) AS ts,
-                    COUNT(*)                           AS active_vms
+                    EXTRACT(EPOCH FROM h.recorded_at) AS ts,
+                    COUNT(*)                          AS active_vms
                 FROM servers_history h
-                WHERE h.hypervisor_id = %s
-                  AND h.status        = 'ACTIVE'
-                  AND h.collected_at >= NOW() - INTERVAL '14 days'
-                GROUP BY h.collected_at
-                ORDER BY h.collected_at ASC
-            """, (str(hv_id),))
+                WHERE h.hypervisor_hostname = %s
+                  AND h.status              = 'ACTIVE'
+                  AND h.recorded_at        >= NOW() - INTERVAL '14 days'
+                GROUP BY h.recorded_at
+                ORDER BY h.recorded_at ASC
+            """, (hostname,))
             rows = cur.fetchall()
         # Fallback: need at least 5 data points for a meaningful trend
         if len(rows) < 5:
