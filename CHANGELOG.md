@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.21] - 2026-05-12
+
+### Fixed
+- **Provisioning 400 on virtual network creation** (`api/provisioning_routes.py`): Virtual tenant networks were created using the admin `client` scoped to the `service` project. Platform9 Neutron's `network_owner` policy rejects resource creation when the token scope doesn't match the target project — even when `project_id` is passed in the request body. Fixed to use `neutron_client` (the `provisionsrv` service account scoped to the new tenant project via `scoped_for_project()`), consistent with how subnets and security groups were already being created.
+- **Provisioning 400 on subnet creation** (`api/pf9_control.py`): `create_network()` returned the full Neutron response wrapper `{"network": {...}}` instead of the unwrapped network dict, so callers did `created_net.get("id") → None`, passing `network_id=None` to `create_subnet()`. Fixed to return `r.json().get("network", {})`, matching `create_provider_network()`. Added Neutron error-body logging to `create_subnet()` for future diagnostics.
+
+### Added
+- **Provisioning retry** (`api/provisioning_routes.py`, `pf9-ui/src/components/CustomerProvisioningTab.tsx`, `db/migrate_v1_95_21.sql`): Failed provisioning jobs can now be retried without re-filling the wizard form. The full `ProvisionRequest` is stored as `request_payload JSONB` on job creation. A new `POST /api/provisioning/retry/{job_id}` endpoint re-runs the stored payload as a fresh job. The UI shows a red "🔁 Retry" button on failed results and in the Provisioning Logs table.
+
+---
+
 ## [1.95.20] - 2026-05-11
 
 ### Fixed

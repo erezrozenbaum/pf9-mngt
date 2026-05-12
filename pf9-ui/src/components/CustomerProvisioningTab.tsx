@@ -652,6 +652,21 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
     } finally { setProvisioning(false); }
   };
 
+  const handleRetry = async (retryJobId: string) => {
+    setProvisioning(true); setProvisionResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/provisioning/retry/${retryJobId}`, {
+        method: "POST", headers: authHeaders(),
+      });
+      const data = await res.json();
+      setProvisionResult(data);
+      if (data.status === "completed") fetchLogs();
+      fetchLogs();
+    } catch (e: any) {
+      setProvisionResult({ status: "failed", error: e.message });
+    } finally { setProvisioning(false); }
+  };
+
   const resetWizard = () => {
     setForm({ ...INIT_FORM }); setWizardStep(0); setProvisionResult(null);
     setDomainCheck(null); setDomainAction(null); setProjectCheck(null); setQuotaTab("compute");
@@ -1384,7 +1399,15 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                 </div>
                 {provisionResult.error && <div style={{ color: "var(--pf9-danger-text)", fontSize: 13 }}>{provisionResult.error}</div>}
                 {provisionResult.job_id && <div style={{ fontSize: 13, marginTop: 8, color: "var(--pf9-text-secondary)" }}>Job ID: {provisionResult.job_id}</div>}
-                <button onClick={resetWizard} style={{ marginTop: 12, ...btnStyle, background: "#4299e1" }}>Provision Another Customer</button>
+                <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                  {provisionResult.status !== "completed" && provisionResult.job_id && (
+                    <button onClick={() => handleRetry(provisionResult.job_id!)} disabled={provisioning}
+                      style={{ ...btnStyle, background: provisioning ? "var(--pf9-text-muted)" : "#e53e3e" }}>
+                      {provisioning ? "⏳ Retrying..." : "🔁 Retry"}
+                    </button>
+                  )}
+                  <button onClick={resetWizard} style={{ ...btnStyle, background: "#4299e1" }}>Provision Another Customer</button>
+                </div>
               </div>
             )}
 
@@ -1478,6 +1501,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                       <th style={thStyle}>Domain</th><th style={thStyle}>Project</th>
                       <th style={thStyle}>User</th><th style={thStyle}>Status</th>
                       <th style={thStyle}>Created</th><th style={thStyle}>By</th>
+                      <th style={thStyle}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1491,6 +1515,14 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                         <td style={tdStyle}>{statusBadge(job.status)}</td>
                         <td style={tdStyle}>{fmtDate(job.created_at)}</td>
                         <td style={tdStyle}>{job.created_by}</td>
+                        <td style={tdStyle} onClick={(e) => e.stopPropagation()}>
+                          {job.status === "failed" && (
+                            <button onClick={() => handleRetry(job.job_id)} disabled={provisioning}
+                              style={{ ...btnStyle, padding: "4px 10px", fontSize: 12, background: provisioning ? "var(--pf9-text-muted)" : "#e53e3e" }}>
+                              🔁 Retry
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

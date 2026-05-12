@@ -2348,6 +2348,7 @@ CREATE TABLE IF NOT EXISTS provisioning_jobs (
     started_at      TIMESTAMPTZ,
     completed_at    TIMESTAMPTZ,
     error_message   TEXT,
+    request_payload JSONB,     -- full ProvisionRequest as submitted (for retry)
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

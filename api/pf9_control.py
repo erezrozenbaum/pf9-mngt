@@ -434,7 +434,7 @@ class Pf9Client:
         payload = {"network": body}
         r = self.session.post(url, headers=self._headers(), json=payload)
         r.raise_for_status()
-        return r.json()
+        return r.json().get("network", {})
 
     def _get_admin_project_token(self) -> Optional[str]:
         """
@@ -1365,6 +1365,12 @@ class Pf9Client:
         if project_id:
             body["tenant_id"] = project_id
         r = self.session.post(url, headers=self._headers(), json={"subnet": body})
+        if not r.ok:
+            try:
+                _detail = r.json()
+            except Exception:
+                _detail = r.text
+            log.error("Neutron create_subnet %s response: %s", r.status_code, _detail)
         r.raise_for_status()
         return r.json().get("subnet", {})
 
