@@ -530,6 +530,7 @@ workers:
       repository: pf9-mngt-intelligence-worker
       tag: ""
     intervalSeconds: "900"
+    timelineRetentionDays: "180"
     resources:
       limits:
         cpu: "500m"

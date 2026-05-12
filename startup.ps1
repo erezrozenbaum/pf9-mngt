@@ -188,13 +188,14 @@ Start-Sleep 15
 Write-Host "5. Verifying services..." -ForegroundColor Yellow
 
 $services = @(
-    @{Name="Database";          Container="pf9_db"},
-    @{Name="API";               Container="pf9_api"},
-    @{Name="UI";                Container="pf9_ui"},
-    @{Name="Monitoring";        Container="pf9_monitoring"},
-    @{Name="Scheduler Worker";  Container="pf9_scheduler_worker"},
-    @{Name="Redis";             Container="pf9_redis"},
-    @{Name="nginx";             Container="pf9_nginx"}
+    @{Name="Database";                Container="pf9_db"},
+    @{Name="API";                     Container="pf9_api"},
+    @{Name="UI";                      Container="pf9_ui"},
+    @{Name="Monitoring";              Container="pf9_monitoring"},
+    @{Name="Scheduler Worker";        Container="pf9_scheduler_worker"},
+    @{Name="Intelligence Worker";     Container="pf9_intelligence_worker"},
+    @{Name="Redis";                   Container="pf9_redis"},
+    @{Name="nginx";                   Container="pf9_nginx"}
 )
 
 $allGood = $true

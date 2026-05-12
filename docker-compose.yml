@@ -891,6 +891,7 @@ services:
       DB_USER: ${POSTGRES_USER}
       DB_PASS: ${POSTGRES_PASSWORD}
       INTELLIGENCE_INTERVAL_SECONDS: ${INTELLIGENCE_INTERVAL_SECONDS:-900}
+      TIMELINE_RETENTION_DAYS: ${TIMELINE_RETENTION_DAYS:-180}
       # --- Worker observability: Redis metrics sink ---
       REDIS_HOST: redis
       REDIS_PORT: "6379"
