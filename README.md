@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-1.95.21-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-1.95.22-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -283,7 +283,8 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
-- **v1.95.21** — Provisioning fixes: virtual tenant networks now created via `provisionsrv` service account scoped to the tenant project (was using admin token → Neutron 400/403), `create_network()` returns unwrapped dict to fix `network_id=None` passed to `create_subnet()`. Added provisioning retry: full `ProvisionRequest` stored as `request_payload JSONB` on job creation; new `POST /api/provisioning/retry/{job_id}` endpoint; UI shows Retry button on failed jobs (May 2026)
+- **v1.95.22** — Fix provisioning false-failure 500: DB connection held open across all PF9 API calls timed out in K8s, returning 500 even though provisioning succeeded. Each DB write now uses its own short-lived connection (May 2026)
+- **v1.95.21** —
 - **v1.95.13** — Intelligence Views: metering summary, quota vs real usage, resource growth MoM, cost growth MoM — My Portfolio and Portfolio Health dashboards (May 2026)
 - **v1.95.12** — Security hardening: removed hardcoded JWT fallback keys, anonymized infra IPs in docs, untracked bandit scan results (May 2026)
 - **v1.95.11** — Fix API OOMKill (2 Gi memory), SG rule management in Resources panel, deps panel light-mode contrast, quota input overflow (May 2026)

@@ -1,6 +1,6 @@
 # Features Reference — Technical Deep Dive (v1.95)
 
-> **v1.95.21 NEW**: Provisioning virtual-network service-account scope fix (Neutron 400/403); `create_network()` unwrap fix; provisioning retry (stored `request_payload` + retry endpoint + UI)
+> **v1.95.22 NEW**: Provisioning virtual-network service-account scope fix (Neutron 400/403); `create_network()` unwrap fix; provisioning retry (stored `request_payload` + retry endpoint + UI)
 > **v1.95**: Advanced billing & metering system with enterprise tenant management
 > Complete technical reference for all pf9-mngt features.
 > For a high-level overview and quick start see [README.md](../README.md).
