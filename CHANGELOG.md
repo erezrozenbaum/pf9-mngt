@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.23] - 2026-05-12
+
+### Fixed
+- **K8s NetworkPolicy**: Added SMTP egress ports (25, 465, 587) to `pf9-api` policy;
+  Calico was silently dropping all outbound SMTP packets from the API pod because the
+  strict egress whitelist only allowed 443/5000/5432/6379/389/53.
+  Welcome emails (provisioning, password reset, etc.) were failing with timeout in K8s.
+
+---
+
 ## [1.95.22] - 2026-05-12
 
 ### Fixed
