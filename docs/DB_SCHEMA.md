@@ -1074,6 +1074,93 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_health_snapshots_date
 
 ---
 
+## Operational Event Timeline (v1.96.0)
+
+Unified chronological event store for the Operational Timeline feature. Events are harvested from all source tables by `TimelineHarvester` in `intelligence_worker` on a 15-minute cadence. A companion table `timeline_harvest_cursors` tracks the last-processed row per source so harvests are always incremental and idempotent.
+
+### `operational_events`
+
+```sql
+CREATE TABLE IF NOT EXISTS operational_events (
+    id              BIGSERIAL PRIMARY KEY,
+    event_id        UUID NOT NULL DEFAULT gen_random_uuid(),
+
+    -- Temporal
+    occurred_at     TIMESTAMPTZ NOT NULL,        -- source event timestamp
+    recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- What happened
+    event_type      TEXT NOT NULL,               -- see Event Type Catalog in plan
+    category        TEXT NOT NULL,               -- monitoring|provisioning|backup|snapshot|sla|
+                                                 -- billing|security|ticket|intelligence|runbook|system
+    severity        TEXT NOT NULL DEFAULT 'info',-- info|warning|critical
+    title           TEXT NOT NULL,
+    description     TEXT,
+    metadata        JSONB NOT NULL DEFAULT '{}', -- event-specific payload
+
+    -- Primary entity
+    entity_type     TEXT NOT NULL,               -- vm|volume|tenant|host|snapshot|backup|...
+    entity_id       TEXT NOT NULL,
+    entity_name     TEXT,
+
+    -- Scope
+    domain_id       TEXT,
+    domain_name     TEXT,
+    project_id      TEXT,
+    project_name    TEXT,
+    region_id       TEXT NOT NULL DEFAULT 'global',
+
+    -- Source tracking
+    source          TEXT NOT NULL,               -- activity_log|intelligence_worker|metering_worker|...
+    source_id       TEXT,                        -- optional FK into source table
+    actor           TEXT,                        -- username or 'system'
+
+    -- Visibility / RBAC
+    visibility      TEXT NOT NULL DEFAULT 'operational'
+                                                 -- operational|billing|security|system
+);
+```
+
+**Indexes**:
+- `idx_oe_source_dedup` — UNIQUE on `(source, source_id) WHERE source_id IS NOT NULL` — prevents duplicate harvest
+- `idx_oe_domain_time` — `(domain_id, occurred_at DESC)` — tenant timeline (primary query)
+- `idx_oe_entity_time` — `(entity_type, entity_id, occurred_at DESC)` — resource timeline
+- `idx_oe_region_time` — `(region_id, occurred_at DESC)` — region admin queries
+- `idx_oe_category_time` — `(category, occurred_at DESC)` — category filtering
+- `idx_oe_project_time` — `(project_id, occurred_at DESC)` — project-level scope
+- `idx_oe_recorded_at` — `(recorded_at)` — retention pruning
+- `idx_oe_visibility_time` — `(visibility, occurred_at DESC)` — RBAC visibility filter
+
+**RBAC visibility rules**:
+- `viewer` / `operator`: `operational` only
+- `technical` / `admin`: `operational` + `billing`
+- `admin`: + `security`
+- `superadmin`: all (+ `system`)
+
+**Retention**: `TIMELINE_RETENTION_DAYS` env var (default 180). Pruning runs in `intelligence_worker` after each harvest cycle.
+
+**Write pattern**: `TimelineHarvester` bulk-inserts with `ON CONFLICT (source, source_id) DO NOTHING` for idempotency.
+
+**Read pattern**: `GET /api/timeline` with filters `entity_type`, `entity_id`, `domain_id`, `region_id`, `from`, `to`, `category`, `severity`, `limit`, `offset`. `get_effective_region_filter()` enforced on all queries.
+
+---
+
+### `timeline_harvest_cursors`
+
+```sql
+CREATE TABLE IF NOT EXISTS timeline_harvest_cursors (
+    source      TEXT PRIMARY KEY,
+    last_id     BIGINT,
+    last_ts     TIMESTAMPTZ,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+One row per source table (e.g. `activity_log`, `backup_history`, `snapshot_records`). Updated at the end of each successful harvest cycle.
+
+
+---
+
 ## Portfolio Metering (v1.95.13)
 
 ### portfolio_metering_monthly
