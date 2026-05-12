@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.96.1] - 2026-05-12
+
+### Added
+- **Operational Event Timeline — REST API**: Three new endpoints under `/api/timeline` — paginated event list with filters (entity, domain/project, region, category, severity, time range), blast-radius correlation view (events ±N minutes around a timestamp), and aggregated stats by category and severity. Role-based visibility filters ensure each role sees only the event tiers they are authorised for.
+
+---
+
 ## [1.96.0] - 2026-05-12
 
 ### Added

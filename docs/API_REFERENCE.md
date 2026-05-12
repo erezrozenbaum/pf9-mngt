@@ -4366,6 +4366,149 @@ Removes all tasks in `pending` or `failed` state. Tasks with status `done` are p
 
 ---
 
+## Operational Event Timeline (v1.96.1)
+
+Unified chronological event feed harvested from all source tables. Events are filtered server-side by the caller's role (visibility) and region access (`get_effective_region_filter`).
+
+**Permission required**: `timeline:read` — all roles.
+
+---
+
+### List Timeline Events
+
+`GET /api/timeline`
+
+Returns a paginated list of operational events matching the given filters.
+
+**Query parameters**:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `from` | ISO datetime | now()-24h | Start of time range |
+| `to` | ISO datetime | now() | End of time range |
+| `entity_type` | string | — | Filter by entity type (vm, volume, tenant, host, …) |
+| `entity_id` | string | — | Filter by entity UUID/name |
+| `domain_id` | string | — | Tenant timeline: filter by domain |
+| `project_id` | string | — | Filter by project |
+| `region_id` | string | — | Filter by region (enforced against caller's allowed regions) |
+| `category` | CSV string | — | One or more: monitoring, provisioning, backup, snapshot, sla, billing, security, ticket, intelligence, runbook, system |
+| `severity` | string | — | `info` \| `warning` \| `critical` |
+| `limit` | int 1–500 | 100 | Max events to return |
+| `offset` | int ≥0 | 0 | Pagination offset |
+
+**Response**:
+```json
+{
+  "events": [
+    {
+      "id": 42,
+      "event_id": "uuid",
+      "occurred_at": "2026-05-12T02:13:00+00:00",
+      "recorded_at": "2026-05-12T02:14:00+00:00",
+      "event_type": "storage_high",
+      "category": "monitoring",
+      "severity": "warning",
+      "title": "Storage pool reached 92%",
+      "description": "Project acme/web reached 92% of storage quota (276 GiB / 300 GiB)",
+      "entity_type": "tenant",
+      "entity_id": "proj-uuid",
+      "entity_name": "acme/web",
+      "domain_id": "dom-uuid",
+      "domain_name": "acme",
+      "project_id": "proj-uuid",
+      "project_name": "web",
+      "region_id": "region-one",
+      "source": "metering_worker",
+      "actor": "system",
+      "metadata": { "used_gb": 276, "quota_gb": 300, "pct": 92 },
+      "visibility": "operational"
+    }
+  ],
+  "total": 1,
+  "limit": 100,
+  "offset": 0,
+  "has_more": false
+}
+```
+
+**Visibility rules** (server-side enforced, cannot be overridden by client):
+
+| Role | Sees |
+|---|---|
+| viewer, operator | `operational` only |
+| technical | `operational`, `billing` |
+| admin | `operational`, `billing`, `security` |
+| superadmin | all (`operational`, `billing`, `security`, `system`) |
+
+---
+
+### Correlated Events
+
+`GET /api/timeline/correlated`
+
+Returns events temporally correlated with a given entity around a specific timestamp. Used for root-cause analysis: "what else changed around the time of this incident?"
+
+**Query parameters**:
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `entity_type` | string | ✅ | Entity type |
+| `entity_id` | string | ✅ | Entity UUID or name |
+| `ts` | ISO datetime | ✅ | Centre of the search window |
+| `window_minutes` | int 5–1440 | — (default 60) | ±minutes around `ts` |
+| `region_id` | string | — | Restrict to region |
+
+**Response**:
+```json
+{
+  "events": [...],
+  "total": 5,
+  "centre_ts": "2026-05-12T02:13:00+00:00",
+  "window_minutes": 60
+}
+```
+
+Events are ordered by `occurred_at DESC`. Includes events matching the entity directly **or** any event in the same tenant domain (same `domain_id`), within the time window.
+
+---
+
+### Timeline Stats
+
+`GET /api/timeline/stats`
+
+Returns event counts grouped by category and severity for dashboard widgets.
+
+**Query parameters**:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `from` | ISO datetime | now()-24h | Start of time range |
+| `to` | ISO datetime | now() | End of time range |
+| `domain_id` | string | — | Restrict to tenant domain |
+| `region_id` | string | — | Restrict to region |
+
+**Response**:
+```json
+{
+  "by_category": {
+    "monitoring": 12,
+    "backup": 3,
+    "snapshot": 7
+  },
+  "by_severity": {
+    "info": 15,
+    "warning": 6,
+    "critical": 1
+  },
+  "total": 22,
+  "from": "2026-05-11T02:00:00+00:00",
+  "to": "2026-05-12T02:00:00+00:00"
+}
+```
+```
+
+---
+
 ### Post-Run Summary (v1.36.1)
 
 `GET /projects/{id}/prep-summary`

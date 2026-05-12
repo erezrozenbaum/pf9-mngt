@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-1.96.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-1.96.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -283,6 +283,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v1.96.1** — Operational Event Timeline: REST API with paginated list, blast-radius correlation view, and stats endpoints; role-based visibility filtering (May 2026)
 - **v1.96.0** — Operational Event Timeline: unified `operational_events` table with full indexing, harvest cursor tracking, Intelligence Views nav item, and RBAC permissions for all roles (May 2026)
 - **v1.95.24** — Fix provisioning logs not refreshed after failed provision: `fetchLogs()` was only called on `status === "completed"`, so failed jobs were invisible in the Provisioning Logs tab until manual navigation (May 2026)
 - **v1.95.23** — Fix provisioning false-failure 500: DB connection held open across all PF9 API calls timed out in K8s, returning 500 even though provisioning succeeded. Each DB write now uses its own short-lived connection (May 2026)

@@ -122,6 +122,9 @@ from sla_routes import router as sla_router
 # Operational Intelligence Feed
 from intelligence_routes import router as intelligence_router, setup_intelligence_internal_routes
 
+# Operational Event Timeline
+from timeline_routes import router as timeline_router
+
 # QBR Generator
 from qbr_routes import router as qbr_router
 
@@ -414,6 +417,7 @@ app.include_router(docs_router)
 app.include_router(tenant_portal_admin_router)
 app.include_router(sla_router)
 app.include_router(intelligence_router)
+app.include_router(timeline_router)
 app.include_router(qbr_router)
 app.include_router(psa_router)
 
