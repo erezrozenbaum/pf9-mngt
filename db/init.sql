@@ -4177,6 +4177,119 @@ CREATE OR REPLACE VIEW tenant_cp_view AS
     FROM   pf9_control_planes
     WHERE  is_enabled = TRUE;
 
+-- =====================================================================
+-- OPERATIONAL EVENT TIMELINE (v1.96.0)
+-- Unified chronological event store harvested by intelligence_worker.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS operational_events (
+    id              BIGSERIAL PRIMARY KEY,
+    event_id        UUID NOT NULL DEFAULT gen_random_uuid(),
+
+    -- Temporal
+    occurred_at     TIMESTAMPTZ NOT NULL,
+    recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- What happened
+    event_type      TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    severity        TEXT NOT NULL DEFAULT 'info',
+    title           TEXT NOT NULL,
+    description     TEXT,
+    metadata        JSONB NOT NULL DEFAULT '{}',
+
+    -- Primary entity
+    entity_type     TEXT NOT NULL,
+    entity_id       TEXT NOT NULL,
+    entity_name     TEXT,
+
+    -- Scope
+    domain_id       TEXT,
+    domain_name     TEXT,
+    project_id      TEXT,
+    project_name    TEXT,
+    region_id       TEXT NOT NULL DEFAULT 'global',
+
+    -- Source tracking
+    source          TEXT NOT NULL,
+    source_id       TEXT,
+    actor           TEXT,
+
+    -- Visibility / RBAC filter
+    visibility      TEXT NOT NULL DEFAULT 'operational',
+
+    CONSTRAINT chk_oe_category CHECK (category IN (
+        'monitoring', 'provisioning', 'backup', 'snapshot', 'sla',
+        'billing', 'security', 'ticket', 'intelligence', 'runbook', 'system'
+    )),
+    CONSTRAINT chk_oe_severity CHECK (severity IN ('info', 'warning', 'critical')),
+    CONSTRAINT chk_oe_visibility CHECK (visibility IN (
+        'operational', 'billing', 'security', 'system'
+    ))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_oe_source_dedup
+    ON operational_events(source, source_id)
+    WHERE source_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_oe_domain_time
+    ON operational_events(domain_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_oe_entity_time
+    ON operational_events(entity_type, entity_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_oe_region_time
+    ON operational_events(region_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_oe_category_time
+    ON operational_events(category, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_oe_project_time
+    ON operational_events(project_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_oe_recorded_at
+    ON operational_events(recorded_at);
+
+CREATE INDEX IF NOT EXISTS idx_oe_visibility_time
+    ON operational_events(visibility, occurred_at DESC);
+
+
+-- Harvest cursor table: tracks last processed row per source
+CREATE TABLE IF NOT EXISTS timeline_harvest_cursors (
+    source      TEXT PRIMARY KEY,
+    last_id     BIGINT,
+    last_ts     TIMESTAMPTZ,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+
+-- Nav item: Operational Timeline (Intelligence Views group)
+INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order)
+VALUES (
+    (SELECT id FROM nav_groups WHERE key = 'intelligence_views'),
+    'operational_timeline',
+    'Timeline',
+    '📅',
+    '/operational_timeline',
+    'timeline',
+    3
+)
+ON CONFLICT (key) DO NOTHING;
+
+
+-- RBAC: timeline:read for all roles
+INSERT INTO role_permissions (role, resource, action) VALUES
+    ('viewer',          'timeline', 'read'),
+    ('operator',        'timeline', 'read'),
+    ('technical',       'timeline', 'read'),
+    ('admin',           'timeline', 'read'),
+    ('superadmin',      'timeline', 'read'),
+    ('superadmin',      'timeline', 'write'),
+    ('superadmin',      'timeline', 'admin'),
+    ('account_manager', 'timeline', 'read'),
+    ('executive',       'timeline', 'read')
+ON CONFLICT DO NOTHING;
+
 -- RLS: inventory tables (project_id + region_id double-scoped)
 ALTER TABLE servers          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE volumes          ENABLE ROW LEVEL SECURITY;

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.96.0] - 2026-05-12
+
+### Added
+- **Operational Event Timeline — database foundation**: Introduced the `operational_events` table as the unified chronological store for all infrastructure events (monitoring alerts, provisioning actions, backup outcomes, snapshot results, SLA changes, ticket activity, and AI-generated insights). Added `timeline_harvest_cursors` table for incremental, idempotent event harvesting. Seeded `Timeline` navigation item under Intelligence Views and role-based access permissions for all roles.
+
+---
+
 ## [1.95.24] - 2026-05-12
 
 ### Fixed
