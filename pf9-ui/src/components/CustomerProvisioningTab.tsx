@@ -646,7 +646,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
       });
       const data = await res.json();
       setProvisionResult(data);
-      if (data.status === "completed") fetchLogs();
+      fetchLogs();
     } catch (e: any) {
       setProvisionResult({ status: "failed", error: e.message });
     } finally { setProvisioning(false); }

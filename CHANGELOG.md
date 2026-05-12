@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.24] - 2026-05-12
+
+### Fixed
+- **Provisioning logs not updated on failure** (`pf9-ui/src/components/CustomerProvisioningTab.tsx`): After a failed provision attempt the Provisioning Logs tab was not refreshed because `fetchLogs()` was only called when `data.status === "completed"`. Failed jobs therefore appeared invisible in the log until the user manually navigated away and back. Fixed by calling `fetchLogs()` unconditionally after every provision response.
+
+---
+
 ## [1.95.23] - 2026-05-12
 
 ### Fixed
