@@ -711,12 +711,15 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
             _step_sfx = f"_{idx + 1}" if len(req.networks) > 1 else ""
 
             if nc.network_kind == "virtual":
+                # Use neutron_client (provisionsrv scoped to the tenant project) so
+                # Platform9 Neutron's network_owner policy is satisfied.  The admin
+                # client is scoped to the 'service' project; passing project_id in
+                # the body alone is not enough — Neutron still 403s on policy check.
                 created_net = run_step(
                     f"create_network{_step_sfx}",
                     f"Create Virtual Network: {_net_name}",
-                    lambda n=_net_name, _nc=nc: client.create_network(
+                    lambda n=_net_name, _nc=nc: neutron_client.create_network(
                         name=n,
-                        project_id=project_id,
                         shared=_nc.shared,
                         external=False,
                         port_security_enabled=_nc.port_security_enabled,
@@ -1079,8 +1082,8 @@ async def provision_customer(
                      network_name, network_type, vlan_id, subnet_cidr, gateway_ip,
                      dns_nameservers, networks_config,
                      quota_compute, quota_network, quota_storage,
-                     created_by, region_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     created_by, region_id, request_payload)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING job_id, id
             """, (
                 req.domain_name, req.project_name, req.username,
@@ -1092,6 +1095,7 @@ async def provision_customer(
                 Json(req.storage_quotas.dict()),
                 user.get("username", "system") if isinstance(user, dict) else "system",
                 req.region_id,
+                Json(req.dict()),
             ))
             job = cur.fetchone()
 
@@ -2022,3 +2026,48 @@ async def get_activity_log(
             rows = cur.fetchall()
 
     return {"logs": rows, "total": total, "limit": limit, "offset": offset}
+
+
+@router.post("/retry/{job_id}")
+async def retry_provisioning_job(
+    job_id: str,
+    request: Request,
+    user=Depends(require_permission("provisioning", "write")),
+):
+    """
+    Retry a failed provisioning job using its stored request_payload.
+    Creates a new provisioning_jobs row (new job_id) and runs the same
+    ProvisionRequest again from scratch.
+    """
+    from db_pool import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT status, request_payload FROM provisioning_jobs WHERE job_id = %s",
+                (job_id,),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if row["status"] not in ("failed", "error"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is '{row['status']}' — only failed jobs can be retried",
+        )
+    if not row["request_payload"]:
+        raise HTTPException(
+            status_code=422,
+            detail="Job has no stored request payload — it was created before retry support was added. "
+                   "Please submit the form again manually.",
+        )
+
+    # Re-parse stored payload as ProvisionRequest
+    try:
+        req = ProvisionRequest(**row["request_payload"])
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Stored payload invalid: {exc}")
+
+    # Delegate to the normal provision endpoint (creates new job + runs it)
+    return await provision_customer(request=request, req=req, user=user)
