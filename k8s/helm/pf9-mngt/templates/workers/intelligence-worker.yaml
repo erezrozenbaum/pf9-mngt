@@ -50,6 +50,8 @@ spec:
                   key: password
             - name: INTELLIGENCE_INTERVAL_SECONDS
               value: {{ .Values.workers.intelligenceWorker.intervalSeconds | quote }}
+            - name: TIMELINE_RETENTION_DAYS
+              value: {{ .Values.workers.intelligenceWorker.timelineRetentionDays | quote }}
             - name: REDIS_HOST
               value: {{ .Values.redis.host | quote }}
             - name: REDIS_PORT

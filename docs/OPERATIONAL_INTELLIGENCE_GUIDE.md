@@ -22,6 +22,7 @@
 13. [Copilot Integration](#copilot-integration)
 14. [Role-Based Dashboard Views](#role-based-dashboard-views)
 15. [Portfolio Metering and Growth Intelligence](#portfolio-metering-and-growth-intelligence)
+16. [Operational Event Timeline](#operational-event-timeline)
 
 ---
 
@@ -408,6 +409,12 @@ If you have existing contract data in a spreadsheet, you can bulk-import it via 
 
 The default thresholds for capacity warnings (90% quota → HIGH, 95% → CRITICAL) and waste detection (VM idle for 7 days) can be adjusted per-tenant. Contact your OpsAnchor administrator to configure tenant-specific overrides.
 
+### Event timeline retention
+
+The intelligence worker automatically prunes `operational_events` rows older than the configured retention window. The default is **180 days**.
+
+To change the retention period, set `TIMELINE_RETENTION_DAYS` in your `.env` file (Docker) or in `values.yaml` under `workers.intelligenceWorker.timelineRetentionDays` (Kubernetes). Setting the value to `0` disables pruning.
+
 ---
 
 ## Copilot Integration
@@ -571,3 +578,62 @@ A tenant is flagged as **Quota Under Pressure** in the My Portfolio KPI strip wh
 - Storage quota utilisation ≥ 80%
 
 This maps directly to the `capacity` and `capacity_quota` insight types in the Insight Feed — the dashboard count and the insight feed count will agree.
+
+---
+
+## Operational Event Timeline
+
+**Location**: Intelligence → Timeline tab  
+**Requires**: `timeline:read` permission (all roles)
+
+The Operational Event Timeline is a unified, chronological feed of everything that has happened across your infrastructure — provisioning actions, monitoring spikes, backup outcomes, SLA changes, ticket activity, runbook executions, and AI-generated insights. It serves as the shared memory of your environment.
+
+### How events are collected
+
+The intelligence worker runs a `TimelineHarvester` on every cycle (default: every 15 minutes) that incrementally reads 10 source tables and writes normalised rows into the `operational_events` table:
+
+| Source table | Event types harvested |
+|---|---|
+| `activity_log` | `tenant_provisioned`, `tenant_provision_failed`, `vm_batch_executed`, `quota_modified`, `provisioning_rejected` |
+| `operational_insights` | `insight_fired`, `insight_resolved` |
+| `support_tickets` | `ticket_opened`, `ticket_resolved` |
+| `backup_history` | `backup_completed`, `backup_failed` |
+| `snapshot_records` | `snapshot_completed`, `snapshot_failed` |
+| `sla_compliance_monthly` | `sla_breached`, `sla_at_risk` |
+| `runbook_executions` | `runbook_executed`, `runbook_failed` |
+| `metering_efficiency` | `cpu_spike`, `ram_spike` (> 85% utilisation) |
+| `metering_quotas` | `storage_high` (> 85% of quota) |
+| `auth_audit_log` | `user_login`, `user_role_changed` (security visibility only) |
+
+Each source is tracked independently via `timeline_harvest_cursors`, so harvests are fully resumable and idempotent — re-running never creates duplicate rows.
+
+### Visibility levels
+
+Events are tagged with a `visibility` level that controls who can see them:
+
+| Visibility | Who can see it |
+|---|---|
+| `operational` | All roles (viewer, operator, technical, admin, superadmin) |
+| `billing` | technical, admin, superadmin |
+| `security` | admin, superadmin |
+| `system` | superadmin only |
+
+### REST API
+
+Three endpoints are available under `/api/timeline`:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/timeline` | Paginated event list with filters: `entity_type`, `entity_id`, `domain_id`, `project_id`, `region_id`, `from`, `to`, `category` (CSV), `severity`, `limit`, `offset` |
+| `GET /api/timeline/correlated` | Blast-radius view — events within ±`window_minutes` of a given timestamp for a specific entity |
+| `GET /api/timeline/stats` | Counts by category and severity for a time window |
+
+All three endpoints enforce role-based visibility filtering automatically. See `docs/API_REFERENCE.md` for full parameter reference and response shapes.
+
+### Event retention
+
+Events are pruned automatically after each harvest cycle. Default retention is **180 days**, configurable via:
+- Docker: `TIMELINE_RETENTION_DAYS` in `.env`
+- Kubernetes: `workers.intelligenceWorker.timelineRetentionDays` in `values.yaml`
+
+Set to `0` to disable automatic pruning.

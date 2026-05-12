@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.96.2] - 2026-05-12
+
+### Added
+- **Operational Event Timeline — event harvester**: Intelligence worker now runs `TimelineHarvester` on every cycle, incrementally pulling events from 10 source tables (`activity_log`, `operational_insights`, `support_tickets`, `backup_history`, `snapshot_records`, `sla_compliance_monthly`, `runbook_executions`, `metering_efficiency`, `metering_quotas`, `auth_audit_log`) into `operational_events`. Harvest positions are tracked per-source via `timeline_harvest_cursors` for fully idempotent, resumable ingestion. Events older than the configurable retention window (`TIMELINE_RETENTION_DAYS`, default 180) are pruned automatically after each cycle.
+
+### Changed
+- `startup.ps1`: added `pf9_intelligence_worker` to post-start service verification list.
+- `docker-compose.yml`: exposed `TIMELINE_RETENTION_DAYS` env var on intelligence worker service.
+- Helm chart `intelligence-worker.yaml` and `values.yaml`: added `TIMELINE_RETENTION_DAYS` / `timelineRetentionDays` configuration.
+- `docs/ARCHITECTURE.md`: updated intelligence worker row to describe timeline harvesting.
+- `docs/OPERATIONAL_INTELLIGENCE_GUIDE.md`: added Operational Event Timeline section and event retention settings.
+
+---
+
 ## [1.96.1] - 2026-05-12
 
 ### Added

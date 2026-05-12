@@ -1,16 +1,19 @@
 """
 PF9 Intelligence Worker
 ========================
-Periodic worker that runs the three insight engines (capacity, waste, risk) and
-writes results into the operational_insights table.
+Periodic worker that runs insight engines and the timeline harvester, writing
+results into the operational_insights and operational_events tables.
 
 Engines
 -------
-  capacity  — storage growth forecasting; fires when a project is on track to
-              hit 90 % quota within the next 30 days.
-  waste     — idle VMs, unattached volumes, aged snapshots without retention policy.
-  risk      — snapshot coverage gaps, tenant health-score decline, unacknowledged
-              critical drift events.
+  capacity           — storage growth forecasting; fires when a project is on
+                       track to hit 90 % quota within the next 30 days.
+  waste              — idle VMs, unattached volumes, aged snapshots without
+                       retention policy.
+  risk               — snapshot coverage gaps, tenant health-score decline,
+                       unacknowledged critical drift events.
+  timeline_harvester — incremental harvest from 10 source tables into
+                       operational_events for the Operational Timeline feature.
 
 Run cadence
 -----------
@@ -32,6 +35,7 @@ from engines.risk import RiskEngine
 from engines.cross_region import CrossRegionEngine
 from engines.anomaly import AnomalyEngine
 from engines.leakage import LeakageEngine
+from engines.timeline_harvester import TimelineHarvester
 
 # ---------------------------------------------------------------------------
 # Worker observability — Redis metrics
@@ -164,7 +168,7 @@ def get_conn_with_cb():
 # Main loop
 # ---------------------------------------------------------------------------
 
-ENGINES = [CapacityEngine, WasteEngine, RiskEngine, CrossRegionEngine, AnomalyEngine, LeakageEngine]
+ENGINES = [CapacityEngine, WasteEngine, RiskEngine, CrossRegionEngine, AnomalyEngine, LeakageEngine, TimelineHarvester]
 
 
 def run_once(conn) -> None:
