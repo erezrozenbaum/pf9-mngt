@@ -469,50 +469,54 @@ def _generate_password(length: int = 16) -> str:
             return pwd
 
 
-def _log_step(conn, job_id: str, step_number: int, step_name: str,
+def _log_step(conn_or_none, job_id: str, step_number: int, step_name: str,
               description: str, status: str = "pending",
               resource_id: str = None, detail: dict = None, error: str = None):
-    """Insert or update a provisioning step."""
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO provisioning_steps
-                (job_id, step_number, step_name, description, status,
-                 resource_id, detail, error, started_at, completed_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
-                    CASE WHEN %s IN ('running','completed','failed') THEN now() END,
-                    CASE WHEN %s IN ('completed','failed') THEN now() END)
-            ON CONFLICT (id) DO NOTHING
-            RETURNING id
-        """, (job_id, step_number, step_name, description, status,
-              resource_id, Json(detail or {}), error, status, status))
+    """Insert or update a provisioning step (always uses a fresh connection)."""
+    from db_pool import get_connection
+    with get_connection() as _conn:
+        with _conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO provisioning_steps
+                    (job_id, step_number, step_name, description, status,
+                     resource_id, detail, error, started_at, completed_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
+                        CASE WHEN %s IN ('running','completed','failed') THEN now() END,
+                        CASE WHEN %s IN ('completed','failed') THEN now() END)
+                ON CONFLICT (id) DO NOTHING
+                RETURNING id
+            """, (job_id, step_number, step_name, description, status,
+                  resource_id, Json(detail or {}), error, status, status))
 
 
-def _update_step(conn, job_id: str, step_number: int,
+def _update_step(conn_or_none, job_id: str, step_number: int,
                  status: str, resource_id: str = None,
                  detail: dict = None, error: str = None):
-    """Update an existing step."""
-    with conn.cursor() as cur:
-        sets = ["status = %s"]
-        vals = [status]
-        if resource_id:
-            sets.append("resource_id = %s")
-            vals.append(resource_id)
-        if detail:
-            sets.append("detail = %s")
-            vals.append(Json(detail))
-        if error:
-            sets.append("error = %s")
-            vals.append(error)
-        if status == "running":
-            sets.append("started_at = now()")
-        if status in ("completed", "failed"):
-            sets.append("completed_at = now()")
-        vals.extend([job_id, step_number])
-        cur.execute(
-            f"UPDATE provisioning_steps SET {', '.join(sets)} "
-            f"WHERE job_id = %s AND step_number = %s",
-            vals,
-        )
+    """Update an existing step (always uses a fresh connection)."""
+    from db_pool import get_connection
+    sets = ["status = %s"]
+    vals = [status]
+    if resource_id:
+        sets.append("resource_id = %s")
+        vals.append(resource_id)
+    if detail:
+        sets.append("detail = %s")
+        vals.append(Json(detail))
+    if error:
+        sets.append("error = %s")
+        vals.append(error)
+    if status == "running":
+        sets.append("started_at = now()")
+    if status in ("completed", "failed"):
+        sets.append("completed_at = now()")
+    vals.extend([job_id, step_number])
+    with get_connection() as _conn:
+        with _conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE provisioning_steps SET {', '.join(sets)} "
+                f"WHERE job_id = %s AND step_number = %s",
+                vals,
+            )
 
 
 # PF9 role mapping — maps our provisioning labels to actual Keystone role names.
@@ -536,12 +540,26 @@ PF9_ROLE_LABELS = {
 }
 
 
-def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str):
-    """Execute the full provisioning workflow."""
+def _run_provisioning(conn_ignored, job_id: str, req: ProvisionRequest, created_by: str):
+    """Execute the full provisioning workflow.
+
+    Each DB write (job status, step log) uses its own short-lived connection
+    from the pool so a long-running PF9 API call cannot time out the connection
+    and cause a spurious 500 even when provisioning succeeded.
+    """
+    from db_pool import get_connection
     client = get_region_client(req.region_id)
     # Force re-auth to ensure fresh token
     client.token = None
     client.authenticate()
+
+    # Mark job as running
+    with get_connection() as _c:
+        with _c.cursor() as _cur:
+            _cur.execute(
+                "UPDATE provisioning_jobs SET status='running', started_at=now() WHERE job_id=%s",
+                (job_id,)
+            )
 
     password = req.user_password or _generate_password()
     results: Dict[str, Any] = {}
@@ -550,28 +568,21 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
     def run_step(name: str, desc: str, fn):
         nonlocal step
         step += 1
-        _log_step(conn, job_id, step, name, desc, "running")
+        _log_step(None, job_id, step, name, desc, "running")
         try:
             result = fn()
             rid = None
             if isinstance(result, dict):
                 rid = result.get("id", None)
-            _update_step(conn, job_id, step, "completed",
+            _update_step(None, job_id, step, "completed",
                          resource_id=rid,
                          detail=result if isinstance(result, dict) else {"result": str(result)})
             return result
         except Exception as e:
-            _update_step(conn, job_id, step, "failed", error=str(e))
+            _update_step(None, job_id, step, "failed", error=str(e))
             raise
 
     try:
-        # Update job status to running
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE provisioning_jobs SET status='running', started_at=now() WHERE job_id=%s",
-                (job_id,)
-            )
-
         # ── Step 1: Create Domain (or use existing) ──────────
         if req.existing_domain_id:
             # Using an existing domain — fetch and validate
@@ -924,36 +935,40 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
             )
 
         # ── Mark job completed ─────────────────────────────
-        with conn.cursor() as cur:
-            # Persist multi-network results; also populate legacy columns from first network
-            _created_nets = results.get("networks_created", [])
-            _first_created = _created_nets[0] if _created_nets else {}
-            cur.execute("""
-                UPDATE provisioning_jobs
-                SET status = 'completed', completed_at = now(),
-                    domain_id = %s, project_id = %s, user_id = %s,
-                    network_id = %s, subnet_id = %s, security_group_id = %s,
-                    networks_created = %s
-                WHERE job_id = %s
-            """, (results.get("domain_id"),
-                  results.get("project_id"),
-                  results.get("user_id"),
-                  _first_created.get("network_id") or results.get("network_id"),
-                  _first_created.get("subnet_id")  or results.get("subnet_id"),
-                  results.get("security_group_id"),
-                  Json(_created_nets),
-                  job_id))
+        _created_nets = results.get("networks_created", [])
+        _first_created = _created_nets[0] if _created_nets else {}
+        with get_connection() as _c:
+            with _c.cursor() as cur:
+                cur.execute("""
+                    UPDATE provisioning_jobs
+                    SET status = 'completed', completed_at = now(),
+                        domain_id = %s, project_id = %s, user_id = %s,
+                        network_id = %s, subnet_id = %s, security_group_id = %s,
+                        networks_created = %s
+                    WHERE job_id = %s
+                """, (results.get("domain_id"),
+                      results.get("project_id"),
+                      results.get("user_id"),
+                      _first_created.get("network_id") or results.get("network_id"),
+                      _first_created.get("subnet_id")  or results.get("subnet_id"),
+                      results.get("security_group_id"),
+                      Json(_created_nets),
+                      job_id))
 
         return results
 
     except Exception as e:
         # Mark job as failed
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE provisioning_jobs SET status='failed', completed_at=now(), "
-                "error_message=%s WHERE job_id=%s",
-                (str(e), job_id),
-            )
+        try:
+            with get_connection() as _c:
+                with _c.cursor() as cur:
+                    cur.execute(
+                        "UPDATE provisioning_jobs SET status='failed', completed_at=now(), "
+                        "error_message=%s WHERE job_id=%s",
+                        (str(e), job_id),
+                    )
+        except Exception:
+            pass  # best-effort — don't mask the original exception
         raise
 
 
@@ -1065,8 +1080,8 @@ async def provision_customer(
     """Execute full customer provisioning workflow."""
     from db_pool import get_connection
 
+    # ── Create job record (short-lived connection, closed before long API calls) ──
     with get_connection() as conn:
-        # Create the job record
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Build legacy single-net fields from first network entry (backward compat)
             first_net = req.networks[0] if req.networks else None
@@ -1098,80 +1113,81 @@ async def provision_customer(
                 Json(req.dict()),
             ))
             job = cur.fetchone()
+    # Connection returned to pool here — before any long-running PF9 API calls
 
-        job_id = job["job_id"]
+    job_id = job["job_id"]
 
-        actor = _get_actor(user)
-        client_ip = _get_client_ip(request)
+    actor = _get_actor(user)
+    client_ip = _get_client_ip(request)
 
-        try:
-            results = _run_provisioning(conn, job_id, req, actor)
+    try:
+        results = _run_provisioning(None, job_id, req, actor)
 
-            # Activity log — successful provision
-            _log_activity(
-                actor=actor, action="provision", resource_type="tenant",
-                resource_name=f"{req.domain_name}/{req.project_name}",
-                domain_name=req.domain_name,
-                details={"job_id": job_id, "username": req.username, "role": req.user_role},
-                ip_address=client_ip, result="success",
-            )
-            # Notification — full provisioning inventory
-            _fire_notification(
-                event_type="tenant_provisioned", severity="info",
-                summary=f"Tenant '{req.domain_name}/{req.project_name}' provisioned by {actor}",
-                resource_name=f"{req.domain_name}/{req.project_name}",
-                domain_name=req.domain_name,
-                project_name=req.project_name,
-                actor=actor,
-                details={"job_id": job_id, "actor": actor},
-                template_name="tenant_provisioned.html",
-                template_vars={
-                    "job_id": job_id,
-                    "username": req.username,
-                    "user_email": req.user_email,
-                    "user_role": req.user_role,
-                    "subscription_id": req.subscription_id or "",
-                    "domain_id": results.get("domain_id", ""),
-                    "project_id": results.get("project_id", ""),
-                    "user_id": results.get("user_id", ""),
-                    "network_id": results.get("network_id", ""),
-                    "network_name": results.get("network_name", ""),
-                    "network_type": req.network_type,
-                    "vlan_id": req.vlan_id,
-                    "subnet_id": results.get("subnet_id", ""),
-                    "subnet_cidr": req.subnet_cidr,
-                    "gateway_ip": req.gateway_ip,
-                    "dns_nameservers": req.dns_nameservers,
-                    "create_network": req.create_network,
-                    "security_group_id": results.get("security_group_id", ""),
-                    "security_group_name": req.security_group_name if req.create_security_group else "",
-                    "compute_quotas": results.get("compute_quotas", {}),
-                    "network_quotas": results.get("network_quotas", {}),
-                    "storage_quotas": results.get("storage_quotas", {}),
-                },
-            )
-
-            return {
-                "status": "completed",
+        # Activity log — successful provision
+        _log_activity(
+            actor=actor, action="provision", resource_type="tenant",
+            resource_name=f"{req.domain_name}/{req.project_name}",
+            domain_name=req.domain_name,
+            details={"job_id": job_id, "username": req.username, "role": req.user_role},
+            ip_address=client_ip, result="success",
+        )
+        # Notification — full provisioning inventory
+        _fire_notification(
+            event_type="tenant_provisioned", severity="info",
+            summary=f"Tenant '{req.domain_name}/{req.project_name}' provisioned by {actor}",
+            resource_name=f"{req.domain_name}/{req.project_name}",
+            domain_name=req.domain_name,
+            project_name=req.project_name,
+            actor=actor,
+            details={"job_id": job_id, "actor": actor},
+            template_name="tenant_provisioned.html",
+            template_vars={
                 "job_id": job_id,
-                "results": results,
-            }
-        except Exception as e:
-            logger.error(f"Provisioning failed for job {job_id}: {e}\n{traceback.format_exc()}")
+                "username": req.username,
+                "user_email": req.user_email,
+                "user_role": req.user_role,
+                "subscription_id": req.subscription_id or "",
+                "domain_id": results.get("domain_id", ""),
+                "project_id": results.get("project_id", ""),
+                "user_id": results.get("user_id", ""),
+                "network_id": results.get("network_id", ""),
+                "network_name": results.get("network_name", ""),
+                "network_type": req.network_type,
+                "vlan_id": req.vlan_id,
+                "subnet_id": results.get("subnet_id", ""),
+                "subnet_cidr": req.subnet_cidr,
+                "gateway_ip": req.gateway_ip,
+                "dns_nameservers": req.dns_nameservers,
+                "create_network": req.create_network,
+                "security_group_id": results.get("security_group_id", ""),
+                "security_group_name": req.security_group_name if req.create_security_group else "",
+                "compute_quotas": results.get("compute_quotas", {}),
+                "network_quotas": results.get("network_quotas", {}),
+                "storage_quotas": results.get("storage_quotas", {}),
+            },
+        )
 
-            _log_activity(
-                actor=actor, action="provision", resource_type="tenant",
-                resource_name=f"{req.domain_name}/{req.project_name}",
-                domain_name=req.domain_name,
-                details={"job_id": job_id},
-                ip_address=client_ip, result="failure", error_message=str(e),
-            )
+        return {
+            "status": "completed",
+            "job_id": job_id,
+            "results": results,
+        }
+    except Exception as e:
+        logger.error(f"Provisioning failed for job {job_id}: {e}\n{traceback.format_exc()}")
 
-            return {
-                "status": "failed",
-                "job_id": job_id,
-                "error": str(e),
-            }
+        _log_activity(
+            actor=actor, action="provision", resource_type="tenant",
+            resource_name=f"{req.domain_name}/{req.project_name}",
+            domain_name=req.domain_name,
+            details={"job_id": job_id},
+            ip_address=client_ip, result="failure", error_message=str(e),
+        )
+
+        return {
+            "status": "failed",
+            "job_id": job_id,
+            "error": str(e),
+        }
 
 
 @router.get("/logs")

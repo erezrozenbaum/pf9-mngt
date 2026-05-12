@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.95.22] - 2026-05-12
+
+### Fixed
+- **Provisioning false-failure 500 (connection already closed)** (`api/provisioning_routes.py`): The `provision_customer` endpoint held a single PostgreSQL connection open across the entire `_run_provisioning` workflow — which includes multiple Keystone, Nova, Neutron, Cinder, and email API calls that can take 1–2 minutes. In Kubernetes, the pool connection timed out mid-run, causing `psycopg2.InterfaceError: connection already closed` even though provisioning had actually succeeded. Provisioning appeared failed in the UI even though the tenant, network, and user were created in Platform9. Fixed by:
+  - `provision_customer`: closes the DB connection immediately after INSERT (short-lived scoped block), before calling `_run_provisioning`.
+  - `_run_provisioning`: gets its own fresh short-lived connection for the `status='running'` update.
+  - `_log_step` / `_update_step`: each get their own connection from the pool (immediately returned after the write), instead of reusing the caller's connection.
+  - `_run_provisioning` failure handler: wrapped in try/except so a DB write failure doesn't mask the original provisioning error.
+
+---
+
 ## [1.95.21] - 2026-05-12
 
 ### Fixed
