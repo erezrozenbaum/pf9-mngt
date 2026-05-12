@@ -1,6 +1,6 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.95.22 — Provisioning: virtual network creation via service-account scope fix (Neutron 400/403), `create_network()` unwrap fix (subnet 400), provisioning retry endpoint + UI  
+> **Version**: v1.95.23 — Provisioning: virtual network creation via service-account scope fix (Neutron 400/403), `create_network()` unwrap fix (subnet 400), provisioning retry endpoint + UI  
 > Previous: v1.95.17 — Fleet metering rolling-window API mode, partial-month cost projection, period button strip
 
 ## Base URL

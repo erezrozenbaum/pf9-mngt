@@ -122,6 +122,15 @@ spec:
           protocol: TCP
         - port: 5000
           protocol: TCP
+    # SMTP (outbound email)
+    - to: []
+      ports:
+        - port: 25
+          protocol: TCP
+        - port: 465
+          protocol: TCP
+        - port: 587
+          protocol: TCP
     # Monitoring service — API proxies VM metrics for tenant portal and dashboard
     - to:
         - podSelector:
