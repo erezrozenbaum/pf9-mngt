@@ -544,7 +544,7 @@ Check for IP address changes — if the customer is behind a NAT that rotates so
 
 ## Event History (Operational Timeline)
 
-*Added in v1.96.5. Fixed in v1.96.5.1 (domain visibility, DB permissions, field names).*
+*Added in v1.96.5. Fixed in v1.96.6 (domain visibility, DB permissions, field names).*
 
 The **Event History** screen gives tenants a read-only, domain-scoped view of operational events for their environment. All events are filtered server-side to the authenticated tenant's domain — it is not possible to query events for another tenant.
 

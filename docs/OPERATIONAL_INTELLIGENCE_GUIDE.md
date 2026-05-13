@@ -588,7 +588,7 @@ This maps directly to the `capacity` and `capacity_quota` insight types in the I
 
 The Operational Event Timeline is a unified, chronological feed of everything that has happened across your infrastructure — provisioning actions, monitoring spikes, backup outcomes, SLA changes, ticket activity, runbook executions, and AI-generated insights. It serves as the shared memory of your environment.
 
-> **v1.96.5.1 fix**: Prior to this release, all harvested events had `domain_id = NULL`, causing tenant-scoped filtering to return no results. All harvester queries now resolve domain ownership via JOINs. Existing events have been backfilled. Additionally, `tenant_portal_role` now has `SELECT` on `operational_events`.
+> **v1.96.6 fix**: Prior to this release, all harvested events had `domain_id = NULL`, causing tenant-scoped filtering to return no results. All harvester queries now resolve domain ownership via JOINs. Existing events have been backfilled. Additionally, `tenant_portal_role` now has `SELECT` on `operational_events`.
 
 ### How events are collected
 
