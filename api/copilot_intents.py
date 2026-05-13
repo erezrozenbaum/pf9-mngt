@@ -1481,6 +1481,90 @@ INTENTS: List[IntentDef] = [
                           AND status NOT IN ('resolved') {scope_and}
                         ORDER BY severity, detected_at DESC LIMIT 40""",
     ),
+
+    # ── Operational Event Timeline ────────────────────────────────────
+    IntentDef(
+        key="timeline_what_changed",
+        display_name="What changed before an incident",
+        keywords=["what changed", "what happened before", "why did", "blast radius",
+                  "what changed before", "events before", "incident timeline",
+                  "what led to", "root cause", "correlated events"],
+        patterns=[r"what\s+(?:changed|happened)\s+(?:before|around|near|prior to)",
+                  r"why\s+(?:did|has)\s+\S+\s+(?:fail|break|go down|stop)",
+                  r"(?:blast.?radius|root.?cause|incident.?timeline)",
+                  r"(?:events?|changes?)\s+(?:before|around|correlated)"],
+        boost=0.2,
+        sql="""SELECT oe.title, oe.category, oe.severity, oe.source,
+                      oe.actor, oe.entity_type, oe.entity_name, oe.event_time
+               FROM operational_events oe
+               WHERE oe.severity IN ('warning', 'critical')
+                 AND oe.event_time >= NOW() - INTERVAL '6 hours'
+               ORDER BY oe.event_time DESC LIMIT 10""",
+        formatter=lambda rows: (
+            f"**{len(rows)} operational event(s) in the last 6 hours** (warning + critical):\n\n" +
+            _fmt_table(rows, ["event_time", "severity", "category", "title", "entity_name", "actor"])
+            if rows else "No warning/critical events in the last 6 hours. ✅"
+        ),
+    ),
+    IntentDef(
+        key="timeline_tenant",
+        display_name="Tenant operational timeline",
+        keywords=["show timeline", "tenant timeline", "domain timeline",
+                  "timeline for tenant", "timeline for org", "timeline for project",
+                  "what happened on tenant", "events for tenant",
+                  "show me timeline", "operational timeline"],
+        patterns=[r"(?:show|display|get)\s+(?:me\s+)?(?:the\s+)?timeline\s+(?:for|of)\s+\S+",
+                  r"(?:tenant|domain|org)\s+timeline",
+                  r"timeline\s+(?:for|of)\s+(?:tenant|domain|org)"],
+        sql="""SELECT oe.title, oe.category, oe.severity, oe.source,
+                      oe.actor, oe.entity_type, oe.entity_name, oe.event_time,
+                      d.name AS domain_name
+               FROM operational_events oe
+               JOIN domains d ON d.id = oe.domain_id
+               ORDER BY oe.event_time DESC LIMIT 25""",
+        formatter=lambda rows: (
+            f"**Operational timeline — {len(rows)} event(s):**\n\n" +
+            _fmt_table(rows, ["event_time", "severity", "category", "title", "entity_name", "actor"])
+            if rows else "No operational events found."
+        ),
+        supports_scope=True,
+        sql_template="""SELECT oe.title, oe.category, oe.severity, oe.source,
+                               oe.actor, oe.entity_type, oe.entity_name, oe.event_time,
+                               d.name AS domain_name
+                        FROM operational_events oe
+                        JOIN domains d ON d.id = oe.domain_id
+                        WHERE LOWER(d.name) LIKE %s
+                        ORDER BY oe.event_time DESC LIMIT 25""",
+        boost=0.15,
+    ),
+    IntentDef(
+        key="timeline_recent_hours",
+        display_name="Recent operational events (last N hours)",
+        keywords=["what happened last", "what happened in the last", "events last",
+                  "timeline last", "recent timeline", "last hour events",
+                  "last 24 hours events", "recent operational events",
+                  "what happened recently", "operational events summary"],
+        patterns=[r"what\s+happened\s+(?:in\s+the\s+)?last\s+\d+\s+hours?",
+                  r"(?:events?|timeline)\s+(?:in\s+the\s+)?last\s+\d+\s+hours?",
+                  r"what\s+happened\s+recently",
+                  r"recent\s+operational\s+events?"],
+        param_extractor=lambda q: (
+            int(re.search(r"(\d+)\s*hours?", q).group(1))
+            if re.search(r"(\d+)\s*hours?", q)
+            else 24,
+        ),
+        sql="""SELECT oe.title, oe.category, oe.severity, oe.source,
+                      oe.actor, oe.entity_type, oe.entity_name, oe.event_time
+               FROM operational_events oe
+               WHERE oe.event_time >= NOW() - INTERVAL '24 hours'
+               ORDER BY oe.event_time DESC LIMIT 20""",
+        formatter=lambda rows: (
+            f"**{len(rows)} operational event(s) in the last 24 hours:**\n\n" +
+            _fmt_table(rows, ["event_time", "severity", "category", "title", "entity_name", "actor"])
+            if rows else "No operational events in that window. ✅"
+        ),
+        boost=0.1,
+    ),
 ]
 
 
@@ -1735,6 +1819,16 @@ def get_suggestion_chips() -> List[dict]:
                     {"label": "Capacity forecast", "question": "Show capacity forecast"},
                     {"label": "Intelligence risks", "question": "Show intelligence risk and anomaly summary"},
                     {"label": "Active alerts", "question": "Show active alerts"},
+                ],
+            },
+            {
+                "name": "Event Timeline",
+                "icon": "📅",
+                "chips": [
+                    {"label": "Recent events (24h)", "question": "What happened in the last 24 hours?"},
+                    {"label": "Warning/critical events", "question": "What changed before the last incident?"},
+                    {"label": "Timeline for tenant …", "question": "Show timeline for tenant ", "template": True},
+                    {"label": "Last 6h events", "question": "What happened in the last 6 hours?"},
                 ],
             },
             {

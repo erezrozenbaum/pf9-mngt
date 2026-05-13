@@ -242,7 +242,7 @@ The `intelligence_worker` runs 6 detection engines every 5 minutes and writes st
 
 **Intelligence Settings Panel** (admin-only, `⚙️ Settings` tab in InsightsTab): Labor rates editor (8 types, cost-per-hour), PSA Webhook CRUD with test-fire, Contract Entitlements CSV importer.
 
-**Insights Feed UI** *(v1.86.0 → v1.91.0)*: Department workspace selector (operations, risk, capacity, general), severity badges, per-insight acknowledge/snooze/resolve, bulk actions, recommendation panel, per-insight recommendations with dismiss. Type filter optgroup: Waste, Risk, SLA, Capacity, Anomaly, Cross-Region, Revenue Leakage. Sort by: severity, detected, last seen, type, entity, tenant, status (7 options). Copilot intents: critical_insights, capacity_warnings, waste_insights, unacknowledged_insights_count, risk_summary, intelligence_waste_summary *(v1.93.47)*, capacity_forecast *(v1.93.47)*, intelligence_risk_summary *(v1.93.47)*.
+**Insights Feed UI** *(v1.86.0 → v1.91.0)*: Department workspace selector (operations, risk, capacity, general), severity badges, per-insight acknowledge/snooze/resolve, bulk actions, recommendation panel, per-insight recommendations with dismiss. Type filter optgroup: Waste, Risk, SLA, Capacity, Anomaly, Cross-Region, Revenue Leakage. Sort by: severity, detected, last seen, type, entity, tenant, status (7 options). Copilot intents: critical_insights, capacity_warnings, waste_insights, unacknowledged_insights_count, risk_summary, intelligence_waste_summary *(v1.93.47)*, capacity_forecast *(v1.93.47)*, intelligence_risk_summary *(v1.93.47)*, **timeline_what_changed, timeline_tenant, timeline_recent_hours** *(v1.96.7)*.
 
 **Insights History tab** *(v1.91.0)*: “🕐 History” sub-tab in the Insights Dashboard showing resolved insights with detected/resolved timestamps, paginated at 50 per page.
 
@@ -258,7 +258,7 @@ The `intelligence_worker` runs 6 detection engines every 5 minutes and writes st
 
 **Executive Dashboard** *(v1.92.0, `executive_dashboard` tab)*: Fleet-level stacked SLA health bar, 6 KPI cards (Fleet Health %, Breached, At Risk, Open Critical, Revenue Leakage/Month, Avg MTTR), and narrative sections for leakage and MTTR compliance. New `executive` RBAC role; `Executive Leadership` department with `default_nav_item_key = executive_dashboard`.
 
-### 📋 Operational Event Timeline *(v1.96.0 → v1.96.6)*
+### 📋 Operational Event Timeline *(v1.96.0 → v1.96.7)*
 
 **A unified, chronological audit trail of all infrastructure events — harvested automatically from 10 source tables, visible to admins and (domain-scoped) to tenants.**
 
@@ -273,6 +273,8 @@ The `intelligence_worker` runs 6 detection engines every 5 minutes and writes st
 **Contextual navigation hooks** *(v1.96.4)*: Dependency graph nodes, insight rows, and ticket detail panels can deep-link into the Timeline pre-filtered to the relevant resource or time window.
 
 **Tenant portal Event History** *(v1.96.5, fixed v1.96.6)*: "⏱ Event History" screen in `tenant-ui`. Domain-scoped — server-side enforced. `GET /tenant/timeline` + `GET /tenant/timeline/stats` endpoints in the tenant portal service. *v1.96.5.1: `tenant_portal_role` granted `SELECT` on `operational_events`; API route and React component field-name mismatches corrected (`title`/`source`/`actor`/`description`).*
+
+**Copilot integration** *(v1.96.7)*: Three built-in Copilot intents added to `copilot_intents.py`: `timeline_what_changed` (surfaces last 10 warning/critical events in the past 6h for incident root-cause queries), `timeline_tenant` (returns last 25 events for a named domain, tenant-scoped), `timeline_recent_hours` (global event feed for a configurable N-hour window, default 24h). `build_infra_context()` in `copilot_context.py` now injects the 5 most recent warning/critical events into every LLM system prompt. New "Event Timeline" suggestion chip category with 4 quick-launch chips.
 
 ### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.92.0)*
 

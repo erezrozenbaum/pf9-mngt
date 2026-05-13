@@ -176,6 +176,29 @@ def build_infra_context(redact: bool = False) -> str:
                     )
                 sections.append("RECENT ACTIVITY:\n" + "\n".join(lines))
 
+            # --- Recent operational events (warning + critical, last 5) ---
+            cur.execute("""
+                SELECT oe.title, oe.severity, oe.category, oe.entity_name,
+                       oe.actor, oe.event_time
+                FROM operational_events oe
+                WHERE oe.severity IN ('warning', 'critical')
+                ORDER BY oe.event_time DESC
+                LIMIT 5
+            """)
+            op_events = cur.fetchall()
+            if op_events:
+                lines = []
+                for ev in op_events:
+                    actor_part = f" by {ev['actor']}" if ev["actor"] else ""
+                    lines.append(
+                        f"  [{ev['event_time']}] {ev['severity'].upper()} "
+                        f"{ev['category']}: {ev['title']}"
+                        f" (entity={ev['entity_name'] or '?'}{actor_part})"
+                    )
+                sections.append(
+                    "RECENT OPERATIONAL EVENTS (warning/critical):\n" + "\n".join(lines)
+                )
+
     except Exception as exc:
         sections.append(f"[context build error: {exc}]")
 
