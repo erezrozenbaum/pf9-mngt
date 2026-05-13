@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-1.96.2-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-1.96.3-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -283,6 +283,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v1.96.3** — Operational Event Timeline: admin UI with three-mode timeline viewer (tenant/resource/global), category filter chips, severity badges, and expand-to-detail with metadata (May 2026)
 - **v1.96.2** — Operational Event Timeline: intelligence worker harvester ingesting events from 10 source tables with cursor-based idempotent incremental processing and automatic retention pruning (May 2026)
 - **v1.96.1** — Operational Event Timeline: REST API with paginated list, blast-radius correlation view, and stats endpoints; role-based visibility filtering (May 2026)
 - **v1.96.0** — Operational Event Timeline: unified `operational_events` table with full indexing, harvest cursor tracking, Intelligence Views nav item, and RBAC permissions for all roles (May 2026)

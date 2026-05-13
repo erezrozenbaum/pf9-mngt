@@ -35,6 +35,7 @@ import ClusterManagement from "./components/ClusterManagement";
 import TenantPortalTab from "./components/TenantPortalTab";
 import RunbooksTab from "./components/RunbooksTab";
 import InsightsTab from "./components/InsightsTab";
+import OperationalTimelineTab from "./components/OperationalTimelineTab";
 import AccountManagerDashboard from "./components/AccountManagerDashboard";
 import ExecutiveDashboard from "./components/ExecutiveDashboard";
 import DocsTab from "./components/DocsTab";
@@ -417,7 +418,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal" | "account_manager_dashboard" | "executive_dashboard";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "operational_timeline" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal" | "account_manager_dashboard" | "executive_dashboard";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -470,6 +471,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "resource_management",  label: "🔧 Resources",           adminOnly: true, actionStyle: true },
   { id: "runbooks",              label: "📋 Runbooks",            adminOnly: false, actionStyle: true },
   { id: "insights",              label: "🔍 Insights",            adminOnly: false, actionStyle: true },
+  { id: "operational_timeline",  label: "⏱ Timeline",            adminOnly: false, actionStyle: false },
   { id: "docs",                  label: "📚 Docs",               adminOnly: false, actionStyle: false },
   { id: "keypairs",              label: "🔑 Keypairs" },
   { id: "aggregates",            label: "🏗️ Aggregates" },
@@ -6369,6 +6371,11 @@ const App: React.FC = () => {
           {/* Insights Feed + SLA */}
           {activeTab === "insights" && (
             <InsightsTab userRole={authUser?.role || ""} />
+          )}
+
+          {/* Operational Event Timeline */}
+          {activeTab === "operational_timeline" && (
+            <OperationalTimelineTab userRole={authUser?.role || ""} />
           )}
 
           {/* Docs Viewer */}
