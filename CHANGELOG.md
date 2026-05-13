@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.96.5] - 2026-05-13
+### Added
+- **Operational Event Timeline — tenant portal**: Tenant users now have an "⏱ Event History" screen in the self-service portal showing a domain-scoped, read-only operational event history. Includes time range picker, category chips (7 operational categories), severity filter, and free-text search. All events are server-side filtered to the authenticated tenant's domain — cross-tenant access is not possible. New `GET /tenant/timeline` and `GET /tenant/timeline/stats` API endpoints added to the tenant portal service.
+- **Bug fix**: Operational Event Timeline domain dropdown called a non-existent `/api/domains` endpoint (404). Fixed to use the correct `/domains` endpoint with proper response unwrapping.
+
+---
+
 ## [1.96.4] - 2026-05-13
 ### Added
 - **Operational Event Timeline — contextual navigation**: The dependency graph node sidebar now has a "⏱ Show Timeline" action that opens the Timeline tab pre-filtered to the selected resource. Intelligence insight rows have a "⏱ Preceding" button that opens the Timeline pre-filtered to the insight's entity. Support ticket detail panels now show a collapsible "Correlated events (±1h)" section that queries events within ±1 hour of the ticket's creation time and includes a direct "Open in Timeline" link.

@@ -25,6 +25,7 @@ from branding_routes import router as branding_router
 from environment_routes import router as environment_router
 from metrics_routes import router as metrics_router
 from restore_routes import router as restore_router
+from timeline_routes import router as timeline_router
 from db_pool import init_pool
 from rate_limiter import limiter
 from redis_client import get_redis
@@ -161,3 +162,4 @@ app.include_router(branding_router)
 app.include_router(environment_router)
 app.include_router(metrics_router)
 app.include_router(restore_router)
+app.include_router(timeline_router)

@@ -1,6 +1,6 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.95.23  
+**Version**: 1.96.5  
 **Last Updated**: May 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 
@@ -539,3 +539,53 @@ Check for IP address changes — if the customer is behind a NAT that rotates so
 | Kubernetes Deployment | [KUBERNETES_GUIDE.md](KUBERNETES_GUIDE.md) |
 | Security Guide | [SECURITY.md](SECURITY.md) |
 | CHANGELOG — v1.84.x | [CHANGELOG.md](../CHANGELOG.md) |
+
+---
+
+## Event History (Operational Timeline)
+
+*Added in v1.96.5.*
+
+The **Event History** screen gives tenants a read-only, domain-scoped view of operational events for their environment. All events are filtered server-side to the authenticated tenant's domain — it is not possible to query events for another tenant.
+
+### Accessing Event History
+
+1. Log in to the tenant portal.
+2. Click **⏱ Event History** in the left sidebar.
+
+### Filters
+
+| Filter | Description |
+|--------|-------------|
+| Time range | 2h / 6h / 24h / 7d / 30d |
+| Category | Monitoring, Provisioning, Snapshot, Backup, SLA, Ticket, Intelligence |
+| Severity | Critical / High / Medium / Low / Info |
+| Search | Free-text search on event summary |
+
+### Event categories visible to tenants
+
+Tenants see only `operational` visibility events. The following categories are surfaced:
+
+- **Monitoring** — threshold breaches, uptime changes
+- **Provisioning** — VM/volume create/delete/resize events
+- **Snapshot** — scheduled and manual snapshot events
+- **Backup** — backup job outcomes
+- **SLA** — SLA threshold breaches
+- **Ticket** — support tickets opened/resolved for their resources
+- **Intelligence** — AI-generated insights for their environment
+
+Security, billing, and system-level events are never visible to tenants.
+
+### API endpoints (tenant portal)
+
+```
+GET /tenant/timeline
+    ?from=<iso>&to=<iso>&category=<str>&severity=<str>&entity_type=<str>&entity_id=<str>&search=<str>&limit=<n>&offset=<n>
+    → { events: [...], total, limit, offset }
+
+GET /tenant/timeline/stats
+    ?from=<iso>
+    → { total, by_category, by_severity }
+```
+
+The `domain_id` is always taken from the JWT — tenants cannot override it.
