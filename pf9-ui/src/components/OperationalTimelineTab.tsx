@@ -171,8 +171,8 @@ const OperationalTimelineTab: React.FC<Props> = ({
 
   // ── Domain list ──────────────────────────────────────────────────────────
   useEffect(() => {
-    apiFetch<Domain[]>("/api/domains")
-      .then(setDomains)
+    apiFetch<{ items: Domain[] }>("/domains")
+      .then(r => setDomains(r.items ?? []))
       .catch(() => { /* non-fatal */ });
   }, []);
 
