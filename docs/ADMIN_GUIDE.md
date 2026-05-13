@@ -2944,6 +2944,42 @@ Click **Export CSV** in the tab toolbar to download the current filtered view of
 
 ---
 
+## Operational Event Timeline *(v1.96.0+)*
+
+### Overview
+The Operational Event Timeline is a unified, chronological audit trail of every significant infrastructure event — provisioning actions, monitoring alerts, backup/snapshot outcomes, SLA state changes, ticket activity, auth events, and AI-generated insights. Events are harvested automatically from 10 source tables every 5 minutes by the intelligence worker.
+
+For the full reference, see [docs/OPERATIONAL_TIMELINE_GUIDE.md](OPERATIONAL_TIMELINE_GUIDE.md).
+
+### Accessing the Timeline
+
+**Admin UI**: Intelligence → **Timeline** tab. Three modes: **Tenant** (all events for a selected domain), **Resource** (events for a specific entity), **Global** (cross-region feed).
+
+**REST API**:
+```
+GET /api/timeline                  # paginated list with filters
+GET /api/timeline/correlated       # events ±N minutes around a timestamp (blast-radius)
+GET /api/timeline/stats            # count by category/severity
+```
+
+**Copilot** (v1.96.7): ask questions like:
+- *"What changed before the last incident?"*
+- *"Show me ORG1 timeline"*
+- *"What happened in the last 6 hours?"*
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Timeline empty for a tenant | `domain_id = NULL` on events | Check intelligence worker logs; harvester JOINs resolve domain automatically since v1.96.6 |
+| Tenant portal "permission denied" | Missing DB GRANT | Run: `GRANT SELECT ON operational_events TO tenant_portal_role;` |
+| Events not updating | Harvester cursor stuck | Delete cursor row: `DELETE FROM timeline_harvest_cursors WHERE source_key = '<source>';` |
+
+### Retention
+Default: 180 days. Configure via `TIMELINE_RETENTION_DAYS` env var in the intelligence worker.
+
+---
+
 ## Tenant Health Monitoring
 
 ### Overview

@@ -258,7 +258,7 @@ The `intelligence_worker` runs 6 detection engines every 5 minutes and writes st
 
 **Executive Dashboard** *(v1.92.0, `executive_dashboard` tab)*: Fleet-level stacked SLA health bar, 6 KPI cards (Fleet Health %, Breached, At Risk, Open Critical, Revenue Leakage/Month, Avg MTTR), and narrative sections for leakage and MTTR compliance. New `executive` RBAC role; `Executive Leadership` department with `default_nav_item_key = executive_dashboard`.
 
-### 📋 Operational Event Timeline *(v1.96.0 → v1.96.7)*
+### 📋 Operational Event Timeline *(v1.96.0 → v1.96.8)*
 
 **A unified, chronological audit trail of all infrastructure events — harvested automatically from 10 source tables, visible to admins and (domain-scoped) to tenants.**
 
@@ -274,7 +274,7 @@ The `intelligence_worker` runs 6 detection engines every 5 minutes and writes st
 
 **Tenant portal Event History** *(v1.96.5, fixed v1.96.6)*: "⏱ Event History" screen in `tenant-ui`. Domain-scoped — server-side enforced. `GET /tenant/timeline` + `GET /tenant/timeline/stats` endpoints in the tenant portal service. *v1.96.5.1: `tenant_portal_role` granted `SELECT` on `operational_events`; API route and React component field-name mismatches corrected (`title`/`source`/`actor`/`description`).*
 
-**Copilot integration** *(v1.96.7)*: Three built-in Copilot intents added to `copilot_intents.py`: `timeline_what_changed` (surfaces last 10 warning/critical events in the past 6h for incident root-cause queries), `timeline_tenant` (returns last 25 events for a named domain, tenant-scoped), `timeline_recent_hours` (global event feed for a configurable N-hour window, default 24h). `build_infra_context()` in `copilot_context.py` now injects the 5 most recent warning/critical events into every LLM system prompt. New "Event Timeline" suggestion chip category with 4 quick-launch chips.
+**Copilot integration** *(v1.96.7, fixed v1.96.8)*: Three built-in Copilot intents added to `copilot_intents.py`: `timeline_what_changed`, `timeline_tenant`, `timeline_recent_hours`. `build_infra_context()` injects last 5 warning/critical events into every LLM system prompt. New "Event Timeline" suggestion chip category. *v1.96.8: column name corrected to `occurred_at`.* Full guide: [OPERATIONAL_TIMELINE_GUIDE.md](OPERATIONAL_TIMELINE_GUIDE.md).
 
 ### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.92.0)*
 
