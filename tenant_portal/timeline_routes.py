@@ -19,7 +19,7 @@ portal routes.
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from psycopg2.extras import RealDictCursor
@@ -43,6 +43,21 @@ _VISIBILITY = "operational"
 
 LIMIT_MAX = 100
 LIMIT_DEFAULT = 25
+
+
+def _resolve_domain_id(cur, project_ids: List[str]) -> Optional[str]:
+    """
+    Derive the tenant's domain UUID from their Keystone project_ids.
+    Returns None if no domain can be resolved.
+    """
+    if not project_ids:
+        return None
+    cur.execute(
+        "SELECT domain_id FROM projects WHERE id = ANY(%s) AND domain_id IS NOT NULL LIMIT 1",
+        (project_ids,),
+    )
+    row = cur.fetchone()
+    return row["domain_id"] if row else None
 
 
 def _fmt(row: dict) -> dict:
@@ -79,62 +94,66 @@ def tenant_timeline(
 ):
     """
     List operational events for the authenticated tenant's domain.
-    domain_id is always taken from the verified auth token — cannot be overridden.
+    domain_id is resolved from the verified project_ids in the auth token —
+    tenants cannot query events for another domain.
     """
-    conditions = [
-        "domain_id = %s",
-        "visibility = %s",
-    ]
-    params: list = [ctx.control_plane_id, _VISIBILITY]
-
-    if from_ts:
-        try:
-            datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
-        except ValueError:
-            from fastapi import HTTPException
-            raise HTTPException(400, "Invalid 'from' timestamp")
-        conditions.append("occurred_at >= %s")
-        params.append(from_ts)
-
-    if to_ts:
-        try:
-            datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
-        except ValueError:
-            from fastapi import HTTPException
-            raise HTTPException(400, "Invalid 'to' timestamp")
-        conditions.append("occurred_at <= %s")
-        params.append(to_ts)
-
-    if category and category in _TENANT_CATEGORIES:
-        conditions.append("category = %s")
-        params.append(category)
-
-    if severity:
-        conditions.append("severity = %s")
-        params.append(severity)
-
-    if entity_type:
-        conditions.append("entity_type = %s")
-        params.append(entity_type)
-
-    if entity_id:
-        conditions.append("entity_id = %s")
-        params.append(entity_id)
-
-    if search:
-        conditions.append("title ILIKE %s")
-        params.append(f"%{search}%")
-
-    where = "WHERE " + " AND ".join(conditions)
-    sql = (
-        f"SELECT *, COUNT(*) OVER() AS total_count "  # nosec B608
-        f"FROM operational_events {where} "
-        f"ORDER BY occurred_at DESC LIMIT %s OFFSET %s"
-    )
-    params.extend([limit, offset])
-
     with get_tenant_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            domain_id = _resolve_domain_id(cur, list(ctx.project_ids))
+            if not domain_id:
+                return {"events": [], "total": 0, "limit": limit, "offset": offset}
+
+            conditions = [
+                "domain_id = %s",
+                "visibility = %s",
+            ]
+            params: list = [domain_id, _VISIBILITY]
+
+            if from_ts:
+                try:
+                    datetime.fromisoformat(from_ts.replace("Z", "+00:00"))
+                except ValueError:
+                    from fastapi import HTTPException
+                    raise HTTPException(400, "Invalid 'from' timestamp")
+                conditions.append("occurred_at >= %s")
+                params.append(from_ts)
+
+            if to_ts:
+                try:
+                    datetime.fromisoformat(to_ts.replace("Z", "+00:00"))
+                except ValueError:
+                    from fastapi import HTTPException
+                    raise HTTPException(400, "Invalid 'to' timestamp")
+                conditions.append("occurred_at <= %s")
+                params.append(to_ts)
+
+            if category and category in _TENANT_CATEGORIES:
+                conditions.append("category = %s")
+                params.append(category)
+
+            if severity:
+                conditions.append("severity = %s")
+                params.append(severity)
+
+            if entity_type:
+                conditions.append("entity_type = %s")
+                params.append(entity_type)
+
+            if entity_id:
+                conditions.append("entity_id = %s")
+                params.append(entity_id)
+
+            if search:
+                conditions.append("title ILIKE %s")
+                params.append(f"%{search}%")
+
+            where = "WHERE " + " AND ".join(conditions)
+            sql = (
+                f"SELECT *, COUNT(*) OVER() AS total_count "  # nosec B608
+                f"FROM operational_events {where} "
+                f"ORDER BY occurred_at DESC LIMIT %s OFFSET %s"
+            )
+            params.extend([limit, offset])
             cur.execute(sql, params)
             rows = cur.fetchall()
 
@@ -163,7 +182,6 @@ def tenant_timeline_stats(
             hour=0, minute=0, second=0, microsecond=0
         ).isoformat()
 
-    params: list = [ctx.control_plane_id, _VISIBILITY, from_ts]
     sql = """
         SELECT
             category,
@@ -179,7 +197,10 @@ def tenant_timeline_stats(
 
     with get_tenant_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, params)
+            domain_id = _resolve_domain_id(cur, list(ctx.project_ids))
+            if not domain_id:
+                return {"total": 0, "by_category": {}, "by_severity": {}, "from": from_ts}
+            cur.execute(sql, [domain_id, _VISIBILITY, from_ts])
             rows = cur.fetchall()
 
     by_category: dict = {}

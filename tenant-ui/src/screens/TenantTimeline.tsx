@@ -272,12 +272,14 @@ export function TenantTimeline() {
                 }}>{ev.severity}</span>
                 <span style={{ fontSize: "0.72rem", color: "var(--color-muted, #6b7280)" }}>{ev.category}</span>
                 <span style={{ flex: 1, fontSize: "0.85rem", fontWeight: 500 }}>{ev.title}</span>
-                {ev.entity_name && (
+                {(ev.entity_name || ev.entity_type) && (
                   <span style={{
                     fontSize: "0.72rem", background: "var(--color-bg, #f3f4f6)",
                     padding: "0.1rem 0.45rem", borderRadius: 4,
                     color: "var(--color-muted, #6b7280)",
-                  }}>{ev.entity_type}: {ev.entity_name}</span>
+                  }}>
+                    {ev.entity_type}{ev.entity_name ? `: ${ev.entity_name}` : ""}
+                  </span>
                 )}
                 <span style={{ fontSize: "0.72rem", color: "var(--color-muted, #9ca3af)", whiteSpace: "nowrap" }}>
                   {fmt(ev.occurred_at)}
@@ -286,14 +288,29 @@ export function TenantTimeline() {
                   {isOpen ? "▲" : "▼"}
                 </span>
               </div>
+              {ev.description && (
+                <div style={{
+                  fontSize: "0.78rem", color: "var(--color-muted, #6b7280)",
+                  marginTop: "0.25rem", paddingLeft: "0.1rem",
+                  overflow: "hidden", textOverflow: "ellipsis",
+                  display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+                }}>
+                  {ev.description}
+                </div>
+              )}
 
               {isOpen && (
                 <div style={{ marginTop: "0.6rem", paddingTop: "0.6rem", borderTop: "1px solid var(--color-border, #e5e7eb)" }}>
                   <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "0.2rem 0.75rem", fontSize: "0.78rem", margin: 0 }}>
-                    {ev.entity_type && <><dt style={{ color: "var(--color-muted)" }}>Entity</dt><dd style={{ margin: 0 }}>{ev.entity_type}{ev.entity_id ? ` · ${ev.entity_id}` : ""}</dd></>}
+                    {ev.entity_type && <><dt style={{ color: "var(--color-muted)" }}>Entity</dt><dd style={{ margin: 0 }}>{ev.entity_type}{ev.entity_name ? ` · ${ev.entity_name}` : (ev.entity_id ? ` · ${ev.entity_id}` : "")}</dd></>}
                     {ev.actor      && <><dt style={{ color: "var(--color-muted)" }}>Actor</dt><dd style={{ margin: 0 }}>{ev.actor}</dd></>}
                     {ev.source     && <><dt style={{ color: "var(--color-muted)" }}>Source</dt><dd style={{ margin: 0 }}>{ev.source}</dd></>}
                   </dl>
+                  {ev.description && (
+                    <p style={{ fontSize: "0.8rem", marginTop: "0.5rem", marginBottom: 0, color: "var(--color-text, #374151)" }}>
+                      {ev.description}
+                    </p>
+                  )}
                   {ev.metadata && Object.keys(ev.metadata).length > 0 && (
                     <pre style={{
                       marginTop: "0.5rem", fontSize: "0.72rem",

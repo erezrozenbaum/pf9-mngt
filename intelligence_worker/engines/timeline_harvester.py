@@ -255,11 +255,22 @@ class TimelineHarvester(BaseEngine):
                 """
                 SELECT i.id, i.detected_at, i.type, i.severity, i.entity_type,
                        i.entity_id, i.entity_name, i.title, i.message, i.metadata,
-                       COALESCE(p_id.domain_id,  p_vm.domain_id)  AS resolved_domain_id,
-                       COALESCE(d_id.name,        d_vm.name)       AS resolved_domain_name
+                       COALESCE(
+                           d_tenant.id,        -- entity_type='tenant': entity_id IS the domain UUID
+                           p_id.domain_id,     -- entity_type='project': entity_id is a project UUID
+                           p_vm.domain_id      -- entity_type='vm': resolve via project name in metadata
+                       ) AS resolved_domain_id,
+                       COALESCE(
+                           d_tenant.name,
+                           d_id.name,
+                           d_vm.name
+                       ) AS resolved_domain_name
                 FROM operational_insights i
-                -- tenant/project: entity_id IS a project UUID
-                LEFT JOIN projects p_id ON i.entity_type IN ('tenant', 'project')
+                -- tenant: entity_id IS the domain UUID directly
+                LEFT JOIN domains  d_tenant ON i.entity_type = 'tenant'
+                                           AND d_tenant.id = i.entity_id
+                -- project: entity_id IS a project UUID
+                LEFT JOIN projects p_id ON i.entity_type = 'project'
                                        AND p_id.id = i.entity_id
                 LEFT JOIN domains  d_id ON d_id.id = p_id.domain_id
                 -- vm: look up via metadata->>'project' (project name)
@@ -310,10 +321,20 @@ class TimelineHarvester(BaseEngine):
                 """
                 SELECT i.id, i.resolved_at, i.entity_type, i.entity_id,
                        i.entity_name, i.title, i.metadata,
-                       COALESCE(p_id.domain_id,  p_vm.domain_id)  AS resolved_domain_id,
-                       COALESCE(d_id.name,        d_vm.name)       AS resolved_domain_name
+                       COALESCE(
+                           d_tenant.id,
+                           p_id.domain_id,
+                           p_vm.domain_id
+                       ) AS resolved_domain_id,
+                       COALESCE(
+                           d_tenant.name,
+                           d_id.name,
+                           d_vm.name
+                       ) AS resolved_domain_name
                 FROM operational_insights i
-                LEFT JOIN projects p_id ON i.entity_type IN ('tenant', 'project')
+                LEFT JOIN domains  d_tenant ON i.entity_type = 'tenant'
+                                           AND d_tenant.id = i.entity_id
+                LEFT JOIN projects p_id ON i.entity_type = 'project'
                                        AND p_id.id = i.entity_id
                 LEFT JOIN domains  d_id ON d_id.id = p_id.domain_id
                 LEFT JOIN projects p_vm ON i.entity_type = 'vm'
@@ -548,8 +569,8 @@ class TimelineHarvester(BaseEngine):
                        region_id, policy_name, size_gb, error_message
                 FROM snapshot_records
                 WHERE id > %s
-                  AND action = 'create'
-                  AND status IN ('completed', 'failed')
+                  AND action = 'created'
+                  AND status IN ('OK', 'FAILED', 'completed', 'failed')
                 ORDER BY id ASC
                 LIMIT %s
                 """,
@@ -560,7 +581,7 @@ class TimelineHarvester(BaseEngine):
             return
         events, max_id = [], last_id
         for row in rows:
-            is_ok      = row["status"] == "completed"
+            is_ok      = row["status"] in ("OK", "completed")
             event_type = "snapshot_completed" if is_ok else "snapshot_failed"
             meta: Dict[str, Any] = {}
             if row["policy_name"]:

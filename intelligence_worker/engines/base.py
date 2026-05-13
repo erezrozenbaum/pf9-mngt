@@ -327,19 +327,51 @@ class BaseEngine:
                 """, (str(insight_id),))
                 if cur.fetchone():
                     return
+                # Resolve a target department (Engineering preferred, else first available)
+                cur.execute("SELECT id FROM departments WHERE name = 'Engineering' LIMIT 1")
+                dept_row = cur.fetchone()
+                if not dept_row:
+                    cur.execute("SELECT id FROM departments ORDER BY id LIMIT 1")
+                    dept_row = cur.fetchone()
+                if not dept_row:
+                    log.debug("auto_create_ticket: no departments found — skipping")
+                    return
+                dept_id = dept_row[0]
+                # Generate ticket_ref via ticket_sequence table
+                from datetime import datetime, timezone as _tz
+                year = datetime.now(_tz.utc).year
+                cur.execute("""
+                    INSERT INTO ticket_sequence (year, last_seq)
+                    VALUES (%s, 1)
+                    ON CONFLICT (year) DO UPDATE
+                        SET last_seq = ticket_sequence.last_seq + 1
+                    RETURNING last_seq
+                """, (year,))
+                seq = cur.fetchone()[0]
+                ticket_ref = f"TKT-{year}-{seq:05d}"
                 # Create the ticket
                 cur.execute("""
-                    INSERT INTO support_tickets
-                        (title, description, priority, status,
-                         auto_source, metadata, created_at)
-                    VALUES (%s, %s, %s, 'open',
-                            'intelligence_insight',
-                            jsonb_build_object('insight_id', %s,
-                                               'entity_type', %s,
-                                               'entity_id',   %s),
-                            NOW())
-                """, (title, description, priority,
-                      insight_id, entity_type, entity_id))
+                    INSERT INTO support_tickets (
+                        ticket_ref, title, description, ticket_type, status, priority,
+                        to_dept_id, opened_by,
+                        auto_source, auto_source_id,
+                        resource_type, resource_id,
+                        metadata, created_at, updated_at
+                    ) VALUES (
+                        %s, %s, %s, 'auto_incident', 'open', %s,
+                        %s, 'intelligence_worker',
+                        'intelligence_insight', %s,
+                        %s, %s,
+                        jsonb_build_object('insight_id', %s, 'entity_type', %s, 'entity_id', %s),
+                        NOW(), NOW()
+                    )
+                """, (
+                    ticket_ref, title, description, priority,
+                    dept_id,
+                    str(insight_id),
+                    entity_type, entity_id,
+                    insight_id, entity_type, entity_id,
+                ))
             self.conn.commit()
             log.info("Auto-ticket created for insight %d (%s/%s)", insight_id, entity_type, entity_id)
         except Exception as exc:

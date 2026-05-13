@@ -253,3 +253,12 @@ class RiskEngine(BaseEngine):
                 message=message,
                 metadata={"unack_critical_events": count},
             )
+            # Auto-ticket for unacknowledged critical drift (high severity)
+            self.auto_create_ticket(
+                insight_type=_TYPE_DRIFT,
+                entity_type="tenant",
+                entity_id=project_id,
+                title=f"[Auto] Unacknowledged critical drift — {project_name} ({count} event(s))",
+                description=message,
+                priority="high",
+            )
