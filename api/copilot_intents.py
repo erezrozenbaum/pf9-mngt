@@ -1495,14 +1495,14 @@ INTENTS: List[IntentDef] = [
                   r"(?:events?|changes?)\s+(?:before|around|correlated)"],
         boost=0.2,
         sql="""SELECT oe.title, oe.category, oe.severity, oe.source,
-                      oe.actor, oe.entity_type, oe.entity_name, oe.event_time
+                      oe.actor, oe.entity_type, oe.entity_name, oe.occurred_at
                FROM operational_events oe
                WHERE oe.severity IN ('warning', 'critical')
-                 AND oe.event_time >= NOW() - INTERVAL '6 hours'
-               ORDER BY oe.event_time DESC LIMIT 10""",
+                 AND oe.occurred_at >= NOW() - INTERVAL '6 hours'
+               ORDER BY oe.occurred_at DESC LIMIT 10""",
         formatter=lambda rows: (
             f"**{len(rows)} operational event(s) in the last 6 hours** (warning + critical):\n\n" +
-            _fmt_table(rows, ["event_time", "severity", "category", "title", "entity_name", "actor"])
+            _fmt_table(rows, ["occurred_at", "severity", "category", "title", "entity_name", "actor"])
             if rows else "No warning/critical events in the last 6 hours. ✅"
         ),
     ),
@@ -1517,24 +1517,24 @@ INTENTS: List[IntentDef] = [
                   r"(?:tenant|domain|org)\s+timeline",
                   r"timeline\s+(?:for|of)\s+(?:tenant|domain|org)"],
         sql="""SELECT oe.title, oe.category, oe.severity, oe.source,
-                      oe.actor, oe.entity_type, oe.entity_name, oe.event_time,
+                      oe.actor, oe.entity_type, oe.entity_name, oe.occurred_at,
                       d.name AS domain_name
                FROM operational_events oe
                JOIN domains d ON d.id = oe.domain_id
-               ORDER BY oe.event_time DESC LIMIT 25""",
+               ORDER BY oe.occurred_at DESC LIMIT 25""",
         formatter=lambda rows: (
             f"**Operational timeline — {len(rows)} event(s):**\n\n" +
-            _fmt_table(rows, ["event_time", "severity", "category", "title", "entity_name", "actor"])
+            _fmt_table(rows, ["occurred_at", "severity", "category", "title", "entity_name", "actor"])
             if rows else "No operational events found."
         ),
         supports_scope=True,
         sql_template="""SELECT oe.title, oe.category, oe.severity, oe.source,
-                               oe.actor, oe.entity_type, oe.entity_name, oe.event_time,
+                               oe.actor, oe.entity_type, oe.entity_name, oe.occurred_at,
                                d.name AS domain_name
                         FROM operational_events oe
                         JOIN domains d ON d.id = oe.domain_id
                         WHERE LOWER(d.name) LIKE %s
-                        ORDER BY oe.event_time DESC LIMIT 25""",
+                        ORDER BY oe.occurred_at DESC LIMIT 25""",
         boost=0.15,
     ),
     IntentDef(
@@ -1554,13 +1554,13 @@ INTENTS: List[IntentDef] = [
             else 24,
         ),
         sql="""SELECT oe.title, oe.category, oe.severity, oe.source,
-                      oe.actor, oe.entity_type, oe.entity_name, oe.event_time
+                      oe.actor, oe.entity_type, oe.entity_name, oe.occurred_at
                FROM operational_events oe
-               WHERE oe.event_time >= NOW() - INTERVAL '24 hours'
-               ORDER BY oe.event_time DESC LIMIT 20""",
+               WHERE oe.occurred_at >= NOW() - INTERVAL '24 hours'
+               ORDER BY oe.occurred_at DESC LIMIT 20""",
         formatter=lambda rows: (
             f"**{len(rows)} operational event(s) in the last 24 hours:**\n\n" +
-            _fmt_table(rows, ["event_time", "severity", "category", "title", "entity_name", "actor"])
+            _fmt_table(rows, ["occurred_at", "severity", "category", "title", "entity_name", "actor"])
             if rows else "No operational events in that window. ✅"
         ),
         boost=0.1,

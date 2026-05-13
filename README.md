@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-1.96.7-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-1.96.8-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -282,6 +282,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 
 ---
 ## 🆕 Recent Highlights
+- **v1.96.8** — Bugfix: `occurred_at` column name in all Copilot timeline intents + context injector; new `OPERATIONAL_TIMELINE_GUIDE.md`; timeline sections added to `ADMIN_GUIDE.md` and `API_REFERENCE.md` (May 2026)
 - **v1.96.7** — Copilot: 3 new timeline intents (`timeline_what_changed`, `timeline_tenant`, `timeline_recent_hours`), context injection of recent operational events into LLM system prompt, new "Event Timeline" suggestion chip category (May 2026)
 - **v1.96.6** — Operational Event Timeline hotfix: harvester now resolves `domain_id` for all event sources (insights via project membership, provisioning via batch records, auth via user lookup, metering via project name); tenant portal granted `SELECT` on `operational_events`; field name mismatches in the tenant timeline route and UI corrected (May 2026)
 - **v1.96.5** — Operational Event Timeline: tenant portal "Event History" screen with domain-scoped event history, 7-category filter chips, severity filter, and search; new `/tenant/timeline` API endpoints with enforced domain isolation (May 2026)- **v1.96.5** — Operational Event Timeline: contextual navigation hooks — dependency graph nodes, insight rows, and ticket detail panels can now deep-link directly into the Timeline tab pre-filtered to the relevant resource or time window (May 2026)

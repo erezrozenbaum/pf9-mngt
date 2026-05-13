@@ -4507,6 +4507,18 @@ Returns event counts grouped by category and severity for dashboard widgets.
 ```
 ```
 
+### Copilot Timeline Intents *(v1.96.7)*
+
+Three built-in Copilot intents expose the timeline via natural language. These are handled by the `builtin` backend in `POST /api/copilot/ask`:
+
+| Intent key | Trigger phrases | SQL source |
+|---|---|---|
+| `timeline_what_changed` | "what changed before X?", "why did X fail?", "blast radius", "root cause" | `operational_events` — last 10 warning/critical in past 6h |
+| `timeline_tenant` | "show me [tenant] timeline", "timeline for org X" | `operational_events` JOIN `domains` — last 25 events for domain |
+| `timeline_recent_hours` | "what happened last N hours?", "recent operational events" | `operational_events` — last N hours (default 24h) |
+
+The LLM context payload (`GET /api/copilot/context`) also includes the 5 most recent `warning`/`critical` events under `RECENT OPERATIONAL EVENTS`.
+
 ---
 
 ### Post-Run Summary (v1.36.1)

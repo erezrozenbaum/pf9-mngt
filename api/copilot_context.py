@@ -179,10 +179,10 @@ def build_infra_context(redact: bool = False) -> str:
             # --- Recent operational events (warning + critical, last 5) ---
             cur.execute("""
                 SELECT oe.title, oe.severity, oe.category, oe.entity_name,
-                       oe.actor, oe.event_time
+                       oe.actor, oe.occurred_at
                 FROM operational_events oe
                 WHERE oe.severity IN ('warning', 'critical')
-                ORDER BY oe.event_time DESC
+                ORDER BY oe.occurred_at DESC
                 LIMIT 5
             """)
             op_events = cur.fetchall()
@@ -191,7 +191,7 @@ def build_infra_context(redact: bool = False) -> str:
                 for ev in op_events:
                     actor_part = f" by {ev['actor']}" if ev["actor"] else ""
                     lines.append(
-                        f"  [{ev['event_time']}] {ev['severity'].upper()} "
+                        f"  [{ev['occurred_at']}] {ev['severity'].upper()} "
                         f"{ev['category']}: {ev['title']}"
                         f" (entity={ev['entity_name'] or '?'}{actor_part})"
                     )

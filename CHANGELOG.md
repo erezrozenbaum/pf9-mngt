@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.96.8] - 2026-05-13
+### Fixed
+- **Copilot — timeline intents**: Column name corrected from `event_time` to `occurred_at` (the actual `operational_events` schema column). All three timeline intents (`timeline_what_changed`, `timeline_tenant`, `timeline_recent_hours`) and the `build_infra_context()` context injector were affected.
+
+### Added
+- **Docs — `OPERATIONAL_TIMELINE_GUIDE.md`**: Comprehensive feature guide covering event schema, categories, severity levels, admin UI usage, REST API reference, tenant portal access, Copilot intents, contextual navigation hooks, harvester internals, RBAC, and retention policy.
+- **Docs — `ADMIN_GUIDE.md`**: New "Operational Event Timeline" section with UI/API/Copilot access instructions and a troubleshooting table.
+- **Docs — `API_REFERENCE.md`**: Added Copilot timeline intents table under the Timeline Stats section.
+
+---
+
 ## [1.96.7] - 2026-05-13
 ### Added
 - **Copilot — timeline intents**: Three new built-in intents added to `copilot_intents.py`:
