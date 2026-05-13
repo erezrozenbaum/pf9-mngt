@@ -4554,6 +4554,7 @@ GRANT SELECT ON tenant_billing_config TO tenant_portal_role;
 GRANT SELECT ON prepaid_accounts TO tenant_portal_role;
 GRANT SELECT ON regional_pricing_overrides TO tenant_portal_role;
 GRANT SELECT ON resource_lifecycle_events TO tenant_portal_role;
+GRANT SELECT ON operational_events TO tenant_portal_role;
 
 -- Role-based access permissions for billing API (v1.95)
 INSERT INTO role_permissions (role, resource, action) VALUES

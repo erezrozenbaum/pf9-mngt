@@ -16,13 +16,14 @@ interface TimelineEvent {
   occurred_at: string;
   category: string;
   severity: string;
-  summary: string;
+  title: string;
+  description?: string;
   entity_type?: string;
   entity_id?: string;
   entity_name?: string;
   metadata?: Record<string, unknown>;
-  ticket_id?: number;
-  source_table?: string;
+  source?: string;
+  actor?: string;
 }
 
 interface TimelineResponse {
@@ -270,7 +271,7 @@ export function TenantTimeline() {
                   color, background: `${color}18`, padding: "0.1rem 0.4rem", borderRadius: 4,
                 }}>{ev.severity}</span>
                 <span style={{ fontSize: "0.72rem", color: "var(--color-muted, #6b7280)" }}>{ev.category}</span>
-                <span style={{ flex: 1, fontSize: "0.85rem", fontWeight: 500 }}>{ev.summary}</span>
+                <span style={{ flex: 1, fontSize: "0.85rem", fontWeight: 500 }}>{ev.title}</span>
                 {ev.entity_name && (
                   <span style={{
                     fontSize: "0.72rem", background: "var(--color-bg, #f3f4f6)",
@@ -290,8 +291,8 @@ export function TenantTimeline() {
                 <div style={{ marginTop: "0.6rem", paddingTop: "0.6rem", borderTop: "1px solid var(--color-border, #e5e7eb)" }}>
                   <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "0.2rem 0.75rem", fontSize: "0.78rem", margin: 0 }}>
                     {ev.entity_type && <><dt style={{ color: "var(--color-muted)" }}>Entity</dt><dd style={{ margin: 0 }}>{ev.entity_type}{ev.entity_id ? ` · ${ev.entity_id}` : ""}</dd></>}
-                    {ev.ticket_id   && <><dt style={{ color: "var(--color-muted)" }}>Ticket</dt><dd style={{ margin: 0 }}>#{ev.ticket_id}</dd></>}
-                    {ev.source_table && <><dt style={{ color: "var(--color-muted)" }}>Source</dt><dd style={{ margin: 0 }}>{ev.source_table}</dd></>}
+                    {ev.actor      && <><dt style={{ color: "var(--color-muted)" }}>Actor</dt><dd style={{ margin: 0 }}>{ev.actor}</dd></>}
+                    {ev.source     && <><dt style={{ color: "var(--color-muted)" }}>Source</dt><dd style={{ margin: 0 }}>{ev.source}</dd></>}
                   </dl>
                   {ev.metadata && Object.keys(ev.metadata).length > 0 && (
                     <pre style={{

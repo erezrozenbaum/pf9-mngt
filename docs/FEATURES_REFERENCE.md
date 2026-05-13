@@ -258,6 +258,22 @@ The `intelligence_worker` runs 6 detection engines every 5 minutes and writes st
 
 **Executive Dashboard** *(v1.92.0, `executive_dashboard` tab)*: Fleet-level stacked SLA health bar, 6 KPI cards (Fleet Health %, Breached, At Risk, Open Critical, Revenue Leakage/Month, Avg MTTR), and narrative sections for leakage and MTTR compliance. New `executive` RBAC role; `Executive Leadership` department with `default_nav_item_key = executive_dashboard`.
 
+### 📋 Operational Event Timeline *(v1.96.0 → v1.96.5.1)*
+
+**A unified, chronological audit trail of all infrastructure events — harvested automatically from 10 source tables, visible to admins and (domain-scoped) to tenants.**
+
+**Database foundation** *(v1.96.0)*: `operational_events` table — `id`, `event_time`, `domain_id`, `domain_name`, `entity_type`, `entity_id`, `category`, `severity`, `source`, `title`, `description`, `actor`, `metadata`. `timeline_harvest_cursors` table tracks per-source incremental position. `Timeline` nav item seeded under Intelligence Views; RBAC permissions for all roles.
+
+**REST API** *(v1.96.1)*: `GET /api/timeline` (paginated list with filters: entity, domain/project, region, category, severity, time range), `GET /api/timeline/blast-radius` (events ±N minutes around a timestamp), `GET /api/timeline/stats` (by-category/severity counts). Role-based visibility filters apply.
+
+**Event Harvester** *(v1.96.2, fixed v1.96.5.1)*: `intelligence_worker` `TimelineHarvester` engine runs every cycle, pulling from `activity_log`, `operational_insights`, `support_tickets`, `backup_history`, `snapshot_records`, `sla_compliance_monthly`, `runbook_executions`, `metering_efficiency`, `metering_quotas`, `auth_audit_log`. Cursor-based incremental ingestion. Automatic retention pruning (`TIMELINE_RETENTION_DAYS`, default 180). *v1.96.5.1: all harvester queries now resolve `domain_id` via JOINs — insights via project membership, provisioning via batch records, tickets via project FK, auth via user lookup, metering via project name.*
+
+**Admin UI** *(v1.96.3)*: `Timeline` tab in Intelligence Views. Three modes: **Tenant** (full event chain for a selected domain), **Resource** (events for a specific entity type + ID), **Global** (cross-region feed). Filter bar: time range, severity, category chips (11 categories). Vertical timeline newest-first with severity badges, entity chips, expand-to-detail.
+
+**Contextual navigation hooks** *(v1.96.4)*: Dependency graph nodes, insight rows, and ticket detail panels can deep-link into the Timeline pre-filtered to the relevant resource or time window.
+
+**Tenant portal Event History** *(v1.96.5, fixed v1.96.5.1)*: "⏱ Event History" screen in `tenant-ui`. Domain-scoped — server-side enforced. `GET /tenant/timeline` + `GET /tenant/timeline/stats` endpoints in the tenant portal service. *v1.96.5.1: `tenant_portal_role` granted `SELECT` on `operational_events`; API route and React component field-name mismatches corrected (`title`/`source`/`actor`/`description`).*
+
 ### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.92.0)*
 
 **For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning, security group management, and read-only observer access — without exposing the admin panel.**
@@ -267,6 +283,7 @@ A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolat
 - **Observer role** *(v1.91.0)*: `portal_role` column on `tenant_portal_access` (`manager` | `observer`). Observer JWT tokens are blocked at the FastAPI dependency layer (`require_manager_role()`) from all 8 write routes. Role persists through TOTP/email-OTP MFA flows, is embedded as a JWT claim, and is toggleable per-user from the admin UI without disrupting the session.
 - **Observer invite flow** *(v1.91.0)*: `POST /api/intelligence/invite-observer` generates a one-time `portal_invite_tokens` row and sends a branded HTML email with a magic-link. Tokens expire and are one-time-use enforced by `used_at`.
 - **Health Overview screen** *(v1.91.0, fixed v1.93.12)*: New default landing screen in `tenant-ui` with three SVG circular progress dials (Efficiency, Stability, Capacity Runway) sourced from `GET /tenant/client-health` — a proxy to the admin API `client-health` endpoint. *v1.93.12: Capacity Runway dial now shows a neutral grey ring when no quota ceiling is configured (was showing a misleading red "0"); Efficiency score bug fixed (was always 0 due to UUID→name mismatch in the upstream query).*
+- **Event History (Operational Timeline)** *(v1.96.5, fixed v1.96.5.1)*: "⏱ Event History" screen in `tenant-ui` giving tenants a read-only, domain-scoped chronological view of operational events for their environment. Time range picker (2h/6h/24h/7d/30d), 7 category filter chips (Monitoring, Provisioning, Snapshot, Backup, SLA, Ticket, Intelligence), severity filter, and free-text search on event title. All events are server-side filtered to the authenticated tenant's domain — cross-tenant access is not possible. Backed by `GET /tenant/timeline` (paginated) and `GET /tenant/timeline/stats` (by-category/severity counts). *v1.96.5.1: harvester now correctly populates `domain_id` for all event sources; `tenant_portal_role` granted `SELECT` on `operational_events`; field-name mismatches in API route and React component corrected.*
 
 - **Security isolation**: `tenant_portal_role` PostgreSQL role with Row-Level Security on 5 inventory tables. `role=tenant` JWT namespace (admin tokens explicitly rejected). IP binding + Redis session binding. TOTP + email OTP MFA with 8 bcrypt-hashed backup codes.
 - **Data endpoints (read-only)**: VM inventory, volume list, snapshot list/detail/history, per-VM compliance %, dashboard summary, event feed, Prometheus metrics proxy (scoped to tenant VMs), runbooks catalogue — 14 routes, all with double `project_id + region_id` scoping and RLS.
