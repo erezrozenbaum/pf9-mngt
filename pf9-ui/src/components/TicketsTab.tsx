@@ -136,12 +136,39 @@ const TYPE_ICONS: Record<string, string> = {
 export default function TicketsTab({
   userRole = "",
   myQueueMode = false,
+  onShowTimeline,
 }: {
   userRole?: string;
   myQueueMode?: boolean;
+  onShowTimeline?: (mode: "tenant" | "resource" | "global", opts?: { domainId?: string; entityType?: string; entityId?: string }) => void;
 }) {
   const isAdmin = userRole === "admin" || userRole === "superadmin";
   const canWrite = !["viewer"].includes(userRole);   // viewer can write too (policy grants it)
+
+  // --- Correlated timeline events (shown in ticket detail) ---
+  const [correlatedEvents, setCorrelatedEvents] = useState<Array<{
+    id: number; category: string; severity: string; summary: string; occurred_at: string; entity_type?: string; entity_id?: string;
+  }> | null>(null);
+  const [correlatedLoading, setCorrelatedLoading] = useState(false);
+  const [showCorrelated, setShowCorrelated] = useState(false);
+
+  const loadCorrelatedEvents = useCallback(async (ticket: { id: number; created_at: string; resource_type?: string; resource_id?: string }) => {
+    setCorrelatedLoading(true);
+    setCorrelatedEvents(null);
+    try {
+      const entityType = ticket.resource_type || "ticket";
+      const entityId = ticket.resource_id || String(ticket.id);
+      const ts = ticket.created_at;
+      const data = await apiFetch<{ events: typeof correlatedEvents }>(
+        `/api/timeline/correlated?entity_type=${encodeURIComponent(entityType)}&entity_id=${encodeURIComponent(entityId)}&ts=${encodeURIComponent(ts)}&window_minutes=60&limit=10`
+      );
+      setCorrelatedEvents(data.events ?? []);
+    } catch {
+      setCorrelatedEvents([]);
+    } finally {
+      setCorrelatedLoading(false);
+    }
+  }, []);
 
   // --- List state ---
   const [tickets, setTickets]     = useState<Ticket[]>([]);
@@ -282,6 +309,8 @@ export default function TicketsTab({
     setDetail(t);
     setCommentText("");
     setIsInternal(false);
+    setShowCorrelated(false);
+    setCorrelatedEvents(null);
     await loadComments(t.id);
   }, [loadComments]);
 
@@ -849,6 +878,59 @@ export default function TicketsTab({
                   {detail.approved_by && <><dt>Approved by</dt><dd>{detail.approved_by} at {fmt(detail.approved_at)}</dd></>}
                   {detail.rejected_by && <><dt>Rejected by</dt><dd>{detail.rejected_by} at {fmt(detail.rejected_at)}</dd></>}
                 </dl>
+
+                {/* Correlated events */}
+                <div className="tt-correlated-panel">
+                  <button
+                    className="tt-btn tt-btn-sm tt-btn-outline"
+                    style={{ marginBottom: "0.5rem" }}
+                    onClick={() => {
+                      if (!showCorrelated) loadCorrelatedEvents(detail);
+                      setShowCorrelated(v => !v);
+                    }}
+                  >
+                    {showCorrelated ? "▲" : "▼"} Correlated events (±1h)
+                  </button>
+                  {showCorrelated && (
+                    <div className="tt-correlated-body">
+                      {correlatedLoading && <p className="tt-no-comments">Loading…</p>}
+                      {!correlatedLoading && correlatedEvents !== null && correlatedEvents.length === 0 && (
+                        <p className="tt-no-comments">No events found within ±1 hour of ticket creation.</p>
+                      )}
+                      {!correlatedLoading && correlatedEvents && correlatedEvents.length > 0 && (
+                        <>
+                          <table className="tt-correlated-table">
+                            <thead><tr>
+                              <th>Time</th><th>Severity</th><th>Category</th><th>Summary</th>
+                            </tr></thead>
+                            <tbody>
+                              {correlatedEvents.map(ev => (
+                                <tr key={ev.id}>
+                                  <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{fmt(ev.occurred_at)}</td>
+                                  <td><span className={`tt-badge tt-badge-${ev.severity}`}>{ev.severity}</span></td>
+                                  <td style={{ fontSize: "0.75rem" }}>{ev.category}</td>
+                                  <td style={{ fontSize: "0.75rem" }}>{ev.summary}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {onShowTimeline && (
+                            <button
+                              className="tt-btn tt-btn-sm tt-btn-outline"
+                              style={{ marginTop: "0.5rem" }}
+                              onClick={() => onShowTimeline("resource", {
+                                entityType: detail.resource_type || "ticket",
+                                entityId: detail.resource_id || String(detail.id),
+                              })}
+                            >
+                              ⏱ Open in Timeline
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Action buttons */}
                 {canWrite && (
