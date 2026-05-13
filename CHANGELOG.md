@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.96.7] - 2026-05-13
+### Added
+- **Copilot — timeline intents**: Three new built-in intents added to `copilot_intents.py`:
+  - `timeline_what_changed` — answers "what changed before [X]?" / "why did [X] fail?" by surfacing the last 10 warning/critical operational events from the past 6 hours.
+  - `timeline_tenant` — answers "show me [tenant] timeline" by fetching the most recent 25 events for that domain (supports tenant-scoped `AND LOWER(d.name) LIKE %s` filtering).
+  - `timeline_recent_hours` — answers "what happened last N hours?" using the global `operational_events` feed for a configurable time window (defaults to 24h).
+- **Copilot — context injection**: `build_infra_context()` in `copilot_context.py` now appends the 5 most recent `warning`/`critical` operational events to every LLM context payload under the `RECENT OPERATIONAL EVENTS` heading.
+- **Copilot — suggestion chips**: New "Event Timeline" chip category added to `get_suggestion_chips()` with 4 quick-launch chips.
+
+---
+
 ## [1.96.6] - 2026-05-13
 ### Fixed
 - **Operational Event Timeline — domain visibility**: Tenant-scoped filtering was returning no results because harvested events were stored with `domain_id = NULL`. The intelligence harvester now resolves domain ownership for every event source:
