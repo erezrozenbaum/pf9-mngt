@@ -189,13 +189,18 @@ class TimelineHarvester(BaseEngine):
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, timestamp, actor, action, resource_type,
-                       resource_id, resource_name, domain_id, domain_name,
-                       details, result
-                FROM activity_log
-                WHERE id > %s
-                  AND action = ANY(%s)
-                ORDER BY id ASC
+                SELECT a.id, a.timestamp, a.actor, a.action, a.resource_type,
+                       a.resource_id, a.resource_name, a.details, a.result,
+                       COALESCE(NULLIF(a.domain_id, ''), d.id)  AS domain_id,
+                       COALESCE(NULLIF(a.domain_name, ''), b.domain_name) AS domain_name
+                FROM activity_log a
+                LEFT JOIN vm_provisioning_batches b
+                       ON a.resource_type = 'vm_provisioning'
+                      AND b.id::text = a.resource_id
+                LEFT JOIN domains d ON d.name = b.domain_name
+                WHERE a.id > %s
+                  AND a.action = ANY(%s)
+                ORDER BY a.id ASC
                 LIMIT %s
                 """,
                 (last_id, list(_ACTIVITY_ACTION_MAP.keys()), BATCH_SIZE),
@@ -248,12 +253,22 @@ class TimelineHarvester(BaseEngine):
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, detected_at, type, severity, entity_type, entity_id,
-                       entity_name, title, message, metadata
-                FROM operational_insights
-                WHERE id > %s
-                  AND status IN ('open', 'acknowledged', 'snoozed')
-                ORDER BY id ASC
+                SELECT i.id, i.detected_at, i.type, i.severity, i.entity_type,
+                       i.entity_id, i.entity_name, i.title, i.message, i.metadata,
+                       COALESCE(p_id.domain_id,  p_vm.domain_id)  AS resolved_domain_id,
+                       COALESCE(d_id.name,        d_vm.name)       AS resolved_domain_name
+                FROM operational_insights i
+                -- tenant/project: entity_id IS a project UUID
+                LEFT JOIN projects p_id ON i.entity_type IN ('tenant', 'project')
+                                       AND p_id.id = i.entity_id
+                LEFT JOIN domains  d_id ON d_id.id = p_id.domain_id
+                -- vm: look up via metadata->>'project' (project name)
+                LEFT JOIN projects p_vm ON i.entity_type = 'vm'
+                                       AND p_vm.name = i.metadata->>'project'
+                LEFT JOIN domains  d_vm ON d_vm.id = p_vm.domain_id
+                WHERE i.id > %s
+                  AND i.status IN ('open', 'acknowledged', 'snoozed')
+                ORDER BY i.id ASC
                 LIMIT %s
                 """,
                 (last_id, BATCH_SIZE),
@@ -265,18 +280,20 @@ class TimelineHarvester(BaseEngine):
         for row in rows:
             ev = self._ev_base()
             ev.update({
-                "occurred_at": row["detected_at"],
-                "event_type":  "insight_fired",
-                "category":    "intelligence",
-                "severity":    _INSIGHT_SEV.get(row["severity"], "warning"),
-                "title":       row["title"],
-                "description": row["message"],
-                "metadata":    json.dumps(dict(row["metadata"] or {})),
-                "entity_type": row["entity_type"],
-                "entity_id":   row["entity_id"],
-                "entity_name": row["entity_name"],
-                "source":      "operational_insights",
-                "source_id":   f"open:{row['id']}",
+                "occurred_at":  row["detected_at"],
+                "event_type":   "insight_fired",
+                "category":     "intelligence",
+                "severity":     _INSIGHT_SEV.get(row["severity"], "warning"),
+                "title":        row["title"],
+                "description":  row["message"],
+                "metadata":     json.dumps(dict(row["metadata"] or {})),
+                "entity_type":  row["entity_type"],
+                "entity_id":    row["entity_id"],
+                "entity_name":  row["entity_name"],
+                "domain_id":    row["resolved_domain_id"],
+                "domain_name":  row["resolved_domain_name"],
+                "source":       "operational_insights",
+                "source_id":    f"open:{row['id']}",
             })
             events.append(ev)
             if row["id"] > max_id:
@@ -291,12 +308,21 @@ class TimelineHarvester(BaseEngine):
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, resolved_at, entity_type, entity_id, entity_name, title
-                FROM operational_insights
-                WHERE id > %s
-                  AND status = 'resolved'
-                  AND resolved_at IS NOT NULL
-                ORDER BY id ASC
+                SELECT i.id, i.resolved_at, i.entity_type, i.entity_id,
+                       i.entity_name, i.title, i.metadata,
+                       COALESCE(p_id.domain_id,  p_vm.domain_id)  AS resolved_domain_id,
+                       COALESCE(d_id.name,        d_vm.name)       AS resolved_domain_name
+                FROM operational_insights i
+                LEFT JOIN projects p_id ON i.entity_type IN ('tenant', 'project')
+                                       AND p_id.id = i.entity_id
+                LEFT JOIN domains  d_id ON d_id.id = p_id.domain_id
+                LEFT JOIN projects p_vm ON i.entity_type = 'vm'
+                                       AND p_vm.name = i.metadata->>'project'
+                LEFT JOIN domains  d_vm ON d_vm.id = p_vm.domain_id
+                WHERE i.id > %s
+                  AND i.status = 'resolved'
+                  AND i.resolved_at IS NOT NULL
+                ORDER BY i.id ASC
                 LIMIT %s
                 """,
                 (last_id, BATCH_SIZE),
@@ -308,16 +334,18 @@ class TimelineHarvester(BaseEngine):
         for row in rows:
             ev = self._ev_base()
             ev.update({
-                "occurred_at": row["resolved_at"],
-                "event_type":  "insight_resolved",
-                "category":    "intelligence",
-                "severity":    "info",
-                "title":       f"Resolved: {row['title']}",
-                "entity_type": row["entity_type"],
-                "entity_id":   row["entity_id"],
-                "entity_name": row["entity_name"],
-                "source":      "operational_insights",
-                "source_id":   f"resolved:{row['id']}",
+                "occurred_at":  row["resolved_at"],
+                "event_type":   "insight_resolved",
+                "category":     "intelligence",
+                "severity":     "info",
+                "title":        f"Resolved: {row['title']}",
+                "entity_type":  row["entity_type"],
+                "entity_id":    row["entity_id"],
+                "entity_name":  row["entity_name"],
+                "domain_id":    row["resolved_domain_id"],
+                "domain_name":  row["resolved_domain_name"],
+                "source":       "operational_insights",
+                "source_id":    f"resolved:{row['id']}",
             })
             events.append(ev)
             if row["id"] > max_id:
@@ -339,12 +367,16 @@ class TimelineHarvester(BaseEngine):
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, created_at, title, ticket_type, priority, opened_by,
-                       resource_type, resource_id, resource_name,
-                       project_id, project_name, domain_id, domain_name, ticket_ref
-                FROM support_tickets
-                WHERE id > %s
-                ORDER BY id ASC
+                SELECT t.id, t.created_at, t.title, t.ticket_type, t.priority,
+                       t.opened_by, t.resource_type, t.resource_id, t.resource_name,
+                       t.project_id, t.project_name, t.ticket_ref,
+                       COALESCE(NULLIF(t.domain_id, ''),   p.domain_id) AS domain_id,
+                       COALESCE(NULLIF(t.domain_name, ''), d.name)      AS domain_name
+                FROM support_tickets t
+                LEFT JOIN projects p ON t.domain_id IS NULL AND p.id = t.project_id
+                LEFT JOIN domains  d ON d.id = COALESCE(NULLIF(t.domain_id, ''), p.domain_id)
+                WHERE t.id > %s
+                ORDER BY t.id ASC
                 LIMIT %s
                 """,
                 (last_id, BATCH_SIZE),
@@ -390,14 +422,18 @@ class TimelineHarvester(BaseEngine):
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, resolved_at, title, priority, resolved_by,
-                       resource_type, resource_id, resource_name,
-                       project_id, project_name, domain_id, domain_name, ticket_ref
-                FROM support_tickets
-                WHERE id > %s
-                  AND status IN ('resolved', 'closed')
-                  AND resolved_at IS NOT NULL
-                ORDER BY id ASC
+                SELECT t.id, t.resolved_at, t.title, t.priority, t.resolved_by,
+                       t.resource_type, t.resource_id, t.resource_name,
+                       t.project_id, t.project_name, t.ticket_ref,
+                       COALESCE(NULLIF(t.domain_id, ''),   p.domain_id) AS domain_id,
+                       COALESCE(NULLIF(t.domain_name, ''), d.name)      AS domain_name
+                FROM support_tickets t
+                LEFT JOIN projects p ON t.domain_id IS NULL AND p.id = t.project_id
+                LEFT JOIN domains  d ON d.id = COALESCE(NULLIF(t.domain_id, ''), p.domain_id)
+                WHERE t.id > %s
+                  AND t.status IN ('resolved', 'closed')
+                  AND t.resolved_at IS NOT NULL
+                ORDER BY t.id ASC
                 LIMIT %s
                 """,
                 (last_id, BATCH_SIZE),
@@ -693,12 +729,17 @@ class TimelineHarvester(BaseEngine):
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, collected_at, vm_id, vm_name, project_name,
-                       domain, cpu_efficiency, ram_efficiency, region_id
-                FROM metering_efficiency
-                WHERE id > %s
-                  AND (cpu_efficiency > 85 OR ram_efficiency > 85)
-                ORDER BY id ASC
+                SELECT me.id, me.collected_at, me.vm_id, me.vm_name, me.project_name,
+                       me.domain, me.cpu_efficiency, me.ram_efficiency, me.region_id,
+                       COALESCE(p.domain_id, d_dm.id) AS domain_id,
+                       COALESCE(d_p.name, d_dm.name)  AS resolved_domain_name
+                FROM metering_efficiency me
+                LEFT JOIN projects p   ON p.name = me.project_name
+                LEFT JOIN domains  d_p ON d_p.id = p.domain_id
+                LEFT JOIN domains  d_dm ON d_dm.name = me.domain
+                WHERE me.id > %s
+                  AND (me.cpu_efficiency > 85 OR me.ram_efficiency > 85)
+                ORDER BY me.id ASC
                 LIMIT %s
                 """,
                 (last_id, BATCH_SIZE),
@@ -726,7 +767,8 @@ class TimelineHarvester(BaseEngine):
                     "entity_id":   row["vm_id"],
                     "entity_name": row["vm_name"],
                     "project_name": row["project_name"],
-                    "domain_name": row["domain"],
+                    "domain_id":   row["domain_id"],
+                    "domain_name": row["resolved_domain_name"],
                     "region_id":   row["region_id"] or "global",
                     "source":      "metering_efficiency",
                     "source_id":   f"cpu:{row['id']}",
@@ -748,7 +790,8 @@ class TimelineHarvester(BaseEngine):
                     "entity_id":   row["vm_id"],
                     "entity_name": row["vm_name"],
                     "project_name": row["project_name"],
-                    "domain_name": row["domain"],
+                    "domain_id":   row["domain_id"],
+                    "domain_name": row["resolved_domain_name"],
                     "region_id":   row["region_id"] or "global",
                     "source":      "metering_efficiency",
                     "source_id":   f"ram:{row['id']}",
@@ -828,11 +871,16 @@ class TimelineHarvester(BaseEngine):
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, timestamp, username, action, success, ip_address, details
-                FROM auth_audit_log
-                WHERE id > %s
-                  AND action IN ('login', 'failed_login', 'permission_changed')
-                ORDER BY id ASC
+                SELECT a.id, a.timestamp, a.username, a.action, a.success,
+                       a.ip_address, a.details,
+                       u.domain_id AS resolved_domain_id,
+                       d.name      AS resolved_domain_name
+                FROM auth_audit_log a
+                LEFT JOIN users   u ON u.name = a.username
+                LEFT JOIN domains d ON d.id   = u.domain_id
+                WHERE a.id > %s
+                  AND a.action IN ('login', 'failed_login', 'permission_changed')
+                ORDER BY a.id ASC
                 LIMIT %s
                 """,
                 (last_id, BATCH_SIZE),
@@ -869,6 +917,8 @@ class TimelineHarvester(BaseEngine):
                 "entity_type": "user",
                 "entity_id":   row["username"] or str(row["id"]),
                 "entity_name": row["username"],
+                "domain_id":   row["resolved_domain_id"],
+                "domain_name": row["resolved_domain_name"],
                 "source":      "auth_audit_log",
                 "source_id":   str(row["id"]),
                 "actor":       row["username"] or "unknown",

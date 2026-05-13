@@ -147,3 +147,9 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('account_manager', 'timeline', 'read'),
     ('executive',       'timeline', 'read')
 ON CONFLICT DO NOTHING;
+
+
+-- ---------------------------------------------------------------
+-- 5. Tenant portal access to operational_events
+-- ---------------------------------------------------------------
+GRANT SELECT ON operational_events TO tenant_portal_role;

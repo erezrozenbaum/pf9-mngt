@@ -544,7 +544,7 @@ Check for IP address changes — if the customer is behind a NAT that rotates so
 
 ## Event History (Operational Timeline)
 
-*Added in v1.96.5.*
+*Added in v1.96.5. Fixed in v1.96.5.1 (domain visibility, DB permissions, field names).*
 
 The **Event History** screen gives tenants a read-only, domain-scoped view of operational events for their environment. All events are filtered server-side to the authenticated tenant's domain — it is not possible to query events for another tenant.
 
@@ -560,7 +560,7 @@ The **Event History** screen gives tenants a read-only, domain-scoped view of op
 | Time range | 2h / 6h / 24h / 7d / 30d |
 | Category | Monitoring, Provisioning, Snapshot, Backup, SLA, Ticket, Intelligence |
 | Severity | Critical / High / Medium / Low / Info |
-| Search | Free-text search on event summary |
+| Search | Free-text search on event title |
 
 ### Event categories visible to tenants
 
@@ -576,6 +576,22 @@ Tenants see only `operational` visibility events. The following categories are s
 
 Security, billing, and system-level events are never visible to tenants.
 
+### Event fields
+
+Each event returned by the API and displayed in the UI contains:
+
+| Field | Description |
+|-------|-------------|
+| `title` | Short human-readable event description |
+| `description` | Optional longer explanation |
+| `source` | Originating system (e.g. `activity_log`, `support_tickets`) |
+| `actor` | User or system that triggered the event (where applicable) |
+| `category` | One of the 7 tenant-visible categories above |
+| `severity` | `critical` / `high` / `medium` / `low` / `info` |
+| `event_time` | ISO 8601 timestamp |
+| `entity_type` | Resource type (e.g. `vm`, `volume`) |
+| `entity_id` | Resource UUID |
+
 ### API endpoints (tenant portal)
 
 ```
@@ -589,3 +605,11 @@ GET /tenant/timeline/stats
 ```
 
 The `domain_id` is always taken from the JWT — tenants cannot override it.
+
+### Database permissions
+
+`tenant_portal_role` requires `SELECT` on `operational_events`. This grant is present in `db/init.sql` and `db/migrate_v1_96_0_timeline.sql`. If upgrading from v1.96.5, apply manually:
+
+```sql
+GRANT SELECT ON operational_events TO tenant_portal_role;
+```

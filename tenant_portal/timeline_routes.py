@@ -52,14 +52,15 @@ def _fmt(row: dict) -> dict:
         "occurred_at": row["occurred_at"].isoformat() if isinstance(row["occurred_at"], datetime) else row["occurred_at"],
         "category":    row["category"],
         "severity":    row["severity"],
-        "summary":     row["summary"],
+        "title":       row["title"],
+        "description": row.get("description"),
         "entity_type": row.get("entity_type"),
         "entity_id":   row.get("entity_id"),
         "entity_name": row.get("entity_name"),
         "domain_id":   row.get("domain_id"),
         "metadata":    row.get("metadata") or {},
-        "ticket_id":   row.get("ticket_id"),
-        "source_table":row.get("source_table"),
+        "source":      row.get("source"),
+        "actor":       row.get("actor"),
     }
 
 
@@ -121,7 +122,7 @@ def tenant_timeline(
         params.append(entity_id)
 
     if search:
-        conditions.append("summary ILIKE %s")
+        conditions.append("title ILIKE %s")
         params.append(f"%{search}%")
 
     where = "WHERE " + " AND ".join(conditions)

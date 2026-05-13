@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.96.5.1] - 2026-05-13
+### Fixed
+- **Operational Event Timeline — domain visibility**: Tenant-scoped filtering was returning no results because harvested events were stored with `domain_id = NULL`. The intelligence harvester now resolves domain ownership for every event source:
+  - *Insight events* — joins `projects` on `entity_id` (for tenant/project entity types) and on `metadata->>'project'` name (for VM-type insights) to derive the owning domain.
+  - *Provisioning activity events* — joins `vm_provisioning_batches` on `resource_id` and falls back to `domains` via `batch.domain_name` when the activity row's own domain fields are blank.
+  - *Ticket events* — falls back to the project-to-domain mapping when the ticket's own `domain_id` is blank.
+  - *Auth events* — looks up the authenticated user in the `users` table and resolves their domain.
+  - *Metering efficiency events* — joins `projects` on `project_name` and `domains` on `domain` name to populate `domain_id`.
+  - Existing events without a `domain_id` have been backfilled in place.
+- **Tenant portal — `operational_events` access**: The `tenant_portal_role` database role was missing `SELECT` permission on the `operational_events` table, causing every tenant Event History request to fail with a PostgreSQL `insufficient_privilege` error. Grant has been added to `db/init.sql` and the migration file.
+- **Tenant portal — Event History field mapping**: The tenant timeline API route was referencing non-existent column names (`summary`, `source_table`, `ticket_id`). Corrected to the actual schema columns: `title`, `source`, `actor`, `description`.
+- **Tenant portal — Event History UI field mapping**: The `TenantTimeline` React component was reading `ev.summary` and `ev.source_table` (which were always `undefined`). Updated to read `ev.title`, `ev.description`, `ev.source`, and `ev.actor` matching the API response shape.
+- **Helm chart** — bumped chart `version` and `appVersion` to `1.96.5.1`.
+
+---
+
 ## [1.96.5] - 2026-05-13
 ### Added
 - **Operational Event Timeline — tenant portal**: Tenant users now have an "⏱ Event History" screen in the self-service portal showing a domain-scoped, read-only operational event history. Includes time range picker, category chips (7 operational categories), severity filter, and free-text search. All events are server-side filtered to the authenticated tenant's domain — cross-tenant access is not possible. New `GET /tenant/timeline` and `GET /tenant/timeline/stats` API endpoints added to the tenant portal service.
