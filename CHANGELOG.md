@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.96.3] - 2026-05-13
+
+### Added
+- **Operational Event Timeline — admin UI**: New `Timeline` tab in the Intelligence Views group. Three viewing modes: **Tenant** (full event chain for a selected domain), **Resource** (events for a specific entity type + ID), and **Global** (rolling cross-region feed for admins). Filter bar includes time range (2h/6h/24h/7d/30d), severity, category chips (11 categories with role-based visibility), and free-text search. Vertical timeline renders newest-first with category color stripes, severity badges, entity/domain chips, and expand-to-detail for description and metadata. Offset-based "Load more" pagination. Stats strip shows event counts by severity and category.
+
+---
+
 ## [1.96.2] - 2026-05-12
 
 ### Added
