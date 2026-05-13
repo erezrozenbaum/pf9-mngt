@@ -45,7 +45,7 @@ jobs:
       - name: Extract version from CHANGELOG.md
         id: changelog
         run: |
-          VERSION=$(grep -oP '## \[\K\d+\.\d+\.\d+(?=\])' CHANGELOG.md | head -1)
+          VERSION=$(grep -oP '## \[\K\d+\.\d+\.\d+(?:\.\d+)?(?=\])' CHANGELOG.md | head -1)
           if [ -z "$VERSION" ]; then
             echo "No version found in CHANGELOG.md"
             exit 1
@@ -65,7 +65,9 @@ jobs:
           fi
 
           # Extract release notes: content between this version header and the next
-          NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
+          # Escape dots in version for awk regex matching
+          VERSION_ESC=$(echo "$VERSION" | sed 's/\./\\./g')
+          NOTES=$(awk "/^## \[${VERSION_ESC}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.96.5.1] - 2026-05-13
+## [1.96.6] - 2026-05-13
 ### Fixed
 - **Operational Event Timeline — domain visibility**: Tenant-scoped filtering was returning no results because harvested events were stored with `domain_id = NULL`. The intelligence harvester now resolves domain ownership for every event source:
   - *Insight events* — joins `projects` on `entity_id` (for tenant/project entity types) and on `metadata->>'project'` name (for VM-type insights) to derive the owning domain.
@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tenant portal — `operational_events` access**: The `tenant_portal_role` database role was missing `SELECT` permission on the `operational_events` table, causing every tenant Event History request to fail with a PostgreSQL `insufficient_privilege` error. Grant has been added to `db/init.sql` and the migration file.
 - **Tenant portal — Event History field mapping**: The tenant timeline API route was referencing non-existent column names (`summary`, `source_table`, `ticket_id`). Corrected to the actual schema columns: `title`, `source`, `actor`, `description`.
 - **Tenant portal — Event History UI field mapping**: The `TenantTimeline` React component was reading `ev.summary` and `ev.source_table` (which were always `undefined`). Updated to read `ev.title`, `ev.description`, `ev.source`, and `ev.actor` matching the API response shape.
-- **Helm chart** — bumped chart `version` and `appVersion` to `1.96.5.1`.
+- **Helm chart** — bumped chart `version` and `appVersion` to `1.96.6`.
 
 ---
 
