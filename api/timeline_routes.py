@@ -149,8 +149,8 @@ def list_timeline(
         params.append(entity_type)
 
     if entity_id:
-        conditions.append("entity_id = %s")
-        params.append(entity_id)
+        conditions.append("(entity_id = %s OR entity_name ILIKE %s)")
+        params.extend([entity_id, entity_id])
 
     if severity:
         conditions.append("severity = %s")

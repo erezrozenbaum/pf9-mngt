@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-1.96.8-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-1.96.9-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -282,6 +282,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 
 ---
 ## 🆕 Recent Highlights
+- **v1.96.9** — Multi-bug fix: tenant portal data isolation (security), intelligence event domain resolution, snapshot harvest, auto-ticket creation, entity name display in tenant portal (May 2026)
 - **v1.96.8** — Bugfix: `occurred_at` column name in all Copilot timeline intents + context injector; new `OPERATIONAL_TIMELINE_GUIDE.md`; timeline sections added to `ADMIN_GUIDE.md` and `API_REFERENCE.md` (May 2026)
 - **v1.96.7** — Copilot: 3 new timeline intents (`timeline_what_changed`, `timeline_tenant`, `timeline_recent_hours`), context injection of recent operational events into LLM system prompt, new "Event Timeline" suggestion chip category (May 2026)
 - **v1.96.6** — Operational Event Timeline hotfix: harvester now resolves `domain_id` for all event sources (insights via project membership, provisioning via batch records, auth via user lookup, metering via project name); tenant portal granted `SELECT` on `operational_events`; field name mismatches in the tenant timeline route and UI corrected (May 2026)

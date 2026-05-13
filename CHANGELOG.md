@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.96.9] - 2026-05-14
+
+### Fixed
+- **Admin Timeline right panel**: `operational_timeline` added to `hideDetailsPanel` in App.tsx — empty details panel no longer renders on any of the 3 timeline modes
+- **Resource tab entity search**: API now also matches `entity_name ILIKE %s` so users can search by VM name instead of raw UUID
+- **Tenant portal data isolation (security)**: `tenant_portal/timeline_routes.py` was filtering by `domain_id = control_plane_id = "default"`, exposing all intelligence events (admin/demo-tenant/service) to every tenant; now resolves the actual domain UUID from `project_ids` via the projects table (same pattern as billing_routes.py)
+- **Intelligence events domain_id**: For `entity_type='tenant'` insights, `entity_id` IS the domain UUID — `timeline_harvester.py` now joins directly to the domains table instead of through projects (which failed, writing `domain_id='default'` for every intelligence event)
+- **Snapshot events**: Harvester queried `action='create'` / `status IN ('completed','failed')` but actual snapshot_records data is `action='created'` / `status='OK'`; corrected to match real data
+- **auto_create_ticket**: `intelligence_worker/engines/base.py` INSERT was missing required NOT NULL columns (`ticket_ref`, `to_dept_id`, `opened_by`) causing all intelligence-triggered ticket creation to fail silently; fixed with proper ticket_sequence / department resolution
+
+### Added
+- **Auto-ticket for unacknowledged drift**: `risk.py::_check_unacknowledged_drift()` now calls `auto_create_ticket()` so tenants with unacknowledged critical drift automatically get a high-priority support ticket
+- **Tenant portal event descriptions**: Collapsed rows now show a 2-line description preview; expanded view shows entity_name instead of raw UUID and renders the full event description
+
+---
+
 ## [1.96.8] - 2026-05-13
 ### Fixed
 - **Copilot — timeline intents**: Column name corrected from `event_time` to `occurred_at` (the actual `operational_events` schema column). All three timeline intents (`timeline_what_changed`, `timeline_tenant`, `timeline_recent_hours`) and the `build_infra_context()` context injector were affected.
