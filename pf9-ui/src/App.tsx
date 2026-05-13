@@ -1518,6 +1518,22 @@ const App: React.FC = () => {
   // Dependency graph drawer
   const [graphTarget, setGraphTarget] = useState<{ type: GraphRootType; id: string; label: string; migrationProjectId?: number; graphUrl?: string } | null>(null);
 
+  // Timeline deep-link filter: set by graph/insights/tickets contextual hooks
+  const [timelineFilter, setTimelineFilter] = useState<{
+    mode: "tenant" | "resource" | "global";
+    domainId?: string;
+    entityType?: string;
+    entityId?: string;
+  } | null>(null);
+
+  const handleShowTimeline = useCallback((
+    mode: "tenant" | "resource" | "global",
+    opts?: { domainId?: string; entityType?: string; entityId?: string },
+  ) => {
+    setTimelineFilter({ mode, ...opts });
+    setActiveTab("operational_timeline" as ActiveTab);
+  }, []);
+
   /** Called when user clicks "Open in tab" from the graph sidebar */
   const handleGraphNavigate = useCallback((tab: string, resourceId: string, resourceType: string) => {
     setActiveTab(tab as ActiveTab);
@@ -6370,12 +6386,18 @@ const App: React.FC = () => {
 
           {/* Insights Feed + SLA */}
           {activeTab === "insights" && (
-            <InsightsTab userRole={authUser?.role || ""} />
+            <InsightsTab userRole={authUser?.role || ""} onShowTimeline={handleShowTimeline} />
           )}
 
           {/* Operational Event Timeline */}
           {activeTab === "operational_timeline" && (
-            <OperationalTimelineTab userRole={authUser?.role || ""} />
+            <OperationalTimelineTab
+              userRole={authUser?.role || ""}
+              initialMode={timelineFilter?.mode}
+              initialDomainId={timelineFilter?.domainId}
+              initialEntityType={timelineFilter?.entityType}
+              initialEntityId={timelineFilter?.entityId}
+            />
           )}
 
           {/* Docs Viewer */}
@@ -6396,12 +6418,12 @@ const App: React.FC = () => {
 
           {/* Support Tickets */}
           {activeTab === "tickets" && (
-            <TicketsTab userRole={authUser?.role || ""} />
+            <TicketsTab userRole={authUser?.role || ""} onShowTimeline={handleShowTimeline} />
           )}
 
           {/* My Queue */}
           {activeTab === "my_queue" && (
-            <TicketsTab userRole={authUser?.role || ""} myQueueMode />
+            <TicketsTab userRole={authUser?.role || ""} myQueueMode onShowTimeline={handleShowTimeline} />
           )}
 
           {/* Cluster Management */}
@@ -6918,6 +6940,7 @@ const App: React.FC = () => {
             onClose={() => setGraphTarget(null)}
             onNavigate={handleGraphNavigate}
             onCreateSnapshot={handleGraphCreateSnapshot}
+            onShowTimeline={handleShowTimeline}
             migrationProjectId={graphTarget.migrationProjectId}
             graphUrl={graphTarget.graphUrl}
           />

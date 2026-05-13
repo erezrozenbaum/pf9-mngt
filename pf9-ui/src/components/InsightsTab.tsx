@@ -158,11 +158,12 @@ function statusClass(s: string): string {
 
 interface InsightsTabProps {
   userRole?: string;
+  onShowTimeline?: (mode: "tenant" | "resource" | "global", opts?: { domainId?: string; entityType?: string; entityId?: string }) => void;
 }
 
 type InnerTab = "feed" | "risk" | "forecast" | "regions" | "sla" | "history" | "settings";
 
-export default function InsightsTab({ userRole }: InsightsTabProps) {
+export default function InsightsTab({ userRole, onShowTimeline }: InsightsTabProps) {
   const [innerTab, setInnerTab] = useState<InnerTab>("feed");
 
   // Workspace (department) selector
@@ -691,6 +692,19 @@ export default function InsightsTab({ userRole }: InsightsTabProps) {
                               onClick={() => toggleRecommendations(ins.id)}
                             >
                               {loadingRecs[ins.id] ? "…" : expandedRecs[ins.id] !== undefined ? "▲ Recs" : "▼ Recs"}
+                            </button>
+                          )}
+                          {/* Preceding events — opens timeline pre-filtered to this insight's entity */}
+                          {onShowTimeline && (
+                            <button
+                              className="btn-sm"
+                              title="Show events preceding this insight in the timeline"
+                              onClick={() => onShowTimeline("resource", {
+                                entityType: ins.entity_type,
+                                entityId: ins.entity_id,
+                              })}
+                            >
+                              ⏱ Preceding
                             </button>
                           )}
                         </div>

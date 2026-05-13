@@ -553,6 +553,8 @@ interface Props {
   onNavigate?: (tab: string, resourceId: string, resourceType: string) => void;
   /** Trigger "create snapshot" flow for a volume (opens snapshot dialog in Volumes tab). */
   onCreateSnapshot?: (volumeId: string, volumeName: string) => void;
+  /** Open the Operational Event Timeline tab pre-filtered to this resource. */
+  onShowTimeline?: (mode: "tenant" | "resource" | "global", opts?: { domainId?: string; entityType?: string; entityId?: string }) => void;
   /** When set, overlays migration status (confirmed/pending/missing) on vm and tenant nodes. */
   migrationProjectId?: number;
   /**
@@ -586,7 +588,7 @@ const NODE_TYPE_TO_API_ROOT: Record<string, GraphRootType> = {
   fip: "floating_ip",
 };
 
-export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, onNavigate, onCreateSnapshot, migrationProjectId, graphUrl, defaultDepth }: Props) {
+export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, onNavigate, onCreateSnapshot, onShowTimeline, migrationProjectId, graphUrl, defaultDepth }: Props) {
   const [depth,       setDepth]       = useState(defaultDepth ?? (rootType === "domain" ? 3 : 2));
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set(["port", "subnet"]));
   const [loading,     setLoading]     = useState(false);
@@ -1090,6 +1092,22 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
                 }}
               >
                 🔍 Explore from here
+              </button>
+            )}
+            {/* Show Timeline — opens OperationalTimelineTab for this entity */}
+            {!graphUrl && onShowTimeline && (
+              <button
+                className="graph-view-deps-btn"
+                style={{ marginTop: 6, borderColor: "#6366f1", color: "#6366f1" }}
+                onClick={() => {
+                  onShowTimeline("resource", {
+                    entityType: selectedNode.type,
+                    entityId: selectedNode.db_id,
+                  });
+                  onClose();
+                }}
+              >
+                ⏱ Show Timeline
               </button>
             )}
             {/* Suggested actions based on health score */}
