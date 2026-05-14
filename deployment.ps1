@@ -836,7 +836,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_billing_v195.sql";          Desc="Advanced Billing & Metering System v1.95.1: tenant_billing_config, prepaid_accounts, regional_pricing_overrides, webhook_registrations, resource_lifecycle_events, data_archival_log tables + billing RBAC permissions"},
     @{File="db\migrate_billing_v1954.sql";         Desc="Billing FK fix v1.95.5: drop sales_person_id FK constraint (was REFERENCES users(id), but stores LDAP uid)"},
     @{File="db\migrate_billing_v1957.sql";         Desc="Billing grant fix v1.95.7: GRANT SELECT on domains and metering_snapshots to tenant_portal_role"},
-    @{File="db\migrate_v1_95_21.sql";              Desc="Provisioning retry v1.95.21: request_payload JSONB column on provisioning_jobs"}
+    @{File="db\migrate_v1_95_21.sql";              Desc="Provisioning retry v1.95.21: request_payload JSONB column on provisioning_jobs"},
+    @{File="db\migrate_v1_99_5_sla_uptime_precision.sql"; Desc="SLA uptime precision fix v1.99.5: widen uptime_actual_pct DECIMAL(5,3) -> DECIMAL(6,3) to accommodate 100% uptime"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."
