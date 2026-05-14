@@ -187,6 +187,13 @@ def run_once(conn) -> None:
 def main():
     log.info("Intelligence Worker starting (poll interval: %ds)", POLL_INTERVAL)
     time.sleep(15)  # allow DB to be ready on cold start
+    # Touch /tmp/alive at startup so the liveness probe doesn't kill the
+    # container before the first successful cycle completes.
+    try:
+        with open("/tmp/alive", "w") as fh:
+            fh.write(str(time.time()))
+    except OSError:
+        pass
 
     while not _shutdown:
         conn = None

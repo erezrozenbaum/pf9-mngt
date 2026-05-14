@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.99.3  
+**Version**: 1.99.4  
 **Last Updated**: May 14, 2026  
 **Audience**: System administrators and platform operators
 
