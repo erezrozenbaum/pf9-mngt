@@ -331,7 +331,9 @@ class TestNetworkPolicies:
 
     Policy design follows the pattern already live on the cluster for
     pf9-tenant-portal (which was the reference implementation):
-      - DB:             ingress from api + all workers on port 5432
+      - DB:             ingress from pgbouncer + backup-worker + db-migrate on port 5432
+      - PgBouncer:      ingress from api + workers + tenant-portal on port 5432;
+                        egress to DB on port 5432 (acts as connection pooler)
       - Redis:          ingress from api + workers + tenant-portal on port 6379
       - LDAP:           ingress from api + ldap-sync-worker on port 389
       - API:            ingress from ingress-nginx on port 8000
@@ -345,6 +347,7 @@ class TestNetworkPolicies:
 
     ALL_EXPECTED = [
         "pf9-api",
+        "pf9-pgbouncer",
         "pf9-db",
         "pf9-redis",
         "pf9-ldap",
@@ -369,11 +372,14 @@ class TestNetworkPolicies:
         "pf9-search-worker", "pf9-sla-worker", "pf9-snapshot-worker",
     ]
 
-    # Components allowed to egress DB
-    DB_CONSUMERS = {
-        "api", "db-migrate", "backup-worker", "ldap-sync-worker", "metering-worker",
+    # Components with direct PostgreSQL access (bypass pgbouncer)
+    DB_DIRECT_CONSUMERS = {"pgbouncer", "backup-worker", "db-migrate"}
+
+    # Components that connect to PostgreSQL via pgbouncer
+    PGBOUNCER_CLIENTS = {
+        "api", "intelligence-worker", "ldap-sync-worker", "metering-worker",
         "notification-worker", "scheduler-worker", "search-worker",
-        "sla-worker", "snapshot-worker", "intelligence-worker", "tenant-portal",
+        "sla-worker", "snapshot-worker", "tenant-portal",
     }
 
     # Components allowed to egress Redis
@@ -464,11 +470,11 @@ class TestNetworkPolicies:
     # -- DB ingress --------------------------------------------------------
 
     @skip_no_helm
-    def test_db_policy_allows_api_ingress_on_5432(self, chart_netpol_enabled):
+    def test_db_policy_allows_pgbouncer_ingress_on_5432(self, chart_netpol_enabled):
         pol = _find(chart_netpol_enabled, "NetworkPolicy", "pf9-db")
         assert pol is not None, "pf9-db NetworkPolicy not found"
         allowed = self._ingress_allowed_components(pol, 5432)
-        assert "api" in allowed, f"pf9-db policy does not allow 'api' on port 5432 (got: {allowed})"
+        assert "pgbouncer" in allowed, f"pf9-db policy does not allow 'pgbouncer' on port 5432 (got: {allowed})"
 
     @skip_no_helm
     def test_db_policy_allows_db_migrate_ingress_on_5432(self, chart_netpol_enabled):
@@ -485,8 +491,34 @@ class TestNetworkPolicies:
         pol = _find(chart_netpol_enabled, "NetworkPolicy", "pf9-db")
         assert pol is not None, "pf9-db NetworkPolicy not found"
         allowed = self._ingress_allowed_components(pol, 5432)
-        missing = self.DB_CONSUMERS - allowed
+        missing = self.DB_DIRECT_CONSUMERS - allowed
         assert not missing, f"pf9-db policy missing ingress from: {missing}"
+
+    # -- PgBouncer ingress / egress ----------------------------------------
+
+    @skip_no_helm
+    def test_pgbouncer_policy_allows_all_app_ingress_on_5432(self, chart_netpol_enabled):
+        """All pgbouncer clients must have ingress access to pgbouncer on 5432."""
+        pol = _find(chart_netpol_enabled, "NetworkPolicy", "pf9-pgbouncer")
+        assert pol is not None, "pf9-pgbouncer NetworkPolicy not found"
+        allowed = self._ingress_allowed_components(pol, 5432)
+        missing = self.PGBOUNCER_CLIENTS - allowed
+        assert not missing, f"pf9-pgbouncer policy missing ingress from: {missing}"
+
+    @skip_no_helm
+    def test_pgbouncer_policy_egress_to_db_on_5432(self, chart_netpol_enabled):
+        """PgBouncer must have egress to the DB pod on port 5432."""
+        pol = _find(chart_netpol_enabled, "NetworkPolicy", "pf9-pgbouncer")
+        assert pol is not None, "pf9-pgbouncer NetworkPolicy not found"
+        db_egress_rules = [
+            rule for rule in pol["spec"].get("egress", [])
+            if any(p.get("port") == 5432 for p in rule.get("ports", []))
+            and any(
+                dest.get("podSelector", {}).get("matchLabels", {}).get("app.kubernetes.io/component") == "db"
+                for dest in rule.get("to", [])
+            )
+        ]
+        assert db_egress_rules, "pf9-pgbouncer policy has no egress rule to 'db' on port 5432"
 
     # -- Redis ingress -----------------------------------------------------
 

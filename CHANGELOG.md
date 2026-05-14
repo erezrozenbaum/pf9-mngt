@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.99.2] - 2026-05-14
+
+### Fixed
+- **k8s NetworkPolicy**: Added `pf9-pgbouncer` NetworkPolicy (ingress from all application clients on port 5432, egress to DB on port 5432). Previously no NetworkPolicy existed for pgbouncer, so default-deny blocked all inbound connections.
+- **k8s NetworkPolicy**: Updated API and all worker egress rules from `component: db` to `component: pgbouncer` on port 5432. The API and workers connect to PostgreSQL through pgbouncer, but the egress rules were targeting the DB pod label directly, causing connection timeouts after the pgbouncer rollout.
+- **k8s NetworkPolicy**: Updated DB ingress to allow only direct consumers (`pgbouncer`, `backup-worker`, `db-migrate`) instead of all application pods. Application pods now reach the DB exclusively through pgbouncer.
+- **k8s NetworkPolicy**: Updated `pf9-tenant-portal` NetworkPolicy egress to target `component: pgbouncer` instead of `component: db` on port 5432.
+
+---
+
 ## [1.99.1] - 2026-05-14
 
 ### Fixed
