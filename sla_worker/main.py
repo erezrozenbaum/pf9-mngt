@@ -526,6 +526,13 @@ def main():
     log.info("SLA Compliance Worker starting (poll interval: %ds)", POLL_INTERVAL)
     # Wait for DB to be ready on cold start
     time.sleep(10)
+    # Touch /tmp/alive at startup so the liveness probe doesn't kill the
+    # container before the first successful cycle completes.
+    try:
+        with open("/tmp/alive", "w") as fh:
+            fh.write(str(time.time()))
+    except OSError:
+        pass
 
     while not _shutdown:
         conn = None

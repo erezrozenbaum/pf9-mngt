@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.99.4] - 2026-05-14
+
+### Fixed
+- **intelligence-worker**: Touch `/tmp/alive` at startup (after the cold-start delay) so the Kubernetes liveness probe does not kill the container when the first cycle fails due to a transient DB/pgbouncer outage. Previously the file was only written on a successful cycle; with a 4-minute probe kill window and a 15-minute poll interval, any first-cycle failure caused a permanent liveness-kill loop.
+- **sla-worker**: Same fix — touch `/tmp/alive` at startup before the main loop begins.
+
+---
+
 ## [1.99.3] - 2026-05-14
 
 ### Fixed
