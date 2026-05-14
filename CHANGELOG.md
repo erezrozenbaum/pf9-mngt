@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.99.1] - 2026-05-14
+
+### Fixed
+- **pgbouncer k8s deployment**: Added `resources` (requests/limits) to the `generate-userlist` initContainer. The namespace `ResourceQuota` requires all containers — including initContainers — to declare CPU and memory limits, causing pgbouncer pods to fail scheduling with `FailedCreate`.
+
+---
+
 ## [1.99.0] - 2026-05-14
 
 ### Performance

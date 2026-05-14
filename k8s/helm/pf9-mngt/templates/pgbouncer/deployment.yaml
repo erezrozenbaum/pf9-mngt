@@ -46,6 +46,13 @@ spec:
           volumeMounts:
             - name: pgbouncer-userlist
               mountPath: /etc/pgbouncer
+          resources:
+            limits:
+              cpu: "50m"
+              memory: "16Mi"
+            requests:
+              cpu: "10m"
+              memory: "8Mi"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
