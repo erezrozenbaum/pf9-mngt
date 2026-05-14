@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.99.0 — PgBouncer connection pooling, tenant composite health scoring API  
+> **Version**: v1.99.1 — Hotfix: pgbouncer initContainer resource limits for namespace quota compliance  
+> Previous: v1.99.0 — PgBouncer connection pooling, tenant composite health scoring API  
 > Previous: v1.98.0 — Fernet rotation CLI, billing webhook CRUD + SSRF guard, append-only audit triggers, Redis AOF persistence, Linux deployment scripts  
 > Previous: v1.95.23 — Provisioning: virtual network creation via service-account scope fix (Neutron 400/403), `create_network()` unwrap fix (subnet 400), provisioning retry endpoint + UI
 
