@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.99.3] - 2026-05-14
+
+### Fixed
+- **pgbouncer k8s config**: Changed backend hostname in pgbouncer.ini from the short name `pf9-db` to the FQDN `pf9-db.<namespace>.svc.cluster.local`. pgbouncer uses the c-ares async DNS library which does not traverse Kubernetes search domains reliably for headless Services (DNS returned 0 addresses). The FQDN is resolved directly without search domain expansion, eliminating the recurring `DNS lookup failed: pf9-db: result=0` errors and the resulting connection failures for all application services. The FQDN is rendered at deploy time via Helm template so no namespace is hardcoded.
+
+---
+
 ## [1.99.2] - 2026-05-14
 
 ### Fixed

@@ -15,7 +15,7 @@ data:
     ; ---------------------------------------------------------------------------
 
     [databases]
-    * = host={{ .Values.db.host }} port={{ .Values.db.port }}
+    * = host={{ .Values.db.host }}.{{ include "pf9mngt.namespace" . }}.svc.cluster.local port={{ .Values.db.port }}
 
     [pgbouncer]
     listen_addr         = 0.0.0.0
