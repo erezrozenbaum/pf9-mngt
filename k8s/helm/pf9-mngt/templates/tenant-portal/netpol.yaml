@@ -35,12 +35,12 @@ spec:
           protocol: TCP
 
   egress:
-    # PostgreSQL
+    # PostgreSQL (via PgBouncer)
     - to:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP

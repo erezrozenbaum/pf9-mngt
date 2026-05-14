@@ -88,12 +88,12 @@ spec:
           protocol: TCP
 
   egress:
-    # PostgreSQL
+    # PostgreSQL (via PgBouncer)
     - to:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP
@@ -173,7 +173,7 @@ spec:
     - Egress
 
   ingress:
-    {{- $dbClients := list "api" "db-migrate" "backup-worker" "intelligence-worker" "ldap-sync-worker" "metering-worker" "notification-worker" "scheduler-worker" "search-worker" "sla-worker" "snapshot-worker" "tenant-portal" }}
+    {{- $dbClients := list "pgbouncer" "db-migrate" "backup-worker" }}
     {{- range $dbClients }}
     - from:
         - podSelector:
@@ -187,6 +187,61 @@ spec:
 
   egress:
     # DNS only (postgres doesn't initiate outbound connections)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+# ---------------------------------------------------------------------------
+# PgBouncer (connection pooler)
+# ---------------------------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-pgbouncer
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgbouncer
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pgbouncer
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    {{- $pgbouncerClients := list "api" "intelligence-worker" "ldap-sync-worker" "metering-worker" "notification-worker" "scheduler-worker" "search-worker" "sla-worker" "snapshot-worker" "tenant-portal" }}
+    {{- range $pgbouncerClients }}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: {{ . }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+
+  egress:
+    # PgBouncer proxies connections to PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+    # DNS
     - to:
         - namespaceSelector:
             matchLabels:
@@ -578,7 +633,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP
@@ -634,7 +689,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP
@@ -688,7 +743,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP
@@ -758,7 +813,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP
@@ -813,7 +868,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP
@@ -885,7 +940,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP
@@ -935,7 +990,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP
@@ -985,7 +1040,7 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: db
+              app.kubernetes.io/component: pgbouncer
       ports:
         - port: 5432
           protocol: TCP
