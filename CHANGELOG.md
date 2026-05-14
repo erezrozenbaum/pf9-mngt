@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.98.0] - 2026-05-14
+
+### Security
+- **Fernet key rotation utility** (`rotate_fernet_key.py`): CLI tool to re-encrypt all Fernet-protected database columns (copilot config, PSA integration headers, LDAP bind passwords, SMTP passwords, VM provisioning passwords) when a secret needs to be rotated. Supports `--dry-run` mode and writes an audit log entry on commit.
+- **Billing webhook SSRF protection**: New webhook registration endpoint (`POST /api/billing/webhook`) enforces an SSRF guard that resolves the target hostname and rejects requests that resolve to RFC-1918, loopback, link-local, or other reserved ranges. Prevents server-side request forgery via maliciously crafted webhook URLs.
+- **Append-only audit logs via Row-Level Security**: `auth_audit_log` and `tenant_action_log` now have PostgreSQL Row-Level Security policies (`no_delete_*`, `no_update_*`) that block DELETE and UPDATE operations for all roles, making the audit trail tamper-resistant at the database layer. Applied via `migrate_v1_98_0_audit_append_only.sql`.
+
+### Performance
+- **Redis AOF persistence**: Redis is now configured with `--appendonly yes --appendfsync everysec` in both Docker Compose and Kubernetes Helm. AOF provides crash recovery for session/pubsub data with at most 1-second data loss. A named Docker volume (`pf9_redis_data`) persists AOF state across container restarts.
+
+### Added
+- **Billing webhook management API**: Three new endpoints — `POST /api/billing/webhook` (register), `GET /api/billing/webhooks` (list, optionally filtered by tenant), `DELETE /api/billing/webhook/{id}` (delete). Table `billing_webhooks` created via `migrate_v1_98_0_billing_webhooks.sql`.
+- **Linux/macOS deployment scripts**: Bash equivalents of all three PowerShell deployment scripts — `startup.sh`, `startup_prod.sh`, and `deployment.sh`. Behaviour is identical to the Windows variants: environment validation, NFS pre-flight, Docker Compose lifecycle, health checks, and cron setup (replacing Windows Scheduled Tasks). Shell scripts enforce LF line endings via `.gitattributes`.
+
+---
+
 ## [1.97.0] - 2026-05-16
 
 ### Security

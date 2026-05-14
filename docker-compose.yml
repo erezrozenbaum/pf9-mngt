@@ -655,11 +655,13 @@ services:
     command: >
       sh -c '
         if [ -n "$$REDIS_PASSWORD" ]; then
-          exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+          exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 128mb --maxmemory-policy allkeys-lru --save "" --appendonly yes --appendfsync everysec
         else
-          exec redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+          exec redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save "" --appendonly yes --appendfsync everysec
         fi
       '
+    volumes:
+      - pf9_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "--no-auth-warning", "ping"]
       interval: 30s
@@ -925,6 +927,7 @@ volumes:
   ldap_data:
   ldap_config:
   app_logs:
+  pf9_redis_data:
   # NFS-backed backup volume — only created when COMPOSE_PROFILES=backup
   # Requires NFS_BACKUP_SERVER and NFS_BACKUP_DEVICE to be set in .env
   nfs_backups:

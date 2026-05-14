@@ -1,6 +1,7 @@
 #!/usr/bin/env powershell
 # PF9 Management Portal Complete Startup Script
 # This script sets up automatic metrics collection and starts all services
+# Linux/macOS equivalent: startup.sh
 
 param(
     [switch]$StopOnly

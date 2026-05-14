@@ -1,7 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.95.23 — Provisioning: virtual network creation via service-account scope fix (Neutron 400/403), `create_network()` unwrap fix (subnet 400), provisioning retry endpoint + UI  
-> Previous: v1.95.17 — Fleet metering rolling-window API mode, partial-month cost projection, period button strip
+> **Version**: v1.98.0 — Fernet rotation CLI, billing webhook CRUD + SSRF guard, append-only audit triggers, Redis AOF persistence, Linux deployment scripts  
+> Previous: v1.95.23 — Provisioning: virtual network creation via service-account scope fix (Neutron 400/403), `create_network()` unwrap fix (subnet 400), provisioning retry endpoint + UI
 
 ## Base URL
 ```
@@ -715,6 +715,49 @@ Monitors billing event webhook delivery status and history.
   ]
 }
 ```
+
+---
+
+### Billing Webhook Registration (v1.98.0)
+
+**POST** `/api/billing/webhook` (`billing:write`)  
+Register an outbound webhook URL for billing events. The `webhook_url` is SSRF-validated on submission — URLs resolving to private/loopback/link-local/RFC-6598 ranges are rejected with `422`.
+
+**Request body:**
+```json
+{
+  "tenant_id": "t-abc123",
+  "webhook_url": "https://hooks.example.com/billing",
+  "event_types": ["billing_threshold", "billing_config_created"],
+  "secret_token": "optional-hmac-signing-secret"
+}
+```
+
+**Response** `201 Created`:
+```json
+{
+  "id": "uuid",
+  "tenant_id": "t-abc123",
+  "webhook_url": "https://hooks.example.com/billing",
+  "event_types": ["billing_threshold", "billing_config_created"],
+  "is_active": true,
+  "failure_count": 0,
+  "created_at": "2026-05-14T09:00:00Z"
+}
+```
+
+**GET** `/api/billing/webhooks` (`billing:read`)  
+List all registered billing webhooks. Optionally filter by tenant.
+
+**Query parameters:**
+- `tenant_id` (optional): Restrict results to one tenant
+
+**Response** `200 OK`: array of webhook objects (same schema as POST response).
+
+**DELETE** `/api/billing/webhook/{webhook_id}` (`billing:write`)  
+Delete a registered webhook by ID.
+
+**Response** `204 No Content` on success. `404` if the webhook does not exist.
 
 ---
 

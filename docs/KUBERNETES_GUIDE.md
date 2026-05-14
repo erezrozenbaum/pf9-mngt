@@ -498,7 +498,7 @@ It uses the API container image to execute `run_migration.py`, which:
 4. Skips files already recorded in `schema_migrations` table (idempotent — safe to re-run)
 5. Applies each new file and records it in `schema_migrations`
 
-There are currently **~55 migration files**, all applied in alphabetical order.
+There are currently **~57 migration files** (including v1.98.0: `migrate_v1_98_0_billing_webhooks.sql` and `migrate_v1_98_0_audit_append_only.sql`), all applied in alphabetical order.
 
 ### Watching the migration run
 

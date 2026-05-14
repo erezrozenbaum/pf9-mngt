@@ -1,7 +1,7 @@
 # Platform9 Management System — Linux Deployment Guide
 
-**Version**: 1.1  
-**Date**: March 2026  
+**Version**: 1.2  
+**Date**: May 2026  
 **Status**: Production-Ready  
 **Scope**: Running pf9-mngt on Linux (Ubuntu/Debian, RHEL/CentOS, or any Docker-capable distribution)
 
@@ -30,12 +30,20 @@ This guide covers what you need to change — and what you don't — when deploy
 
 | Windows Component | Linux Equivalent | Effort |
 |-------------------|------------------|--------|
-| `deployment.ps1` (993 lines) | Manual setup or `startup.sh` (below) | Medium |
-| `startup.ps1` (262 lines) | `startup.sh` (below) | Low |
+| `deployment.ps1` (993 lines) | **`deployment.sh`** (ships in repo root, v1.98.0+) | None |
+| `startup.ps1` (262 lines) | **`startup.sh`** (ships in repo root, v1.98.0+) | None |
+| `startup_prod.ps1` | **`startup_prod.sh`** (ships in repo root, v1.98.0+) | None |
 | `fix_monitoring.ps1` (57 lines) | One cron entry | Trivial |
 | `setup_ldap.ps1` (206 lines) | `ldap/setup.sh` already exists | None |
 | `release.ps1` (166 lines) | Git commands (shell-agnostic) | Trivial |
 | Windows Task Scheduler tasks | cron entries (below) | Low |
+
+> **v1.98.0+**: `startup.sh`, `startup_prod.sh`, and `deployment.sh` now ship directly in the repository root. Make them executable before first use:
+> ```bash
+> chmod +x startup.sh startup_prod.sh deployment.sh
+> ./startup.sh          # start all services with health check
+> ./deployment.sh       # full first-time deployment wizard
+> ```
 
 ---
 
@@ -411,8 +419,9 @@ sudo systemctl status pf9-mngt
 
 | Area | Windows | Linux |
 |------|---------|-------|
-| **Deployment wizard** | `deployment.ps1` (interactive PowerShell) | Manual setup (steps above) or `startup.sh` |
-| **Startup** | `startup.ps1` | `startup.sh` (above) or `docker compose up -d` |
+| **Deployment wizard** | `deployment.ps1` (interactive PowerShell) | `deployment.sh` (ships in repo root) |
+| **Startup** | `startup.ps1` | `startup.sh` (ships in repo root) or `docker compose up -d` |
+| **Production startup** | `startup_prod.ps1` | `startup_prod.sh` (ships in repo root) |
 | **Scheduled metrics** | Task Scheduler (every 30 min) | cron (every 30 min) |
 | **Scheduled inventory** | Task Scheduler (daily 2 AM) | cron (daily 2 AM) |
 | **Monitoring fix** | `fix_monitoring.ps1` | `python3 host_metrics_collector.py --once` + verify cron |

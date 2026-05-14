@@ -1139,6 +1139,54 @@ CREATE TABLE IF NOT EXISTS operational_events (
 
 **Retention**: `TIMELINE_RETENTION_DAYS` env var (default 180). Pruning runs in `intelligence_worker` after each harvest cycle.
 
+---
+
+## billing_webhooks
+
+Stores outbound billing webhook registrations per tenant (v1.98.0).
+
+```sql
+CREATE TABLE billing_webhooks (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       TEXT NOT NULL,
+    webhook_url     TEXT NOT NULL,         -- SSRF-validated on insert
+    event_types     JSONB NOT NULL DEFAULT '[]',
+    secret_token    TEXT,                  -- optional HMAC signing secret
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    last_success    TIMESTAMPTZ,
+    failure_count   INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**Indexes**:
+- `idx_billing_webhooks_tenant_id` — `(tenant_id)` — list by tenant
+- `idx_billing_webhooks_active` — partial `(tenant_id) WHERE is_active = TRUE` — active delivery queue queries
+
+**SSRF protection**: `webhook_url` is validated at write time by `api/billing_routes.py` `_assert_webhook_url_allowed()` — resolves all IP addresses of the hostname and rejects any that fall inside RFC-1918, loopback, link-local, or RFC-6598 ranges.
+
+---
+
+## Audit Log Triggers (v1.98.0)
+
+`auth_audit_log` and `tenant_action_log` are protected by `BEFORE DELETE` and `BEFORE UPDATE` triggers that raise:
+
+```
+ERROR: Audit log is append-only: DELETE on auth_audit_log is not permitted
+```
+
+The shared trigger function `fn_audit_log_append_only()` is called by four triggers:
+
+| Trigger | Table | Operation |
+|---------|-------|-----------|
+| `trg_auth_audit_no_delete` | `auth_audit_log` | DELETE |
+| `trg_auth_audit_no_update` | `auth_audit_log` | UPDATE |
+| `trg_tenant_action_no_delete` | `tenant_action_log` | DELETE |
+| `trg_tenant_action_no_update` | `tenant_action_log` | UPDATE |
+
+These triggers apply to **all roles including superusers**, providing database-layer enforcement independent of the application.
+
 **Write pattern**: `TimelineHarvester` bulk-inserts with `ON CONFLICT (source, source_id) DO NOTHING` for idempotency.
 
 **Read pattern**: `GET /api/timeline` with filters `entity_type`, `entity_id`, `domain_id`, `region_id`, `from`, `to`, `category`, `severity`, `limit`, `offset`. `get_effective_region_filter()` enforced on all queries.

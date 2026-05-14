@@ -46,9 +46,9 @@ spec:
           args:
             - >-
               if [ -n "$REDIS_PASSWORD" ]; then
-                exec redis-server --requirepass "$REDIS_PASSWORD" --maxmemory {{ .Values.redisService.maxmemory | quote }} --maxmemory-policy allkeys-lru --save "";
+                exec redis-server --requirepass "$REDIS_PASSWORD" --maxmemory {{ .Values.redisService.maxmemory | quote }} --maxmemory-policy allkeys-lru --save "" --appendonly yes --appendfsync everysec;
               else
-                exec redis-server --maxmemory {{ .Values.redisService.maxmemory | quote }} --maxmemory-policy allkeys-lru --save "";
+                exec redis-server --maxmemory {{ .Values.redisService.maxmemory | quote }} --maxmemory-policy allkeys-lru --save "" --appendonly yes --appendfsync everysec;
               fi
           ports:
             - containerPort: 6379
@@ -72,6 +72,10 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: redis-data
+              mountPath: /data
       volumes:
         - name: tmp
+          emptyDir: {}
+        - name: redis-data
           emptyDir: {}
