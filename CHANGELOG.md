@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.99.5] - 2026-05-14
+
+### Fixed
+- **SLA worker**: `sla_compliance_monthly.uptime_actual_pct` was defined as `DECIMAL(5,3)`, which overflows when uptime is exactly 100% (active\_servers == total\_servers). Changed to `DECIMAL(6,3)`. Migration `migrate_v1_99_5_sla_uptime_precision.sql` ALTERs the live column. Affected tenants were silently skipped each cycle — their monthly SLA records were never written.
+
+---
+
 ## [1.99.4] - 2026-05-14
 
 ### Fixed

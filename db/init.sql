@@ -3878,7 +3878,7 @@ CREATE TABLE IF NOT EXISTS sla_compliance_monthly (
     tenant_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     month                DATE NOT NULL,
     region_id            TEXT NOT NULL DEFAULT '',
-    uptime_actual_pct    DECIMAL(5,3),
+    uptime_actual_pct    DECIMAL(6,3),
     rto_worst_hours      DECIMAL(6,2),
     rpo_worst_hours      DECIMAL(6,2),
     mtta_avg_hours       DECIMAL(6,2),
