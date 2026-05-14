@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.97.0] - 2026-05-16
+
+### Security
+- **Encrypt Copilot LLM API keys at rest**: API keys stored in `copilot_config` are now encrypted using Fernet (AES-128-CBC) derived from the existing JWT secret. Legacy plaintext values are transparently migrated on next config save. A one-shot backfill utility (`migrate_copilot_keys.py`) is provided for environments that need immediate encryption of existing rows without a config update.
+
+### Performance
+- **GIN indexes on raw inventory JSONB columns**: Eight new indexes (`idx_servers_raw_json`, `idx_hypervisors_raw_json`, `idx_volumes_raw_json`, and five expression indexes on frequently filtered fields) dramatically reduce query time for JSONB `@>` and `->>` filter operations on the three largest inventory tables.
+
+### Added
+- **Automatic history table archival**: The scheduler worker now prunes rows older than `HISTORY_RETENTION_DAYS` (default 90 days) from all inventory history and operational log tables daily. Pruned row counts are recorded in `data_archival_log`. Set `HISTORY_RETENTION_DAYS=0` to disable. Security audit logs (`auth_audit_log`, `tenant_action_log`, `activity_log`) are excluded from automatic deletion.
+
+---
+
 ## [1.96.9] - 2026-05-14
 
 ### Fixed

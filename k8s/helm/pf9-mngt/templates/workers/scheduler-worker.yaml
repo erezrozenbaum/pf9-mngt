@@ -90,6 +90,8 @@ spec:
               value: {{ .Values.workers.schedulerWorker.rvtoolsRunOnStart | quote }}
             - name: RVTOOLS_RETENTION_DAYS
               value: {{ .Values.workers.schedulerWorker.rvtoolsRetentionDays | quote }}
+            - name: HISTORY_RETENTION_DAYS
+              value: {{ .Values.workers.schedulerWorker.historyRetentionDays | quote }}
             - name: DEMO_MODE
               value: {{ .Values.api.demoMode | quote }}
             - name: MAX_PARALLEL_REGIONS

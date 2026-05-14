@@ -5125,7 +5125,7 @@ def _engine_cluster_capacity_planner(params: dict, dry_run: bool, actor: str) ->
                 "min_ram_gb": rec_ram_gb,
                 "note":       f"Minimum spec to extend runway by 6 months at current growth rate",
             } if (rec_vcpus or rec_ram_gb) else None,
-            "flavor_vm_slots": flavor_slots,
+            **( {"flavor_vm_slots": flavor_slots} if include_flavors else {} ),
             "per_host_breakdown": host_stats,
             "trend": trend_rows,
         },
