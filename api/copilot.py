@@ -26,6 +26,32 @@ from db_pool import get_connection
 from copilot_intents import match_intent, get_suggestion_chips, _extract_scope
 from copilot_context import build_infra_context
 from copilot_llm import ask_llm, test_ollama, test_openai, test_anthropic
+from crypto_helper import fernet_encrypt, fernet_decrypt
+
+# Fernet key used to encrypt LLM API keys at rest.
+# Derived from JWT_SECRET_KEY via SHA-256 — same secret every deployment already has.
+_COPILOT_SECRET_NAME = "jwt_secret"
+_COPILOT_SECRET_ENV  = "JWT_SECRET_KEY"
+
+
+def _encrypt_llm_key(plaintext: str) -> str:
+    """Encrypt an LLM API key for storage. Returns 'fernet:...' ciphertext."""
+    if not plaintext:
+        return ""
+    return fernet_encrypt(plaintext, secret_name=_COPILOT_SECRET_NAME,
+                          env_var=_COPILOT_SECRET_ENV)
+
+
+def _decrypt_llm_key(stored: str) -> str:
+    """Decrypt a stored LLM API key.  Handles legacy plaintext transparently."""
+    if not stored:
+        return ""
+    if stored.startswith("fernet:"):
+        return fernet_decrypt(stored, secret_name=_COPILOT_SECRET_NAME,
+                              env_var=_COPILOT_SECRET_ENV,
+                              context="copilot_config")
+    # Legacy plaintext — return as-is; will be encrypted on next config update.
+    return stored
 
 logger = logging.getLogger("copilot")
 
@@ -105,7 +131,11 @@ def _get_config() -> dict:
             cur.execute("SELECT * FROM copilot_config WHERE id = 1")
             row = cur.fetchone()
             if row:
-                return dict(row)
+                cfg = dict(row)
+                # Decrypt LLM API keys at runtime — never exposed as ciphertext to callers.
+                cfg["openai_api_key"]    = _decrypt_llm_key(cfg.get("openai_api_key",    ""))
+                cfg["anthropic_api_key"] = _decrypt_llm_key(cfg.get("anthropic_api_key", ""))
+                return cfg
     except Exception:
         logger.debug("copilot_config table not available yet, using env defaults")
 
@@ -359,8 +389,8 @@ async def history(request: Request, limit: int = 50):
 @router.get("/config")
 async def get_config(request: Request):
     """Return current copilot configuration (admin-only, keys masked)."""
-    cfg = _get_config()
-    # Mask API keys for display
+    cfg = _get_config()   # keys already decrypted by _get_config()
+    # Mask API keys for display — never return plaintext to the UI.
     safe = dict(cfg)
     for k in ("openai_api_key", "anthropic_api_key"):
         v = safe.get(k, "")
@@ -391,11 +421,11 @@ async def update_config(body: ConfigUpdate, request: Request):
     if body.ollama_model is not None:
         updates["ollama_model"] = body.ollama_model
     if body.openai_api_key is not None:
-        updates["openai_api_key"] = body.openai_api_key
+        updates["openai_api_key"] = _encrypt_llm_key(body.openai_api_key)
     if body.openai_model is not None:
         updates["openai_model"] = body.openai_model
     if body.anthropic_api_key is not None:
-        updates["anthropic_api_key"] = body.anthropic_api_key
+        updates["anthropic_api_key"] = _encrypt_llm_key(body.anthropic_api_key)
     if body.anthropic_model is not None:
         updates["anthropic_model"] = body.anthropic_model
     if body.redact_sensitive is not None:

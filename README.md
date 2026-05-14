@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-1.96.9-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-1.97.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -212,6 +212,7 @@ helm install pf9-mngt pf9-mngt/pf9-mngt \
 |----------|---------|
 | [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) | Step-by-step setup instructions |
 | [Admin Guide](docs/ADMIN_GUIDE.md) | Day-to-day administration |
+| [Migration Planner Guide](docs/MIGRATION_PLANNER_GUIDE.md) | VMware → PCD migration planning, provisioning & handoff |
 | [Architecture](docs/ARCHITECTURE.md) | System design & data model |
 | [Kubernetes Guide](docs/KUBERNETES_GUIDE.md) | Helm charts & production deployment |
 | [Features Reference](docs/FEATURES_REFERENCE.md) | Complete technical deep-dive |
@@ -282,6 +283,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 
 ---
 ## 🆕 Recent Highlights
+- **v1.97.0** — Security: encrypt Copilot LLM API keys at rest (Fernet/AES); Performance: GIN indexes on inventory JSONB columns; Maintenance: automatic history table archival with configurable retention (May 2026)
 - **v1.96.9** — Multi-bug fix: tenant portal data isolation (security), intelligence event domain resolution, snapshot harvest, auto-ticket creation, entity name display in tenant portal (May 2026)
 - **v1.96.8** — Bugfix: `occurred_at` column name in all Copilot timeline intents + context injector; new `OPERATIONAL_TIMELINE_GUIDE.md`; timeline sections added to `ADMIN_GUIDE.md` and `API_REFERENCE.md` (May 2026)
 - **v1.96.7** — Copilot: 3 new timeline intents (`timeline_what_changed`, `timeline_tenant`, `timeline_recent_hours`), context injection of recent operational events into LLM system prompt, new "Event Timeline" suggestion chip category (May 2026)

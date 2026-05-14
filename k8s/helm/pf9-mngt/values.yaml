@@ -479,6 +479,7 @@ workers:
     rvtoolsScheduleTime: "03:00"
     rvtoolsRunOnStart: "true"
     rvtoolsRetentionDays: "30"
+    historyRetentionDays: "90"
     resources:
       limits:
         cpu: "1000m"

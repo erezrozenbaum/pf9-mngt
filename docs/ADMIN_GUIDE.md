@@ -324,20 +324,33 @@ openstack volume set \
 
 ## 7. Migration Planner Operations
 
-The Migration Planner is a multi-stage workflow. See [MIGRATION_PLANNER_GUIDE.md](MIGRATION_PLANNER_GUIDE.md) for the full operational guide.
+The Migration Planner is a complete VMware → PCD migration planning system. See **[MIGRATION_PLANNER_GUIDE.md](MIGRATION_PLANNER_GUIDE.md)** for the full operational guide including all phases, configuration, troubleshooting, and API reference.
 
 **High-level stages:**
 
-| Stage | UI Location | Notes |
-|-------|-------------|-------|
-| RVTools ingestion | Migration → Upload | Upload `.xlsx` from VMware RVTools |
-| VM assessment | Migration → VMs | Risk scoring, OS classification |
-| Tenant scoping | Migration → Tenants | Mark in-scope tenants |
-| Target mapping | Migration → Network Map | Map source networks to PCD |
-| Cohort planning | Migration → Cohorts | Group VMs into ordered workstreams |
-| Wave planning | Migration → Waves | Build execution waves per cohort |
-| PCD preparation | Migration → Prepare PCD | Auto-provision domains, projects, networks |
-| Wave execution | Migration → Waves → Execute | Forward to vJailbreak agent |
+| Stage | UI Location | Guide Section |
+|-------|-------------|---------------|
+| RVTools ingestion | Migration → Setup → Upload | §5.3 |
+| VM assessment & risk scoring | Migration → Source Analysis → VMs | §5.5–§5.8 |
+| Tenant detection & scoping | Migration → Tenants | §5.4, §6.1 |
+| Target mapping (source → PCD) | Migration → Tenants | §6.2 |
+| Overcommit / quota / node sizing | Migration → Capacity | §6.3–§6.4 |
+| PCD gap analysis | Migration → PCD Readiness | §6.5 |
+| Network map & subnet details | Migration → Network Map | §6.6, §10.1 |
+| Cohort planning & auto-assign | Migration → Cohorts | §7.5, §8 |
+| Wave planning & approvals | Migration → Wave Planner | §9 |
+| Flavor staging, images, users | Migration → PCD Readiness / Users | §10 |
+| PCD auto-provisioning | Migration → Prepare PCD | §11 |
+| vJailbreak handoff & CRD push | Migration → Prepare PCD / vJailbreak Push | §12 |
+| Migration summary & fix time | Migration → Summary | §13 |
+
+**RBAC quick reference:**
+
+| Permission | Roles |
+|------------|-------|
+| `migration:read` | Viewer, Operator, Technical, Admin, Superadmin |
+| `migration:write` | Technical, Admin, Superadmin |
+| `migration:admin` (approvals, delete) | Admin, Superadmin |
 
 ---
 
@@ -867,6 +880,9 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **SSH + virsh fallback for VM metrics** — When `PF9_SSH_KEY_FILE` is configured, monitoring can collect VM metrics via `virsh domstats` over SSH as a fallback path. Set `PF9_SSH_USER` and `PF9_SSH_KEY_FILE` env vars and mount the key into the monitoring pod.
 - **Restore job deletion** — `DELETE /restore/jobs/{job_id}` allows permanently removing non-active job records. A ✕ Clear button appears per row in the Restore Audit table for PLANNED, FAILED, INTERRUPTED, CANCELED, and SUCCEEDED jobs.
 - **Stale restore job auto-timeout** — The scheduler marks PLANNED jobs older than 2 hours (`RESTORE_PLANNED_TIMEOUT_H`, default 2) and RUNNING/PENDING jobs older than 6 hours (`RESTORE_RUNNING_TIMEOUT_H`, default 6) as FAILED. Prevents orphaned jobs from remaining stuck indefinitely.
+- **Copilot LLM API key encryption** — API keys configured in the Ops Copilot settings panel are now stored encrypted at rest (Fernet / AES-128-CBC) using a key derived from `JWT_SECRET_KEY`. Existing plaintext values are transparently migrated on the next config save. Use `migrate_copilot_keys.py --dry-run` to preview, then `migrate_copilot_keys.py` to encrypt existing keys without a config re-save.
+- **GIN indexes on inventory JSONB columns** — Eight new indexes on `servers`, `hypervisors`, and `volumes` raw_json columns reduce JSONB filter query times for heavy dashboards and runbook operations. Applied via `db/migrate_gin_indexes.sql`.
+- **Automatic history table archival** — The scheduler worker daily prunes rows older than `HISTORY_RETENTION_DAYS` (default 90) from all inventory `_history` and operational log tables. Set `HISTORY_RETENTION_DAYS=0` to disable. Pruned counts are recorded to `data_archival_log`. Security audit logs (`auth_audit_log`, `tenant_action_log`, `activity_log`) are **never** auto-deleted.
 - **Metering overview VM count accuracy** — `GET /metering/overview` now counts active VMs from the `servers` table (`status NOT IN ('DELETED','SOFT_DELETED')`) instead of historical `metering_resources` records, which inflated the count with deleted VMs.
 - **Docs tab syntax highlighting** — Code blocks in the in-app documentation viewer are now syntax-highlighted using `highlight.js` with the `github-dark` theme via the `marked-highlight` extension.
 

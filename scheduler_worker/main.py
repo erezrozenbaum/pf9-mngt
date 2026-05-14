@@ -78,6 +78,7 @@ RVTOOLS_INTERVAL_MINUTES = int(os.getenv("RVTOOLS_INTERVAL_MINUTES", "0"))  # 0 
 RVTOOLS_SCHEDULE_TIME = os.getenv("RVTOOLS_SCHEDULE_TIME", "03:00")         # HH:MM UTC, used when interval=0
 RVTOOLS_RUN_ON_START = os.getenv("RVTOOLS_RUN_ON_START", "false").lower() in ("true", "1", "yes")
 RVTOOLS_RETENTION_DAYS = int(os.getenv("RVTOOLS_RETENTION_DAYS", "30"))      # xlsx files older than this are deleted
+HISTORY_RETENTION_DAYS = int(os.getenv("HISTORY_RETENTION_DAYS", "90"))       # _history + operational log rows older than this are deleted
 
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in ("true", "1", "yes")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -566,6 +567,97 @@ def _cleanup_expired_tokens() -> None:
         log.warning("Maintenance: failed to purge expired tokens: %s", exc)
 
 
+def _archive_history_tables() -> None:
+    """Delete rows older than HISTORY_RETENTION_DAYS from history and operational
+    log tables, then write a summary row to data_archival_log.
+
+    Security audit logs (auth_audit_log, tenant_action_log, activity_log) are
+    intentionally excluded — those are governed by S4 (append-only policy +
+    external shipping) and must NOT be auto-deleted.
+
+    Runs daily as part of the RVTools maintenance cycle.
+    """
+    if HISTORY_RETENTION_DAYS <= 0:
+        log.info("History archival: disabled (HISTORY_RETENTION_DAYS=0)")
+        return
+
+    # (table_name, timestamp_column)
+    TARGETS = [
+        # Inventory history tables
+        ("servers_history",              "recorded_at"),
+        ("hypervisors_history",           "recorded_at"),
+        ("volumes_history",               "recorded_at"),
+        ("snapshots_history",             "recorded_at"),
+        ("networks_history",              "recorded_at"),
+        ("subnets_history",               "recorded_at"),
+        ("ports_history",                 "recorded_at"),
+        ("floating_ips_history",          "recorded_at"),
+        ("security_groups_history",       "recorded_at"),
+        ("security_group_rules_history",  "recorded_at"),
+        ("routers_history",               "recorded_at"),
+        ("images_history",                "recorded_at"),
+        ("flavors_history",               "recorded_at"),
+        ("domains_history",               "recorded_at"),
+        ("projects_history",              "recorded_at"),
+        ("users_history",                 "recorded_at"),
+        ("roles_history",                 "recorded_at"),
+        # Operational / worker log tables (not security audit)
+        ("notification_log",              "created_at"),
+        ("copilot_history",               "created_at"),
+        ("ldap_sync_log",                 "started_at"),
+    ]
+
+    try:
+        conn = _get_db_conn_with_cb()
+    except Exception as exc:
+        log.warning("History archival: DB unavailable, skipping — %s", exc)
+        return
+
+    total_deleted = 0
+    try:
+        with conn.cursor() as cur:
+            for table, ts_col in TARGETS:
+                try:
+                    cur.execute(
+                        f"DELETE FROM {table} WHERE {ts_col} < NOW() - INTERVAL '%s days'",  # noqa: S608
+                        (HISTORY_RETENTION_DAYS,),
+                    )
+                    deleted = cur.rowcount
+                    if deleted:
+                        log.info(
+                            "History archival: deleted %d row(s) from %s (older than %d days)",
+                            deleted, table, HISTORY_RETENTION_DAYS,
+                        )
+                        # Write archival record
+                        cur.execute(
+                            """
+                            INSERT INTO data_archival_log
+                                (table_name, archive_date, records_archived, archive_location)
+                            VALUES (%s, CURRENT_DATE, %s, 'deleted')
+                            """,
+                            (table, deleted),
+                        )
+                        total_deleted += deleted
+                except Exception as tbl_exc:
+                    log.warning("History archival: error on %s — %s", table, tbl_exc)
+                    conn.rollback()
+        conn.commit()
+        if total_deleted:
+            log.info("History archival: total %d row(s) pruned across %d tables",
+                     total_deleted, len(TARGETS))
+        else:
+            log.info("History archival: nothing to prune (all tables within %d-day window)",
+                     HISTORY_RETENTION_DAYS)
+    except Exception as exc:
+        log.warning("History archival: unexpected error — %s", exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+
 def _timeout_stale_restore_jobs() -> None:
     """Auto-fail restore jobs that have been stuck in PLANNED or RUNNING too long.
 
@@ -646,6 +738,8 @@ async def _run_rvtools_for_all_regions(
     await loop.run_in_executor(executor, _timeout_stale_restore_jobs)
     # Capture daily health snapshot for dashboard sparklines
     await loop.run_in_executor(executor, _snapshot_health_daily)
+    # Trim unbounded history / operational log tables
+    await loop.run_in_executor(executor, _archive_history_tables)
 
 
 # ---------------------------------------------------------------------------
