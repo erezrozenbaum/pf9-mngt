@@ -48,6 +48,7 @@ spec:
               mountPath: /etc/pgbouncer
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -57,6 +58,7 @@ spec:
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -69,6 +71,8 @@ spec:
               readOnly: true
             - name: pgbouncer-userlist
               mountPath: /etc/pgbouncer
+            - name: tmp
+              mountPath: /tmp
           ports:
             - name: pgbouncer
               containerPort: 5432
@@ -98,4 +102,6 @@ spec:
             name: pf9-pgbouncer-config
             defaultMode: 0444
         - name: pgbouncer-userlist
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
