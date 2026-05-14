@@ -131,6 +131,9 @@ from qbr_routes import router as qbr_router
 # PSA Webhook Configuration
 from psa_routes import router as psa_router
 
+# Tenant Health Score
+from tenant_health_routes import router as tenant_health_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -420,6 +423,7 @@ app.include_router(intelligence_router)
 app.include_router(timeline_router)
 app.include_router(qbr_router)
 app.include_router(psa_router)
+app.include_router(tenant_health_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode
 @app.get("/demo-mode")

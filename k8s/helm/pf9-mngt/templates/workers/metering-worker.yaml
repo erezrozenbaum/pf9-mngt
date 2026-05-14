@@ -36,9 +36,9 @@ spec:
             readOnlyRootFilesystem: true
           env:
             - name: DB_HOST
-              value: {{ .Values.db.host | quote }}
+              value: {{ .Values.pgbouncer.host | quote }}
             - name: DB_PORT
-              value: {{ .Values.db.port | quote }}
+              value: {{ .Values.pgbouncer.port | quote }}
             - name: DB_NAME
               value: {{ .Values.db.name | quote }}
             - name: DB_USER

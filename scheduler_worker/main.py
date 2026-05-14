@@ -80,6 +80,8 @@ RVTOOLS_RUN_ON_START = os.getenv("RVTOOLS_RUN_ON_START", "false").lower() in ("t
 RVTOOLS_RETENTION_DAYS = int(os.getenv("RVTOOLS_RETENTION_DAYS", "30"))      # xlsx files older than this are deleted
 HISTORY_RETENTION_DAYS = int(os.getenv("HISTORY_RETENTION_DAYS", "90"))       # _history + operational log rows older than this are deleted
 
+HEALTH_SCORE_INTERVAL = int(os.getenv("HEALTH_SCORE_INTERVAL_SECONDS", str(4 * 3600)))  # default: 4 h
+
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in ("true", "1", "yes")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 MAX_PARALLEL_REGIONS = int(os.getenv("MAX_PARALLEL_REGIONS", "3"))
@@ -743,6 +745,229 @@ async def _run_rvtools_for_all_regions(
 
 
 # ---------------------------------------------------------------------------
+# Tenant health score (runs every HEALTH_SCORE_INTERVAL seconds)
+# ---------------------------------------------------------------------------
+
+def _compute_all_tenant_health_scores() -> None:
+    """Compute and persist the composite health score for every active project."""
+    import json
+
+    conn = None
+    try:
+        conn = _get_db_conn_with_cb()
+        cur = conn.cursor()
+
+        # Fetch all project IDs
+        cur.execute("SELECT id FROM projects")
+        project_ids = [row[0] for row in cur.fetchall()]
+        if not project_ids:
+            log.debug("Health scores: no projects found")
+            return
+
+        log.info("Health scores: computing for %d project(s)", len(project_ids))
+        updated = 0
+
+        for project_id in project_ids:
+            try:
+                scores = {}
+                details = {}
+
+                # --- snapshot compliance (0-25) ---
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS cnt
+                    FROM   snapshot_records sr
+                    JOIN   snapshot_runs    ru ON ru.id = sr.snapshot_run_id
+                    WHERE  sr.project_id = %s
+                      AND  sr.status     = 'success'
+                      AND  ru.started_at >= NOW() - INTERVAL '7 days'
+                    """,
+                    (project_id,),
+                )
+                snap_cnt = (cur.fetchone() or (0,))[0] or 0
+                scores["snapshot_compliance"] = 25 if snap_cnt > 0 else 0
+                details["snapshot_compliance"] = {"recent_successes": int(snap_cnt)}
+
+                # --- quota headroom (0-20) ---
+                cur.execute(
+                    """
+                    SELECT vcpus_used, vcpus_quota, ram_used_mb, ram_quota_mb
+                    FROM   metering_quotas
+                    WHERE  project_id = %s
+                    ORDER BY collected_at DESC LIMIT 1
+                    """,
+                    (project_id,),
+                )
+                row = cur.fetchone()
+                if row and row[1] and row[3]:
+                    cpu_pct = (row[0] or 0) / row[1] * 100
+                    ram_pct = (row[2] or 0) / row[3] * 100
+                    max_pct = max(cpu_pct, ram_pct)
+                    if max_pct < 60:
+                        quota_score = 20
+                    elif max_pct < 80:
+                        quota_score = 15
+                    elif max_pct < 90:
+                        quota_score = 8
+                    else:
+                        quota_score = 0
+                    details["quota_headroom"] = {
+                        "cpu_utilization_pct": round(cpu_pct, 1),
+                        "ram_utilization_pct": round(ram_pct, 1),
+                    }
+                else:
+                    quota_score = 10
+                    details["quota_headroom"] = {"note": "no_quota_data"}
+                scores["quota_headroom"] = quota_score
+
+                # --- drift (0-20) ---
+                cur.execute(
+                    "SELECT COUNT(*) FROM drift_events "
+                    "WHERE project_id = %s AND detected_at >= NOW() - INTERVAL '30 days'",
+                    (project_id,),
+                )
+                drift_cnt = (cur.fetchone() or (0,))[0] or 0
+                if drift_cnt == 0:
+                    drift_score = 20
+                elif drift_cnt <= 2:
+                    drift_score = 15
+                elif drift_cnt <= 5:
+                    drift_score = 8
+                else:
+                    drift_score = 0
+                scores["drift"] = drift_score
+                details["drift"] = {"events_30d": int(drift_cnt)}
+
+                # --- sla_tier (0-20) ---
+                cur.execute(
+                    "SELECT tier FROM sla_commitments "
+                    "WHERE tenant_id = %s AND effective_to IS NULL "
+                    "ORDER BY effective_from DESC LIMIT 1",
+                    (project_id,),
+                )
+                sla_row = cur.fetchone()
+                tier = (sla_row[0] if sla_row else None) or ""
+                sla_score = {"gold": 20, "silver": 15, "bronze": 10}.get(tier.lower(), 5)
+                scores["sla_tier"] = sla_score
+                details["sla_tier"] = {"tier": tier or "none"}
+
+                # --- tickets (0-15) ---
+                cur.execute(
+                    "SELECT priority, COUNT(*) AS cnt FROM support_tickets "
+                    "WHERE project_id = %s AND status NOT IN ('closed','resolved') "
+                    "GROUP BY priority",
+                    (project_id,),
+                )
+                open_tix = {r[0]: int(r[1]) for r in cur.fetchall()}
+                total_open = sum(open_tix.values())
+                if total_open == 0:
+                    ticket_score = 15
+                elif open_tix.get("critical", 0) > 0 or open_tix.get("high", 0) > 0:
+                    ticket_score = 0
+                elif total_open <= 2:
+                    ticket_score = 8
+                else:
+                    ticket_score = 4
+                scores["tickets"] = ticket_score
+                details["tickets"] = {"open_by_priority": open_tix}
+
+                total_score = sum(scores.values())
+
+                cur.execute(
+                    """
+                    INSERT INTO tenant_health_scores
+                        (project_id, computed_at, score,
+                         snapshot_compliance, quota_headroom, drift, sla_tier, tickets,
+                         details)
+                    VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (project_id, computed_at) DO NOTHING
+                    """,
+                    (
+                        project_id, total_score,
+                        scores["snapshot_compliance"], scores["quota_headroom"],
+                        scores["drift"], scores["sla_tier"], scores["tickets"],
+                        json.dumps(details),
+                    ),
+                )
+                conn.commit()
+                updated += 1
+
+                # --- Alert on low scores ---
+                if total_score < 60:
+                    alert_type = "health_score_critical" if total_score < 40 else "health_score_low"
+                    alert_severity = "critical" if total_score < 40 else "medium"
+                    # Only create a new insight if there isn't an open one already
+                    cur.execute(
+                        "SELECT 1 FROM operational_insights "
+                        "WHERE type = %s AND entity_id = %s AND status = 'open' LIMIT 1",
+                        (alert_type, project_id),
+                    )
+                    if not cur.fetchone():
+                        cur.execute(
+                            """
+                            INSERT INTO operational_insights
+                                (type, severity, entity_type, entity_id, title, message, metadata)
+                            VALUES (%s, %s, 'project', %s,
+                                    %s,
+                                    'Tenant health score is ' || %s::text || '/100',
+                                    %s::jsonb)
+                            """,
+                            (
+                                alert_type, alert_severity, project_id,
+                                "Critical tenant health score" if total_score < 40 else "Low tenant health score",
+                                total_score,
+                                json.dumps({"score": total_score, "components": scores}),
+                            ),
+                        )
+                        conn.commit()
+
+            except Exception as exc:
+                log.warning("Health scores: failed for project %s: %s", project_id, exc)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+        log.info("Health scores: updated %d/%d project(s)", updated, len(project_ids))
+
+    except Exception as exc:
+        log.error("Health scores: batch failed: %s", exc)
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+async def health_score_loop() -> None:
+    """Compute tenant health scores every HEALTH_SCORE_INTERVAL seconds."""
+    log.info(
+        "Health score loop starting (interval=%d s / %.1f h)",
+        HEALTH_SCORE_INTERVAL,
+        HEALTH_SCORE_INTERVAL / 3600,
+    )
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="health_score")
+    try:
+        while _running:
+            t0 = _time_module.time()
+            _touch_alive()
+            try:
+                await loop.run_in_executor(executor, _compute_all_tenant_health_scores)
+            except Exception as exc:
+                log.error("Health score loop error: %s", exc)
+            elapsed = _time_module.time() - t0
+            remaining = max(0, HEALTH_SCORE_INTERVAL - elapsed)
+            for _ in range(int(remaining)):
+                if not _running:
+                    break
+                await asyncio.sleep(1)
+    finally:
+        executor.shutdown(wait=False)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 async def async_main() -> None:
@@ -782,7 +1007,7 @@ async def async_main() -> None:
     if DEMO_MODE:
         log.info("  DEMO_MODE=true – metrics collection suppressed")
 
-    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rvtools")
+    executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="rvtools")
     tasks = []
 
     try:
@@ -790,6 +1015,7 @@ async def async_main() -> None:
             tasks.append(asyncio.create_task(metrics_loop(), name="metrics"))
         if RVTOOLS_ENABLED:
             tasks.append(asyncio.create_task(rvtools_loop(executor), name="rvtools"))
+        tasks.append(asyncio.create_task(health_score_loop(), name="health_score"))
         tasks.append(asyncio.create_task(_heartbeat_loop(), name="heartbeat"))
 
         if not tasks:

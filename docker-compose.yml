@@ -30,6 +30,46 @@ services:
           cpus: "1.0"
           memory: 1g
 
+  # ---------------------------------------------------------------------------
+  # PgBouncer — transaction-mode connection pooler in front of PostgreSQL.
+  # All application services connect to pgbouncer:5432 instead of db:5432.
+  # backup_worker connects directly to db:5432 (pg_dump requires a direct conn).
+  # ---------------------------------------------------------------------------
+  pgbouncer:
+    image: pgbouncer/pgbouncer:latest
+    container_name: pf9_pgbouncer
+    user: "70:70"
+    entrypoint: ["/bin/sh", "/pgbouncer-entrypoint.sh"]
+    environment:
+      PGBOUNCER_DB_HOST: db
+      PGBOUNCER_DB_PORT: "5432"
+      PGBOUNCER_AUTH_USER: ${POSTGRES_USER}
+      PGBOUNCER_AUTH_PASSWORD: ${POSTGRES_PASSWORD}
+      PGBOUNCER_POOL_SIZE: "20"
+      PGBOUNCER_MAX_CLIENT_CONN: "200"
+    volumes:
+      - ./pgbouncer/entrypoint.sh:/pgbouncer-entrypoint.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nc 127.0.0.1 5432 </dev/null 2>/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64m
+
   pgadmin:
     image: dpage/pgadmin4
     container_name: pf9_pgadmin
@@ -55,7 +95,7 @@ services:
       dockerfile: api/Dockerfile
     container_name: pf9_api
     environment:
-      PF9_DB_HOST: db
+      PF9_DB_HOST: pgbouncer
       PF9_DB_PORT: "5432"
       PF9_DB_NAME: ${POSTGRES_DB}
       PF9_DB_USER: ${POSTGRES_USER}
@@ -159,7 +199,7 @@ services:
       - ./docs:/app/docs:ro
       - ./branding_logos:/app/branding_logos
     depends_on:
-      db:
+      pgbouncer:
         condition: service_healthy   # wait for init.sql to finish
       ldap:
         condition: service_started   # non-fatal if not yet ready — startup_event handles it gracefully
@@ -297,7 +337,7 @@ services:
       PF9_REGION_NAME: ${PF9_REGION_NAME:-region-one}
       PF9_USERNAME: ${PF9_USERNAME}
       PF9_PASSWORD: ${PF9_PASSWORD}
-      PF9_DB_HOST: db
+      PF9_DB_HOST: pgbouncer
       PF9_DB_PORT: ${PF9_DB_PORT:-5432}
       PF9_DB_NAME: ${PF9_DB_NAME:-pf9_mgmt}
       PF9_DB_USER: ${PF9_DB_USER:-pf9}
@@ -334,7 +374,7 @@ services:
       - app_logs:/app/logs
       - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports
     depends_on:
-      - db
+      - pgbouncer
     restart: always
     deploy:
       resources:
@@ -383,7 +423,7 @@ services:
       context: ./notifications
     container_name: pf9_notification_worker
     environment:
-      PF9_DB_HOST: db
+      PF9_DB_HOST: pgbouncer
       PF9_DB_PORT: "5432"
       PF9_DB_NAME: ${POSTGRES_DB}
       PF9_DB_USER: ${POSTGRES_USER}
@@ -405,7 +445,7 @@ services:
     volumes:
       - app_logs:/app/logs
     depends_on:
-      - db
+      - pgbouncer
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -443,7 +483,7 @@ services:
       PF9_REGION_NAME: ${PF9_REGION_NAME:-region-one}
       PF9_VERIFY_TLS: ${PF9_VERIFY_TLS:-true}
       # --- Database (for RVTools db_writer) ---
-      PF9_DB_HOST: db
+      PF9_DB_HOST: pgbouncer
       PF9_DB_PORT: "5432"
       PF9_DB_NAME: ${POSTGRES_DB}
       PF9_DB_USER: ${POSTGRES_USER}
@@ -459,6 +499,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_INTERVAL_SECONDS: ${METRICS_INTERVAL_SECONDS:-60}
       RVTOOLS_ENABLED: ${RVTOOLS_ENABLED:-true}
+      HEALTH_SCORE_INTERVAL_SECONDS: ${HEALTH_SCORE_INTERVAL_SECONDS:-14400}
       RVTOOLS_INTERVAL_MINUTES: ${RVTOOLS_INTERVAL_MINUTES:-0}
       RVTOOLS_SCHEDULE_TIME: ${RVTOOLS_SCHEDULE_TIME:-03:00}
       RVTOOLS_RUN_ON_START: ${RVTOOLS_RUN_ON_START:-false}
@@ -478,7 +519,7 @@ services:
       - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports
       - app_logs:/app/logs
     depends_on:
-      - db
+      - pgbouncer
       - redis
     restart: unless-stopped
     logging:
@@ -572,7 +613,7 @@ services:
       context: ./metering_worker
     container_name: pf9_metering_worker
     environment:
-      DB_HOST: db
+      DB_HOST: pgbouncer
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB}
       DB_USER: ${POSTGRES_USER}
@@ -585,7 +626,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     depends_on:
-      - db
+      - pgbouncer
       - pf9_monitoring
       - pf9_api
       - redis
@@ -613,7 +654,7 @@ services:
       context: ./search_worker
     container_name: pf9_search_worker
     environment:
-      DB_HOST: db
+      DB_HOST: pgbouncer
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB}
       DB_USER: ${POSTGRES_USER}
@@ -624,7 +665,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     depends_on:
-      - db
+      - pgbouncer
       - redis
     restart: unless-stopped
     logging:
@@ -711,7 +752,7 @@ services:
     container_name: pf9_ldap_sync_worker
     restart: unless-stopped
     environment:
-      PF9_DB_HOST: db
+      PF9_DB_HOST: pgbouncer
       PF9_DB_PORT: "5432"
       PF9_DB_NAME: ${POSTGRES_DB}
       PF9_DB_USER: ${POSTGRES_USER}
@@ -732,7 +773,7 @@ services:
       - ldap_admin_password
       - ldap_sync_key
     depends_on:
-      - db
+      - pgbouncer
       - ldap
       - redis
     logging:
@@ -758,7 +799,7 @@ services:
     container_name: pf9_tenant_portal
     restart: unless-stopped
     environment:
-      PF9_DB_HOST: db
+      PF9_DB_HOST: pgbouncer
       PF9_DB_PORT: "5432"
       PF9_DB_NAME: ${POSTGRES_DB}
       TENANT_DB_USER: tenant_portal_role
@@ -793,7 +834,7 @@ services:
       - tenant_portal_db_password
       - jwt_secret
     depends_on:
-      db:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_started
@@ -852,7 +893,7 @@ services:
       context: ./sla_worker
     container_name: pf9_sla_worker
     environment:
-      DB_HOST: db
+      DB_HOST: pgbouncer
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB}
       DB_USER: ${POSTGRES_USER}
@@ -863,7 +904,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     depends_on:
-      - db
+      - pgbouncer
       - redis
     restart: unless-stopped
     logging:
@@ -889,7 +930,7 @@ services:
       context: ./intelligence_worker
     container_name: pf9_intelligence_worker
     environment:
-      DB_HOST: db
+      DB_HOST: pgbouncer
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB}
       DB_USER: ${POSTGRES_USER}
@@ -901,7 +942,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     depends_on:
-      - db
+      - pgbouncer
       - redis
     restart: unless-stopped
     logging:

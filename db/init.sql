@@ -4701,3 +4701,36 @@ CREATE INDEX IF NOT EXISTS idx_pmm_tenant_month
     ON portfolio_metering_monthly(tenant_id, month DESC);
 CREATE INDEX IF NOT EXISTS idx_pmm_month
     ON portfolio_metering_monthly(month DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- v1.99.0: Tenant composite health scores
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tenant_health_scores (
+    project_id              TEXT        NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    computed_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    score                   SMALLINT    NOT NULL CHECK (score BETWEEN 0 AND 100),
+    snapshot_compliance     SMALLINT    NOT NULL DEFAULT 0,
+    quota_headroom          SMALLINT    NOT NULL DEFAULT 0,
+    drift                   SMALLINT    NOT NULL DEFAULT 0,
+    sla_tier                SMALLINT    NOT NULL DEFAULT 0,
+    tickets                 SMALLINT    NOT NULL DEFAULT 0,
+    details                 JSONB       NOT NULL DEFAULT '{}',
+    PRIMARY KEY (project_id, computed_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_health_scores_recent
+    ON tenant_health_scores (project_id, computed_at DESC);
+
+CREATE OR REPLACE VIEW tenant_health_scores_latest AS
+    SELECT DISTINCT ON (project_id)
+        project_id,
+        computed_at,
+        score,
+        snapshot_compliance,
+        quota_headroom,
+        drift,
+        sla_tier,
+        tickets,
+        details
+    FROM tenant_health_scores
+    ORDER BY project_id, computed_at DESC;

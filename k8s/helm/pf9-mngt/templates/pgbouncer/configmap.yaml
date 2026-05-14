@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pf9-pgbouncer-config
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgbouncer
+data:
+  pgbouncer.ini: |
+    ; ---------------------------------------------------------------------------
+    ; PgBouncer configuration -- pf9-mngt
+    ; Rendered by Helm at deploy time. Credentials are NOT stored here.
+    ; An initContainer writes userlist.txt to a shared emptyDir volume.
+    ; ---------------------------------------------------------------------------
+
+    [databases]
+    * = host={{ .Values.db.host }} port={{ .Values.db.port }}
+
+    [pgbouncer]
+    listen_addr         = 0.0.0.0
+    listen_port         = 5432
+
+    auth_type           = scram-sha-256
+    auth_file           = /etc/pgbouncer/userlist.txt
+    auth_user           = {{ .Values.db.user }}
+    auth_query          = SELECT usename, passwd FROM pg_shadow WHERE usename=$1
+
+    pool_mode           = transaction
+    default_pool_size   = {{ .Values.pgbouncer.poolSize }}
+    max_client_conn     = {{ .Values.pgbouncer.maxClientConn }}
+
+    ignore_startup_parameters = extra_float_digits
+    server_reset_query  = DISCARD ALL
+
+    log_connections     = 0
+    log_disconnections  = 0
+    log_pooler_errors   = 1
+    stats_period        = 60
