@@ -1,5 +1,6 @@
 #!/usr/bin/env powershell
 # PF9 Management Portal — Production Startup Script
+# Linux/macOS equivalent: startup_prod.sh
 #
 # Starts the stack with docker-compose.prod.yml overlay applied:
 #   - Ports 8000, 5173, 8001 are NOT exposed to the host (nginx-only access)

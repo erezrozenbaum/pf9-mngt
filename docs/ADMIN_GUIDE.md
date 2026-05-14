@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.96.5  
+**Version**: 1.98.0  
 **Last Updated**: May 10, 2026  
 **Audience**: System administrators and platform operators
 
@@ -4129,6 +4129,80 @@ Smart Queries execute read-only SQL against live database tables — no indexing
 ---
 
 ## Maintenance & Updates
+
+### v1.98.0 — Security, Persistence & Platform Portability
+
+#### Fernet Key Rotation (`rotate_fernet_key.py`)
+When a secret (JWT, LDAP sync key, SMTP config key, VM provision key, or integration key) is rotated, use the bundled CLI tool to re-encrypt all affected database columns:
+
+```bash
+python rotate_fernet_key.py \
+    --secret-name jwt_secret \
+    --old-secret  <current_secret_value> \
+    --new-secret  <new_secret_value>
+
+# Dry-run (prints counts, no DB writes)
+python rotate_fernet_key.py --secret-name jwt_secret \
+    --old-secret <old> --new-secret <new> --dry-run
+
+# List all managed encrypted columns
+python rotate_fernet_key.py --list-targets
+```
+
+The tool uses a single transaction per table and rolls back on any error. A rotation event is written to `auth_audit_log` on success.
+
+#### Billing Webhook Management
+Register external webhooks that receive billing events (threshold alerts, payment reminders, quota warnings):
+
+```bash
+# Register
+POST /api/billing/webhook
+{
+  "tenant_id": "...",
+  "webhook_url": "https://external.system/hook",
+  "event_types": ["billing_threshold", "payment_due"]
+}
+
+# List all
+GET /api/billing/webhooks
+
+# Delete
+DELETE /api/billing/webhook/{id}
+```
+
+Webhook URLs are SSRF-protected: hosts resolving to RFC-1918, loopback, or link-local ranges are rejected with HTTP 422.
+
+#### Audit Log Tamper Protection
+`auth_audit_log` and `tenant_action_log` are now protected by PostgreSQL triggers that raise an exception on any DELETE or UPDATE attempt. This enforcement lives at the database layer, independent of the application, and applies to all roles including superusers.
+
+#### Redis AOF Persistence
+Redis is now configured with `--appendonly yes --appendfsync everysec` providing crash-recovery with at most 1 second of data loss. Data is stored in the `pf9_redis_data` named volume (Docker) or an `emptyDir` volume mount at `/data` (Kubernetes).
+
+To check Redis persistence status:
+```bash
+docker exec pf9_redis redis-cli INFO persistence | grep aof
+```
+
+#### Linux/macOS Deployment Scripts
+Three bash scripts mirror the Windows PowerShell equivalents:
+
+| Script | Purpose |
+|---|---|
+| `startup.sh` | Start dev stack (builds images, validates .env) |
+| `startup_prod.sh` | Start production stack with docker-compose.prod.yml overlay |
+| `deployment.sh` | Full first-time deployment with interactive wizard |
+
+Usage:
+```bash
+chmod +x startup.sh startup_prod.sh deployment.sh
+
+./startup.sh              # Start dev
+./startup.sh --stop       # Stop
+./startup_prod.sh         # Start production
+./deployment.sh           # First-time setup
+```
+
+---
 
 ### Regular Maintenance Tasks
 

@@ -4290,6 +4290,95 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('executive',       'timeline', 'read')
 ON CONFLICT DO NOTHING;
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- v1.98.0: Billing webhook registrations
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS billing_webhooks (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       TEXT NOT NULL,
+    webhook_url     TEXT NOT NULL,
+    event_types     JSONB NOT NULL DEFAULT '[]',
+    secret_token    TEXT,
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    last_success    TIMESTAMPTZ,
+    failure_count   INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_webhooks_tenant_id
+    ON billing_webhooks(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_billing_webhooks_active
+    ON billing_webhooks(tenant_id) WHERE is_active = TRUE;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- v1.98.0: Append-only audit log enforcement via triggers
+-- Superusers bypass RLS, so we use BEFORE triggers that raise an exception
+-- on any DELETE or UPDATE attempt — enforced regardless of caller role.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION fn_audit_log_append_only()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'Audit log is append-only: % on % is not permitted', TG_OP, TG_TABLE_NAME;
+END;
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'trg_auth_audit_no_delete'
+          AND tgrelid = 'auth_audit_log'::regclass
+    ) THEN
+        CREATE TRIGGER trg_auth_audit_no_delete
+            BEFORE DELETE ON auth_audit_log
+            FOR EACH ROW EXECUTE FUNCTION fn_audit_log_append_only();
+    END IF;
+END;
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'trg_auth_audit_no_update'
+          AND tgrelid = 'auth_audit_log'::regclass
+    ) THEN
+        CREATE TRIGGER trg_auth_audit_no_update
+            BEFORE UPDATE ON auth_audit_log
+            FOR EACH ROW EXECUTE FUNCTION fn_audit_log_append_only();
+    END IF;
+END;
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'trg_tenant_action_no_delete'
+          AND tgrelid = 'tenant_action_log'::regclass
+    ) THEN
+        CREATE TRIGGER trg_tenant_action_no_delete
+            BEFORE DELETE ON tenant_action_log
+            FOR EACH ROW EXECUTE FUNCTION fn_audit_log_append_only();
+    END IF;
+END;
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'trg_tenant_action_no_update'
+          AND tgrelid = 'tenant_action_log'::regclass
+    ) THEN
+        CREATE TRIGGER trg_tenant_action_no_update
+            BEFORE UPDATE ON tenant_action_log
+            FOR EACH ROW EXECUTE FUNCTION fn_audit_log_append_only();
+    END IF;
+END;
+$$;
+
 -- RLS: inventory tables (project_id + region_id double-scoped)
 ALTER TABLE servers          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE volumes          ENABLE ROW LEVEL SECURITY;

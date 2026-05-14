@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.9.95
-**Last Updated**: May 4, 2026  
+**Version**: 2.9.98
+**Last Updated**: May 14, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative (Production HA)**: See [KUBERNETES_GUIDE.md](KUBERNETES_GUIDE.md) for the Kubernetes deployment guide — Helm chart, ArgoCD GitOps, and Sealed Secrets (v1.82.0+)
@@ -2219,6 +2219,18 @@ kubectl create secret generic pf9-redis-secret \
 The API will automatically use `REDIS_URL=redis://:$(REDIS_PASSWORD)@pf9-redis:6379/0` (injected by the Helm chart via the secret reference). All worker services receive `REDIS_PASSWORD` from the same secret.
 
 > **Note:** Live Kubernetes secrets for this deployment are managed in the internal private repository, not the public repo. Only create them manually on the cluster as shown above.
+
+#### Redis AOF Persistence (v1.98.0)
+
+Redis is configured with **Append-Only File (AOF)** persistence (`--appendonly yes --appendfsync everysec`) in both Docker Compose and Kubernetes. This ensures that at most one second of cache/session data is lost on an unexpected Redis restart.
+
+```bash
+# Verify AOF is active on the running Redis instance
+docker exec pf9_redis redis-cli INFO persistence | grep aof_enabled
+# Expected: aof_enabled:1
+```
+
+The `pf9_redis_data` volume is created automatically by Docker Compose to persist the AOF file across container restarts. On Kubernetes, the Redis pod uses an `emptyDir` volume for the data directory (pod-local persistence; data survives container restarts within the same pod).
 
 ---
 

@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-1.97.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-1.98.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -283,6 +283,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 
 ---
 ## 🆕 Recent Highlights
+- **v1.98.0** — Security: Fernet key rotation CLI, billing webhook SSRF guard, append-only audit logs via RLS; Performance: Redis AOF crash-recovery persistence; Features: billing webhook management API; Linux/macOS deployment scripts (May 2026)
 - **v1.97.0** — Security: encrypt Copilot LLM API keys at rest (Fernet/AES); Performance: GIN indexes on inventory JSONB columns; Maintenance: automatic history table archival with configurable retention (May 2026)
 - **v1.96.9** — Multi-bug fix: tenant portal data isolation (security), intelligence event domain resolution, snapshot harvest, auto-ticket creation, entity name display in tenant portal (May 2026)
 - **v1.96.8** — Bugfix: `occurred_at` column name in all Copilot timeline intents + context injector; new `OPERATIONAL_TIMELINE_GUIDE.md`; timeline sections added to `ADMIN_GUIDE.md` and `API_REFERENCE.md` (May 2026)

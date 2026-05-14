@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import csv
 import io
+import ipaddress
 import logging
 import json
 import asyncio
+import socket
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Optional, List, Dict, Any
@@ -36,6 +38,50 @@ import psycopg2
 
 from auth import require_permission, get_current_user, User, get_effective_region_filter
 from db_pool import get_connection
+
+# ---------------------------------------------------------------------------
+# SSRF guard for webhook URLs
+# ---------------------------------------------------------------------------
+_WEBHOOK_BLOCKED_RANGES = [
+    ipaddress.ip_network("127.0.0.0/8"),      # loopback
+    ipaddress.ip_network("::1/128"),           # IPv6 loopback
+    ipaddress.ip_network("10.0.0.0/8"),        # RFC-1918
+    ipaddress.ip_network("172.16.0.0/12"),     # RFC-1918
+    ipaddress.ip_network("192.168.0.0/16"),    # RFC-1918
+    ipaddress.ip_network("169.254.0.0/16"),    # link-local
+    ipaddress.ip_network("fe80::/10"),         # IPv6 link-local
+    ipaddress.ip_network("fc00::/7"),          # IPv6 ULA
+    ipaddress.ip_network("0.0.0.0/8"),         # unspecified
+    ipaddress.ip_network("100.64.0.0/10"),     # Shared address space (RFC-6598)
+]
+
+
+def _assert_webhook_url_allowed(url: str) -> None:
+    """Resolve the webhook URL host and reject if it targets a private/loopback range."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if not host:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid webhook URL: cannot determine host")
+    try:
+        addr_infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Cannot resolve webhook host '{host}'")
+    for info in addr_infos:
+        addr_str = info[4][0]
+        try:
+            addr = ipaddress.ip_address(addr_str)
+        except ValueError:
+            continue
+        for blocked in _WEBHOOK_BLOCKED_RANGES:
+            if addr in blocked:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"Webhook URL host '{host}' resolves to a private/reserved address "
+                        f"({addr_str}). External URLs only."
+                    ),
+                )
 
 logger = logging.getLogger("pf9.billing")
 router = APIRouter(prefix="/api/billing", tags=["billing"])
@@ -599,6 +645,92 @@ async def get_billing_overview(
             "recent_events": [dict(event) for event in recent_events],
             "generated_at": datetime.now(timezone.utc)
         }
+
+
+# ---------------------------------------------------------------------------
+# Webhook registration endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/webhook", response_model=WebhookRegistrationResponse, status_code=201)
+async def register_webhook(
+    body: WebhookRegistrationRequest,
+    user: User = Depends(require_permission("billing", "write")),
+):
+    """Register a billing event webhook.  URL must resolve to a public IP (SSRF guard applied)."""
+    _assert_webhook_url_allowed(body.webhook_url)
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO billing_webhooks
+                    (tenant_id, webhook_url, event_types, secret_token, is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                RETURNING id, tenant_id, webhook_url, event_types, is_active,
+                          last_success, failure_count, created_at, updated_at
+                """,
+                (
+                    body.tenant_id,
+                    body.webhook_url,
+                    json.dumps(body.event_types),
+                    body.secret_token,
+                    body.is_active,
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+    # Normalise event_types from stored JSON string to list
+    if isinstance(row["event_types"], str):
+        row["event_types"] = json.loads(row["event_types"])
+    return WebhookRegistrationResponse(**row)
+
+
+@router.get("/webhooks", response_model=List[WebhookRegistrationResponse])
+async def list_webhooks(
+    tenant_id: Optional[str] = Query(None),
+    user: User = Depends(require_permission("billing", "read")),
+):
+    """List registered webhooks, optionally filtered by tenant."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if tenant_id:
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, webhook_url, event_types, is_active,
+                           last_success, failure_count, created_at, updated_at
+                    FROM billing_webhooks WHERE tenant_id = %s ORDER BY created_at DESC
+                    """,
+                    (tenant_id,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, webhook_url, event_types, is_active,
+                           last_success, failure_count, created_at, updated_at
+                    FROM billing_webhooks ORDER BY created_at DESC
+                    """
+                )
+            rows = cur.fetchall()
+    result = []
+    for row in rows:
+        if isinstance(row["event_types"], str):
+            row["event_types"] = json.loads(row["event_types"])
+        result.append(WebhookRegistrationResponse(**row))
+    return result
+
+
+@router.delete("/webhook/{webhook_id}", status_code=204)
+async def delete_webhook(
+    webhook_id: int,
+    user: User = Depends(require_permission("billing", "write")),
+):
+    """Delete a registered webhook."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM billing_webhooks WHERE id = %s", (webhook_id,))
+            if cur.rowcount == 0:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Webhook not found")
+            conn.commit()
+
 
 # Add the router to be imported by main.py
 __all__ = ["router"]

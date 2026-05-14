@@ -2,6 +2,7 @@
 <#
 .SYNOPSIS
   Complete automated deployment for PF9 Management System (Windows).
+  Linux/macOS equivalent: deployment.sh
   
 .DESCRIPTION
   Fully automated deployment that:
