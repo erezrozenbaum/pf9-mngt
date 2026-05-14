@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.98.0  
-**Last Updated**: May 10, 2026  
+**Version**: 1.99.0  
+**Last Updated**: May 14, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -4129,6 +4129,33 @@ Smart Queries execute read-only SQL against live database tables — no indexing
 ---
 
 ## Maintenance & Updates
+
+### v1.99.0 — Connection Pooling & Tenant Health Scoring
+
+#### PgBouncer Connection Pooling
+All application services now route PostgreSQL connections through PgBouncer in transaction-pooling mode (pool_size=20, max_client_conn=200). The `backup_worker` and database migration job retain direct DB connections as required by their operations (pg_dump, DDL). No configuration change is needed — PgBouncer starts automatically as part of the stack.
+
+#### Tenant Health Scoring
+A composite 0–100 health score is computed for every tenant every 4 hours by the scheduler worker. Scores are surfaced via REST API and automatically generate operational insights when they fall below thresholds:
+
+| Grade | Range | Action |
+|---|---|---|
+| A | 90–100 | — |
+| B | 75–89 | — |
+| C | 60–74 | — |
+| D | 40–59 | `medium` operational insight created |
+| F | 0–39 | `critical` operational insight created |
+
+**API endpoints:**
+```
+GET  /api/tenants/{project_id}/health-score          # Latest score + grade
+POST /api/tenants/{project_id}/health-score/recalculate  # Force immediate recompute
+GET  /api/tenants/{project_id}/health-score/history  # Historical scores (limit 1-365)
+```
+
+**Scheduler tunable:** Set `HEALTH_SCORE_INTERVAL_SECONDS` env var (default `14400` = 4 h).
+
+---
 
 ### v1.98.0 — Security, Persistence & Platform Portability
 

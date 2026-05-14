@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.98.0 — Fernet rotation CLI, billing webhook CRUD + SSRF guard, append-only audit triggers, Redis AOF persistence, Linux deployment scripts  
+> **Version**: v1.99.0 — PgBouncer connection pooling, tenant composite health scoring API  
+> Previous: v1.98.0 — Fernet rotation CLI, billing webhook CRUD + SSRF guard, append-only audit triggers, Redis AOF persistence, Linux deployment scripts  
 > Previous: v1.95.23 — Provisioning: virtual network creation via service-account scope fix (Neutron 400/403), `create_network()` unwrap fix (subnet 400), provisioning retry endpoint + UI
 
 ## Base URL
@@ -1642,6 +1643,50 @@ Response:
   "enabled": false,
   "updated_by": "admin@company.com",
   "updated_at": "2026-02-16T09:05:00Z"
+}
+```
+
+---
+
+## Tenant Composite Health Score API (v1.99.0)
+
+> **RBAC**: All authenticated roles can read health scores; recalculate requires `admin` or `superadmin`.
+> **Database**: Backed by `tenant_health_scores` table (computed by scheduler, 4-hour interval).
+
+### GET `/api/tenants/{project_id}/health-score`
+Returns the latest computed health score for a tenant.
+
+```json
+{
+  "project_id": "027a3c45c55e4b4e8cc2ed6a872a21f7",
+  "score": 75,
+  "grade": "B",
+  "computed_at": "2026-05-14T16:05:49Z",
+  "components": {
+    "snapshot_compliance": 25,
+    "quota_headroom": 15,
+    "drift": 20,
+    "sla_tier": 15,
+    "tickets": 0
+  },
+  "details": { ... }
+}
+```
+Returns `404` if no score has been computed yet; use `POST /recalculate` to trigger first run.
+
+### POST `/api/tenants/{project_id}/health-score/recalculate`
+Triggers an immediate on-demand score recomputation. Returns the freshly computed score.
+
+### GET `/api/tenants/{project_id}/health-score/history`
+Returns historical score records. Query parameter: `limit` (1–365, default 30).
+
+```json
+{
+  "project_id": "027a3c45c55e4b4e8cc2ed6a872a21f7",
+  "history": [
+    { "computed_at": "...", "score": 75, "grade": "B", "components": { ... } }
+  ],
+  "count": 30
 }
 ```
 

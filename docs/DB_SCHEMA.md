@@ -1141,6 +1141,45 @@ CREATE TABLE IF NOT EXISTS operational_events (
 
 ---
 
+## tenant_health_scores (v1.99.0)
+
+Stores the per-tenant composite health score computed by `scheduler_worker` every 4 hours (configurable via `HEALTH_SCORE_INTERVAL_SECONDS`). Each run appends a new row; the companion view `tenant_health_scores_latest` returns the most-recent row per tenant.
+
+```sql
+CREATE TABLE tenant_health_scores (
+    project_id              TEXT        NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    computed_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    score                   SMALLINT    NOT NULL CHECK (score BETWEEN 0 AND 100),
+    snapshot_compliance     SMALLINT    NOT NULL DEFAULT 0,  -- 0-25
+    quota_headroom          SMALLINT    NOT NULL DEFAULT 0,  -- 0-20
+    drift                   SMALLINT    NOT NULL DEFAULT 0,  -- 0-20
+    sla_tier                SMALLINT    NOT NULL DEFAULT 0,  -- 0-20
+    tickets                 SMALLINT    NOT NULL DEFAULT 0,  -- 0-15
+    details                 JSONB       NOT NULL DEFAULT '{}',
+    PRIMARY KEY (project_id, computed_at)
+);
+```
+
+**Scoring components**:
+
+| Component | Max | Criteria |
+|---|---|---|
+| `snapshot_compliance` | 25 | ≥1 successful snapshot in last 7 days = 25; else 0 |
+| `quota_headroom` | 20 | Peak utilization <60%=20, <80%=15, <90%=8, ≥90%=0; no data=10 |
+| `drift` | 20 | Drift events (30d): 0=20, 1-2=15, 3-5=8, >5=0 |
+| `sla_tier` | 20 | Gold=20, Silver=15, Bronze=10, other=5 |
+| `tickets` | 15 | No open=15, critical/high open=0, ≤2 low=8, >2 low=4 |
+
+**Grading**: A≥90, B≥75, C≥60, D≥40, F<40.
+
+**Indexes**: `idx_tenant_health_scores_recent` on `(project_id, computed_at DESC)` for fast latest-score lookup.
+
+**Alerts**: Scores <60 create `medium`-severity `operational_insights` rows; scores <40 create `critical`-severity rows (deduplicated — one open insight per type per tenant).
+
+**API**: `GET /api/tenants/{project_id}/health-score`, `POST /api/tenants/{project_id}/health-score/recalculate`, `GET /api/tenants/{project_id}/health-score/history`.
+
+---
+
 ## billing_webhooks
 
 Stores outbound billing webhook registrations per tenant (v1.98.0).
@@ -1380,4 +1419,4 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v1.95.13** (May 10, 2026)
+Current schema version: **v1.99.0** (May 14, 2026)

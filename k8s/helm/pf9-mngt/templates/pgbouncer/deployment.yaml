@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pf9-pgbouncer
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgbouncer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pgbouncer
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pgbouncer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Write userlist.txt to the shared volume from a k8s Secret so the
+        # main pgbouncer container never sees the cleartext password in argv.
+        - name: generate-userlist
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              printf '"%s" "%s"\n' "${PGBOUNCER_AUTH_USER}" "${PGBOUNCER_AUTH_PASSWORD}" > /etc/pgbouncer/userlist.txt
+              chmod 600 /etc/pgbouncer/userlist.txt
+          env:
+            - name: PGBOUNCER_AUTH_USER
+              value: {{ .Values.db.user | quote }}
+            - name: PGBOUNCER_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentials }}
+                  key: password
+          volumeMounts:
+            - name: pgbouncer-userlist
+              mountPath: /etc/pgbouncer
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: pgbouncer
+          image: pgbouncer/pgbouncer:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          # pgbouncer.ini rendered by Helm into ConfigMap — no env substitution needed.
+          # userlist.txt written by initContainer to the emptyDir volume.
+          command: ["/opt/pgbouncer/pgbouncer", "/etc/pgbouncer-config/pgbouncer.ini"]
+          volumeMounts:
+            - name: pgbouncer-config
+              mountPath: /etc/pgbouncer-config
+              readOnly: true
+            - name: pgbouncer-userlist
+              mountPath: /etc/pgbouncer
+          ports:
+            - name: pgbouncer
+              containerPort: 5432
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "250m"
+              memory: "64Mi"
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+      volumes:
+        - name: pgbouncer-config
+          configMap:
+            name: pf9-pgbouncer-config
+            defaultMode: 0444
+        - name: pgbouncer-userlist
+          emptyDir: {}

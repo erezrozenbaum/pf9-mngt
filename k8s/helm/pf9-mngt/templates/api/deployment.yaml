@@ -44,9 +44,9 @@ spec:
             {{- end }}
             # --- Database ---
             - name: PF9_DB_HOST
-              value: {{ .Values.db.host | quote }}
+              value: {{ .Values.pgbouncer.host | quote }}
             - name: PF9_DB_PORT
-              value: {{ .Values.db.port | quote }}
+              value: {{ .Values.pgbouncer.port | quote }}
             - name: PF9_DB_NAME
               value: {{ .Values.db.name | quote }}
             - name: PF9_DB_USER

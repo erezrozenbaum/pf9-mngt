@@ -57,6 +57,14 @@ db:
   name: pf9_mgmt
   user: pf9
 
+# PgBouncer connection pooler — application services connect here instead of directly to pf9-db.
+# backup-worker and db-migrate job connect directly to pf9-db (pg_dump / DDL compatibility).
+pgbouncer:
+  host: pf9-pgbouncer
+  port: "5432"
+  poolSize: "20"
+  maxClientConn: "200"
+
 ldap:
   server: pf9-ldap
   port: "389"

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.99.0] - 2026-05-14
+
+### Performance
+- **PgBouncer connection pooling**: All services now route database connections through PgBouncer (transaction-mode pooling, pool size 20, max 200 client connections). Reduces PostgreSQL connection overhead under concurrent workloads. The `backup_worker` and database migration job continue to connect directly, as required for their operation. Docker Compose and Kubernetes Helm deployments both include the `pgbouncer` service; the Kubernetes deployment uses an initContainer to provision `userlist.txt` at runtime so no credentials are stored in ConfigMaps.
+
+### Added
+- **Tenant health scoring**: A composite 0–100 health score is computed for each tenant across five dimensions: snapshot compliance (25 pts), quota headroom (20 pts), infrastructure drift (20 pts), SLA tier (20 pts), and open support tickets (15 pts). Scores are graded A–F.
+  - New API endpoints: `GET /api/tenants/{project_id}/health-score`, `POST /api/tenants/{project_id}/health-score/recalculate`, `GET /api/tenants/{project_id}/health-score/history`.
+  - Background scheduler recomputes scores for all tenants every 4 hours (configurable via `HEALTH_SCORE_INTERVAL_SECONDS`).
+  - Scores below 60 generate operational insights (`medium` severity); scores below 40 generate `critical` severity insights.
+  - Database migration: `migrate_v1_99_0_tenant_health_scores.sql` (table + recent-score view).
+
+---
+
 ## [1.98.0] - 2026-05-14
 
 ### Security
