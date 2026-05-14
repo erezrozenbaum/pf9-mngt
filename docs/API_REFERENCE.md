@@ -1,6 +1,6 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.99.2 — Hotfix: add pgbouncer NetworkPolicy, fix all service egress rules (db→pgbouncer)
+> **Version**: v1.99.3 — Hotfix: pgbouncer FQDN fix for c-ares async DNS resolution failure
 > Previous: v1.99.1 — Hotfix: pgbouncer initContainer resource limits for namespace quota compliance  
 > Previous: v1.99.0 — PgBouncer connection pooling, tenant composite health scoring API  
 > Previous: v1.98.0 — Fernet rotation CLI, billing webhook CRUD + SSRF guard, append-only audit triggers, Redis AOF persistence, Linux deployment scripts  
