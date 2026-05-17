@@ -1,7 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.0.3 — Hotfix: `wave_started`/`wave_completed` webhook events now return `400` on non-integer `wave_id` instead of `500`
-> Previous: v2.0.2 — Webhook secret auto-generated on project creation; no manual regeneration step needed
+> **Version**: v2.0.4 — Hotfix: Wave Planner endpoint (`GET /projects/{id}/waves`) now returns waves correctly; `wave_id` validation moved before DB transaction so invalid values return `400` cleanly
+> Previous: v2.0.3 — Hotfix: `wave_started`/`wave_completed` webhook events return `400` on non-integer `wave_id`
 > Previous: v2.0.1 — Hotfix: webhook endpoint JWT bypass (HMAC-authenticated machine-to-machine routes now correctly skip JWT middleware); `db/init.sql` updated with v2.0.0 schema for fresh installs
 > Previous: v2.0.0 — vJailbreak execution feedback webhook, migration progress API, AM Dashboard health scores
 > Previous: v1.99.5 — Hotfix: SLA uptime precision overflow (DECIMAL 5,3 → 6,3)
