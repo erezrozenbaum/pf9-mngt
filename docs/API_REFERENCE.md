@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.0.1 — Hotfix: webhook endpoint JWT bypass (HMAC-authenticated machine-to-machine routes now correctly skip JWT middleware); `db/init.sql` updated with v2.0.0 schema for fresh installs
+> **Version**: v2.0.2 — Webhook secret auto-generated on project creation; no manual regeneration step needed
+> Previous: v2.0.1 — Hotfix: webhook endpoint JWT bypass (HMAC-authenticated machine-to-machine routes now correctly skip JWT middleware); `db/init.sql` updated with v2.0.0 schema for fresh installs
 > Previous: v2.0.0 — vJailbreak execution feedback webhook, migration progress API, AM Dashboard health scores
 > Previous: v1.99.5 — Hotfix: SLA uptime precision overflow (DECIMAL 5,3 → 6,3)
 > Previous: v1.99.1 — Hotfix: pgbouncer initContainer resource limits for namespace quota compliance  

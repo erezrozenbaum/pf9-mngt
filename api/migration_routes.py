@@ -646,6 +646,7 @@ def _get_project(project_id: str, conn) -> Dict[str, Any]:
 async def create_project(req: CreateProjectRequest, user = Depends(get_current_user)):
     """Create a new migration project."""
     actor = user.username if user else "system"
+    webhook_secret = _secrets_lib.token_hex(32)  # auto-generated; returned once in response
 
     with _get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -662,7 +663,8 @@ async def create_project(req: CreateProjectRequest, user = Depends(get_current_u
                     agent_vcpu_per_slot, agent_ram_base_gb, agent_ram_per_slot_gb,
                     agent_nic_speed_gbps, agent_nic_usable_pct, agent_disk_buffer_factor,
                     daily_change_rate_pct,
-                    created_by
+                    created_by,
+                    webhook_secret
                 ) VALUES (
                     %s, %s, %s,
                     %s, %s,
@@ -674,6 +676,7 @@ async def create_project(req: CreateProjectRequest, user = Depends(get_current_u
                     %s, %s,
                     %s, %s, %s,
                     %s, %s, %s,
+                    %s,
                     %s,
                     %s
                 )
@@ -691,6 +694,7 @@ async def create_project(req: CreateProjectRequest, user = Depends(get_current_u
                 req.agent_nic_speed_gbps, req.agent_nic_usable_pct, req.agent_disk_buffer_factor,
                 req.daily_change_rate_pct,
                 actor,
+                webhook_secret,
             ))
             project = dict(cur.fetchone())
 
@@ -708,7 +712,12 @@ async def create_project(req: CreateProjectRequest, user = Depends(get_current_u
     _log_activity(actor=actor, action="create", resource_type="migration_project",
                   resource_id=project["project_id"], resource_name=req.name)
 
-    return {"status": "ok", "project": _serialize_row(project)}
+    return {
+        "status": "ok",
+        "project": _serialize_row(project),
+        "webhook_secret": webhook_secret,
+        "webhook_secret_note": "Store this secret now — it will not be shown again. Use it to configure vJailbreak webhook signing.",
+    }
 
 
 @router.get("/projects", dependencies=[Depends(require_permission("migration", "read"))])
