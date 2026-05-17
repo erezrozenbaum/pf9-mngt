@@ -85,6 +85,44 @@ CREATE INDEX IF NOT EXISTS idx_notification_prefs_username ON notification_prefe
 CREATE INDEX IF NOT EXISTS idx_notification_prefs_event    ON notification_preferences (event_type);
 
 -- ---------------------------------------------------------------------------
+-- Table: tenant_notification_prefs  (v2.1.0)
+-- Per-user per-project subscriptions for tenant-facing event notifications.
+-- Tenants can subscribe via email or outbound webhook per event type.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_notification_prefs (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      TEXT        NOT NULL,   -- OpenStack project (tenant) UUID
+    keystone_user_id TEXT       NOT NULL,   -- Keystone user UUID that owns this pref
+    event_type      TEXT        NOT NULL
+                    CHECK (event_type IN (
+                        'snapshot_completed', 'snapshot_failed',
+                        'restore_completed',  'restore_failed',
+                        'quota_at_80pct',     'quota_at_95pct',
+                        'vm_provisioned',     'vm_provision_failed',
+                        'billing_invoice_ready'
+                    )),
+    channel         TEXT        NOT NULL CHECK (channel IN ('email', 'webhook')),
+    endpoint        TEXT        NOT NULL,   -- email address or HTTPS URL
+    enabled         BOOLEAN     NOT NULL DEFAULT true,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, keystone_user_id, event_type, channel)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tnp_project   ON tenant_notification_prefs (project_id);
+CREATE INDEX IF NOT EXISTS idx_tnp_user      ON tenant_notification_prefs (keystone_user_id);
+CREATE INDEX IF NOT EXISTS idx_tnp_event     ON tenant_notification_prefs (event_type);
+
+-- ---------------------------------------------------------------------------
+-- Extend notification_log with notification_target  (v2.1.0)
+-- Distinguishes operator-facing ('operator') from tenant-facing ('tenant') rows.
+-- ---------------------------------------------------------------------------
+ALTER TABLE notification_log
+    ADD COLUMN IF NOT EXISTS notification_target TEXT NOT NULL DEFAULT 'operator';
+
+CREATE INDEX IF NOT EXISTS idx_notification_log_target ON notification_log (notification_target);
+
+-- ---------------------------------------------------------------------------
 -- RBAC: Notification permissions for all roles
 -- ---------------------------------------------------------------------------
 INSERT INTO role_permissions (role, resource, action) VALUES

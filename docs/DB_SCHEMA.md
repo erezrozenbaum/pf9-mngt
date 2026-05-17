@@ -1419,7 +1419,43 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v2.0.7** (May 17, 2026)
+Current schema version: **v2.1.0** (May 18, 2026)
+
+## Tenant Notifications (v2.1.0)
+
+### tenant_notification_prefs
+Stores per-user notification subscription preferences for the tenant portal.
+
+```sql
+CREATE TABLE IF NOT EXISTS tenant_notification_prefs (
+    id               BIGSERIAL PRIMARY KEY,
+    project_id       TEXT NOT NULL,
+    keystone_user_id TEXT NOT NULL,
+    event_type       TEXT NOT NULL CHECK (event_type IN (
+                        'snapshot_completed','snapshot_failed',
+                        'restore_completed','restore_failed',
+                        'quota_at_80pct','quota_at_95pct',
+                        'vm_provisioned','vm_provision_failed',
+                        'billing_invoice_ready')),
+    channel          TEXT NOT NULL CHECK (channel IN ('email','webhook')),
+    endpoint         TEXT NOT NULL,
+    enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (project_id, keystone_user_id, event_type, channel)
+);
+CREATE INDEX IF NOT EXISTS idx_tnp_project ON tenant_notification_prefs(project_id);
+CREATE INDEX IF NOT EXISTS idx_tnp_user    ON tenant_notification_prefs(keystone_user_id);
+CREATE INDEX IF NOT EXISTS idx_tnp_event   ON tenant_notification_prefs(event_type);
+```
+
+### notification_log — new column (v2.1.0)
+
+| Column | Type | Notes |
+|---|---|---|
+| `notification_target` | `TEXT NOT NULL DEFAULT 'operator'` | `'operator'` for admin alerts; `'tenant'` for tenant-facing events |
+
+Tenant rows use `username = 'tenant:{project_id}:{keystone_user_id}'` as a scoping tag.
 
 ---
 

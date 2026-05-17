@@ -1271,6 +1271,54 @@ async def login(request: Request, login_data: LoginRequest):
     if not _is_local_admin:
         try:
             from mfa_routes import _get_mfa_record
+
+            # S5: Enforce MFA enrollment for roles in system_settings mfa.require_for_roles
+            def _get_mfa_required_roles_for_login() -> list:
+                try:
+                    from db_pool import get_db_connection as _get_conn
+                    with _get_conn() as _c:
+                        with _c.cursor() as _cur:
+                            _cur.execute(
+                                "SELECT value FROM system_settings WHERE key = 'mfa.require_for_roles'"
+                            )
+                            row = _cur.fetchone()
+                            if row and row[0]:
+                                import json as _j
+                                return _j.loads(row[0])
+                except Exception:
+                    pass
+                return ["admin", "superadmin"]
+
+            _mfa_required_roles = _get_mfa_required_roles_for_login()
+            if role in _mfa_required_roles:
+                mfa_record_enroll = _get_mfa_record(login_data.username)
+                if not mfa_record_enroll or not mfa_record_enroll.get("is_enabled"):
+                    enrollment_expires = timedelta(minutes=10)
+                    enrollment_token = create_access_token(
+                        data={
+                            "sub": login_data.username,
+                            "role": role,
+                            "mfa_enrollment_required": True,
+                        },
+                        expires_delta=enrollment_expires,
+                    )
+                    log_auth_event(
+                        login_data.username, "mfa_enrollment_required", True, client_ip, user_agent
+                    )
+                    return {
+                        "access_token": enrollment_token,
+                        "token_type": "bearer",
+                        "expires_in": 600,
+                        "expires_at": (datetime.now(timezone.utc) + enrollment_expires).isoformat() + "Z",
+                        "mfa_enrollment_required": True,
+                        "user": {
+                            "username": login_data.username,
+                            "role": role,
+                            "is_active": True,
+                        },
+                    }
+            # End S5 enforcement
+
             mfa_record = _get_mfa_record(login_data.username)
             if mfa_record and mfa_record.get("is_enabled"):
                 # Issue a short-lived token that can only be used for MFA verification
@@ -6586,6 +6634,92 @@ def update_container_alert(
     except Exception as e:
         logger.error("Failed to update container alert setting: %s", e)
         raise HTTPException(status_code=500, detail="Failed to update setting — check server logs")
+
+
+# ---------------------------------------------------------------------------
+# MFA Enforcement Settings  (admin GET, superadmin PUT)
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/settings/mfa-enforcement")
+@limiter.limit("30/minute")
+def get_mfa_enforcement(
+    request: Request,
+    current_user: User = Depends(require_authentication),
+):
+    """Return the current MFA enforcement configuration.
+    Accessible by admin and superadmin roles.
+    """
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin role required")
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT key, value FROM system_settings WHERE key IN ('mfa.require_for_roles', 'mfa.bypass_enabled')"
+            )
+            rows = {r[0]: r[1] for r in cur.fetchall()}
+        require_for_roles = json.loads(rows.get("mfa.require_for_roles", '["admin","superadmin"]'))
+        bypass_enabled = rows.get("mfa.bypass_enabled", "false").lower() in ("true", "1")
+        return {"require_for_roles": require_for_roles, "bypass_enabled": bypass_enabled}
+    except Exception as exc:
+        logger.error("Failed to fetch MFA enforcement settings: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to fetch MFA enforcement settings")
+
+
+@app.put("/admin/settings/mfa-enforcement")
+@limiter.limit("10/minute")
+def update_mfa_enforcement(
+    request: Request,
+    payload: dict,
+    current_user: User = Depends(require_authentication),
+):
+    """Update MFA enforcement configuration. Superadmin only.
+
+    Accepted payload fields:
+      require_for_roles: list[str]  — e.g. ["admin", "superadmin"]
+      bypass_enabled: bool          — emergency override (disables enforcement)
+    """
+    if current_user.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Superadmin role required")
+
+    _valid_roles = {"admin", "superadmin", "viewer", "operator"}
+    updates: dict = {}
+
+    if "require_for_roles" in payload:
+        roles = payload["require_for_roles"]
+        if not isinstance(roles, list) or not all(isinstance(r, str) and r in _valid_roles for r in roles):
+            raise HTTPException(
+                status_code=422,
+                detail=f"require_for_roles must be a list of valid roles: {sorted(_valid_roles)}",
+            )
+        updates["mfa.require_for_roles"] = json.dumps(roles)
+
+    if "bypass_enabled" in payload:
+        if not isinstance(payload["bypass_enabled"], bool):
+            raise HTTPException(status_code=422, detail="bypass_enabled must be a boolean")
+        updates["mfa.bypass_enabled"] = "true" if payload["bypass_enabled"] else "false"
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid settings keys provided")
+
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            for key, value in updates.items():
+                cur.execute(
+                    """INSERT INTO system_settings (key, value) VALUES (%s, %s)
+                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""",
+                    (key, value),
+                )
+        logger.info(
+            "MFA enforcement settings updated by %s: %s",
+            current_user.username,
+            list(updates.keys()),
+        )
+        return {"status": "success", "updated_keys": list(updates.keys())}
+    except Exception as exc:
+        logger.error("Failed to update MFA enforcement settings: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to update MFA enforcement settings")
 
 
 # Serve static files (uploaded logos)

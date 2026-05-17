@@ -902,6 +902,15 @@ async def get_current_user(
     if not token_data:
         return None
 
+    # Tokens marked mfa_pending or mfa_enrollment_required are scoped only to
+    # the /auth/mfa/* endpoints — they must not be accepted as general sessions.
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        if payload.get("mfa_pending") or payload.get("mfa_enrollment_required"):
+            return None
+    except Exception:
+        return None
+
     role = get_user_role(token_data.username)
     return User(username=token_data.username, role=role)
 

@@ -61,6 +61,7 @@ type LoginResponse = {
   expires_in: number;
   expires_at?: string;
   mfa_required?: boolean;
+  mfa_enrollment_required?: boolean;
   user: AuthUser;
 };
 
@@ -578,9 +579,10 @@ interface LoginPageProps {
   mfaUser?: AuthUser | null;
   handleMfaVerify?: (code: string) => void;
   onMfaCancel?: () => void;
+  mfaEnrollmentRequired?: boolean;
 }
 
-const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLogin, mfaPending, mfaUser, handleMfaVerify, onMfaCancel }) => {
+const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLogin, mfaPending, mfaUser, handleMfaVerify, onMfaCancel, mfaEnrollmentRequired }) => {
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
   const [branding, setBranding] = useState<BrandingSettings>(DEFAULT_BRANDING);
@@ -681,7 +683,55 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
             </p>
           </div>
 
-          {mfaPending ? (
+          {mfaEnrollmentRequired ? (
+            /* ---- MFA Enrollment Required Interstitial ---- */
+            <div>
+              <div style={{
+                textAlign: 'center', marginBottom: '1.5rem', padding: '1rem',
+                background: isDark ? 'rgba(245,158,11,0.1)' : '#fffbeb',
+                borderRadius: '12px', border: isDark ? '1px solid rgba(245,158,11,0.3)' : '1px solid #fcd34d',
+              }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🔒</div>
+                <p style={{ color: isDark ? 'rgba(255,255,255,0.9)' : '#92400e', fontWeight: 600, fontSize: '1rem', margin: 0 }}>
+                  MFA Enrollment Required
+                </p>
+                {mfaUser && (
+                  <p style={{ color: isDark ? 'rgba(255,255,255,0.5)' : '#78350f', fontSize: '0.8rem', margin: '4px 0 0' }}>
+                    Your administrator requires MFA for the <strong>{mfaUser.role}</strong> role.
+                  </p>
+                )}
+              </div>
+              <p style={{ fontSize: '0.875rem', color: isDark ? 'rgba(255,255,255,0.7)' : '#555', lineHeight: 1.6 }}>
+                You must set up Two-Factor Authentication before accessing the management portal.
+                Use the button below to open the MFA setup page.
+              </p>
+              <a
+                href="/auth/mfa/setup"
+                style={{
+                  display: 'block', width: '100%', padding: '0.85rem',
+                  background: 'linear-gradient(135deg,#f59e0b,#d97706)',
+                  color: '#fff', textAlign: 'center', borderRadius: '8px',
+                  fontWeight: 600, fontSize: '0.95rem', textDecoration: 'none',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                Set Up MFA Now
+              </a>
+              <button
+                type="button"
+                onClick={onMfaCancel}
+                style={{
+                  width: '100%', padding: '0.7rem',
+                  background: 'none', border: '1px solid #ccc',
+                  borderRadius: '8px', cursor: 'pointer',
+                  color: isDark ? 'rgba(255,255,255,0.6)' : '#666',
+                  fontSize: '0.875rem',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : mfaPending ? (
             /* ---- MFA Verification Form ---- */
             <form onSubmit={(e) => {
               e.preventDefault();
@@ -1038,8 +1088,12 @@ const App: React.FC = () => {
   const [mfaPending, setMfaPending] = useState(false);
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [mfaUser, setMfaUser] = useState<AuthUser | null>(null);
+  // MFA enrollment enforcement state (S5)
+  const [mfaEnrollmentRequired, setMfaEnrollmentRequired] = useState(false);
   // MFA settings modal
   const [showMfaSettings, setShowMfaSettings] = useState(false);
+  // S5: nag banner — true when user is admin/superadmin without MFA enrolled
+  const [mfaNagBanner, setMfaNagBanner] = useState(false);
 
   // Demo mode state
   const [isDemo, setIsDemo] = useState(false);
@@ -1152,6 +1206,14 @@ const App: React.FC = () => {
         setMfaUser(data.user);
         return;
       }
+
+      // S5: MFA enrollment enforcement
+      if (data.mfa_enrollment_required) {
+        setMfaEnrollmentRequired(true);
+        setMfaToken(data.access_token);
+        setMfaUser(data.user);
+        return;
+      }
       
       // Store auth data including expiration time
       localStorage.setItem('auth_user', JSON.stringify(data.user));
@@ -1163,6 +1225,18 @@ const App: React.FC = () => {
       setAuthToken(data.access_token);
       setAuthUser(data.user);
       setIsAuthenticated(true);
+      // S5: check if admin user has MFA enrolled — show nag if not
+      if (["admin", "superadmin"].includes(data.user?.role ?? "")) {
+        fetch(`${API_BASE}/auth/mfa/status`, {
+          headers: { Authorization: `Bearer ${data.access_token}` },
+          credentials: "include",
+        })
+          .then((r) => r.ok ? r.json() : null)
+          .then((s: { is_enabled?: boolean } | null) => {
+            if (s && !s.is_enabled) setMfaNagBanner(true);
+          })
+          .catch(() => {});
+      }
     } catch (error: any) {
       setLoginError(error.message || 'Login failed');
     } finally {
@@ -3192,8 +3266,10 @@ const App: React.FC = () => {
           mfaPending={mfaPending}
           mfaUser={mfaUser}
           handleMfaVerify={handleMfaVerify}
+          mfaEnrollmentRequired={mfaEnrollmentRequired}
           onMfaCancel={() => {
             setMfaPending(false);
+            setMfaEnrollmentRequired(false);
             setMfaToken(null);
             setMfaUser(null);
             setLoginError("");
@@ -3226,6 +3302,25 @@ const App: React.FC = () => {
           <button
             onClick={() => setOfflineBanner(false)}
             aria-label="Dismiss connection warning"
+            style={{ marginLeft: "auto", background: "none", border: "none", color: "#fff", cursor: "pointer", fontSize: "1rem" }}
+          >✕</button>
+        </div>
+      )}
+      {mfaNagBanner && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, zIndex: 9998,
+          background: "#d97706", color: "#fff",
+          padding: "8px 16px", display: "flex", alignItems: "center", gap: "12px",
+          fontSize: "0.875rem", fontWeight: 500,
+        }}>
+          <span>🔒 Your account does not have MFA enabled. Enroll now to meet your organisation's security policy.</span>
+          <button
+            onClick={() => setShowMfaSettings(true)}
+            style={{ marginLeft: "8px", padding: "3px 12px", background: "#fff", color: "#92400e", border: "none", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: "0.8rem" }}
+          >Set Up MFA</button>
+          <button
+            onClick={() => setMfaNagBanner(false)}
+            aria-label="Dismiss MFA nag"
             style={{ marginLeft: "auto", background: "none", border: "none", color: "#fff", cursor: "pointer", fontSize: "1rem" }}
           >✕</button>
         </div>

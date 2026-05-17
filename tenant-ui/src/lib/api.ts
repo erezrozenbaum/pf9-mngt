@@ -1134,6 +1134,60 @@ export interface UsedIpEntry {
   ips: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Notification preferences & history
+// ---------------------------------------------------------------------------
+
+export type NotifChannel = "email" | "webhook";
+
+export interface NotifPref {
+  id?: number;
+  event_type: string;
+  channel: NotifChannel;
+  endpoint: string;
+  enabled: boolean;
+}
+
+export interface NotifHistoryRow {
+  id: number;
+  event_type: string;
+  subject: string;
+  delivery_status: string;
+  sent_at: string | null;
+  created_at: string;
+  error_message: string | null;
+}
+
+export async function apiNotifPreferences(): Promise<NotifPref[]> {
+  const raw = await tenantFetch<{ preferences: NotifPref[] }>("/tenant/notifications/preferences");
+  return raw.preferences ?? [];
+}
+
+export async function apiNotifUpsert(preferences: NotifPref[]): Promise<{ updated: number }> {
+  return tenantFetch("/tenant/notifications/preferences", {
+    method: "PUT",
+    body: JSON.stringify({ preferences }),
+  });
+}
+
+export async function apiNotifDelete(event_type: string, channel: NotifChannel): Promise<void> {
+  await tenantFetch(`/tenant/notifications/preferences/${event_type}/${channel}`, {
+    method: "DELETE",
+  });
+}
+
+export async function apiNotifHistory(): Promise<NotifHistoryRow[]> {
+  const raw = await tenantFetch<{ history: NotifHistoryRow[] }>("/tenant/notifications/history");
+  return raw.history ?? [];
+}
+
+export async function apiNotifWebhookTest(url: string): Promise<{ status: number; ok: boolean }> {
+  return tenantFetch("/tenant/notifications/webhook-test", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  });
+}
+
 export async function apiNetworkUsedIps(networkId: string): Promise<UsedIpEntry[]> {
   const raw = await tenantFetch<Record<string, unknown>>(`/tenant/networks/${encodeURIComponent(networkId)}/used-ips`);
   return ((raw.used ?? []) as Record<string, unknown>[]).map((r) => ({

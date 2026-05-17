@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.0.7 — Added missing `migration_wave_preflights` table; wave creation and auto-build no longer crash with `relation does not exist`
+> **Version**: v2.1.0 — Tenant-facing notification subscriptions (9 event types, email + webhook, SSRF protected); admin-configurable MFA enrollment enforcement; MFA token fail-closed security improvement
+> Previous: v2.0.7 — Added missing `migration_wave_preflights` table; wave creation and auto-build no longer crash with `relation does not exist`
 > Previous: v2.0.6 — Hotfix: Auto-Build Waves (commit mode) now uses actual DB schema for `migration_waves` and `migration_wave_vms`; garbled pilot wave name prefix corrected; migration progress query ambiguous column resolved
 > Previous: v2.0.3 — Hotfix: `wave_started`/`wave_completed` webhook events return `400` on non-integer `wave_id`
 > Previous: v2.0.1 — Hotfix: webhook endpoint JWT bypass (HMAC-authenticated machine-to-machine routes now correctly skip JWT middleware); `db/init.sql` updated with v2.0.0 schema for fresh installs
@@ -5613,3 +5614,50 @@ Requires Admin or Superadmin role for write operations.
 Managed via Intelligence Settings panel (CSV import) or directly via DB. No dedicated REST endpoint — use CSV import in UI or apply via migration script.
 
 **`msp_contract_entitlements` columns**: `tenant_id`, `resource` (`vcpu`/`ram_gb`/`storage_gb`/`floating_ip`), `limit_value`, `region_id` (nullable for global), `effective_from`, `effective_to` (nullable = open-ended), `notes`.
+
+---
+
+## Tenant Notification Endpoints (v2.1.0)
+
+These endpoints are served by the **tenant portal** (port 8010) and require a valid tenant session.
+
+### List Notification Preferences
+**GET** `/tenant/notifications/preferences`
+
+Returns all subscriptions for the authenticated user across their projects. Supported `event_type` values: `snapshot_completed`, `snapshot_failed`, `restore_completed`, `restore_failed`, `quota_at_80pct`, `quota_at_95pct`, `vm_provisioned`, `vm_provision_failed`, `billing_invoice_ready`. Supported `channel` values: `email`, `webhook`.
+
+### Bulk Upsert Notification Preferences
+**PUT** `/tenant/notifications/preferences`
+
+Request body: `{"preferences": [...]}` (max 18 items). Webhook `endpoint` values are validated against an SSRF blocklist — private, loopback, link-local, and carrier-grade NAT ranges are rejected with `422 Unprocessable Entity`.
+
+### Delete Notification Preference
+**DELETE** `/tenant/notifications/preferences/{event_type}/{channel}`
+
+Scoped to the authenticated tenant user.
+
+### Tenant Notification History
+**GET** `/tenant/notifications/history`
+
+Returns the last 50 notification delivery events scoped to the tenant's projects.
+
+### Test Webhook Endpoint
+**POST** `/tenant/notifications/webhook-test`
+
+Request: `{"url": "https://hooks.example.com/notify"}`. Sends a test POST to the URL (subject to SSRF guard).
+
+---
+
+## Admin MFA Enforcement Endpoints (v2.1.0)
+
+### Get MFA Enforcement Settings
+**GET** `/admin/settings/mfa-enforcement`  
+*Requires: `admin` or `superadmin` role*
+
+Response: `{"require_for_roles": ["admin", "superadmin"], "bypass_enabled": false}`
+
+### Update MFA Enforcement Settings
+**PUT** `/admin/settings/mfa-enforcement`  
+*Requires: `superadmin` role*
+
+Request: `{"require_for_roles": ["admin", "superadmin"], "bypass_enabled": false}`. `require_for_roles` must be a subset of `["admin", "superadmin", "viewer", "operator"]`.

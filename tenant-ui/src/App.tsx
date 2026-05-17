@@ -17,7 +17,8 @@ export type Screen =
   | "chargeback"
   | "provision"
   | "activity"
-  | "timeline";
+  | "timeline"
+  | "notifications";
 
 export default function App() {
   const auth = useAuth();
