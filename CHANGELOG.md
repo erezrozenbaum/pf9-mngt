@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.6] - 2026-05-17
+
+### Fixed
+- **Auto-Build Waves schema errors**: `POST .../auto-waves` (commit mode) was crashing with `UndefinedColumn: column "wave_type" of relation "migration_waves" does not exist` because the INSERT referenced non-existent columns (`wave_type`, `cohort_id`, `scheduled_start`, `scheduled_end`). Fixed to only insert `project_id`, `wave_number`, `name`, `description` which are the actual schema columns.
+- **Auto-Build Waves VM assignment crash**: The `migration_wave_vms` INSERT also referenced non-existent `vm_id` and `assigned_at` columns and used a non-existent partial index as the ON CONFLICT target. Fixed to insert `(project_id, wave_number, vm_name, migration_order)` with `ON CONFLICT (project_id, vm_name)` matching the real unique constraint.
+- **Garbled wave name prefix**: Pilot waves were named with a garbled multi-byte character sequence (`≡ƒº¬`) instead of readable text. Fixed to `<prefix> - Pilot` (e.g. `Wave - Pilot`, `Cohort 1 - Pilot`).
+- **Migration progress ambiguous column**: `GET .../migration-progress` JOIN query had an ambiguous `vm_name` reference; qualified to `mv.vm_name` and `mwv.wave_number`.
+
+---
+
 ## [2.0.5] - 2026-05-17
 
 ### Fixed

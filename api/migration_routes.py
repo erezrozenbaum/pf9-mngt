@@ -7485,18 +7485,13 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     INSERT INTO migration_waves
-                        (project_id, wave_number, name, wave_type, cohort_id, status,
-                         scheduled_start, scheduled_end)
-                    VALUES (%s,%s,%s,%s,%s,'planned',%s,%s)
+                        (project_id, wave_number, name, description, status)
+                    VALUES (%s,%s,%s,%s,'planned')
                     ON CONFLICT (project_id, wave_number) DO UPDATE SET
-                        name=EXCLUDED.name, wave_type=EXCLUDED.wave_type,
-                        cohort_id=EXCLUDED.cohort_id,
-                        scheduled_start=EXCLUDED.scheduled_start,
-                        scheduled_end=EXCLUDED.scheduled_end,
+                        name=EXCLUDED.name, description=EXCLUDED.description,
                         updated_at=now()
                     RETURNING id, wave_number
-                """, (project_id, wave_number, wave_name, w["wave_type"], cohort_id_for_wave,
-                       w.get("scheduled_start"), w.get("scheduled_end")))
+                """, (project_id, wave_number, wave_name, w.get("wave_type")))
                 wave_row = cur.fetchone()
                 wave_id = wave_row["id"]
 
@@ -7510,13 +7505,12 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
                     vm_name = vm_name_map.get(vm_id, str(vm_id))
                     cur.execute("""
                         INSERT INTO migration_wave_vms
-                            (project_id, wave_number, vm_id, vm_name, migration_order, assigned_at)
-                        VALUES (%s,%s,%s,%s,%s,now())
-                        ON CONFLICT (project_id, vm_id) WHERE vm_id IS NOT NULL DO UPDATE
+                            (project_id, wave_number, vm_name, migration_order)
+                        VALUES (%s,%s,%s,%s)
+                        ON CONFLICT (project_id, vm_name) DO UPDATE
                             SET wave_number=EXCLUDED.wave_number,
-                                migration_order=EXCLUDED.migration_order,
-                                assigned_at=EXCLUDED.assigned_at
-                    """, (project_id, wave_number, vm_id, vm_name, order))
+                                migration_order=EXCLUDED.migration_order
+                    """, (project_id, wave_number, vm_name, order))
                     cur.execute("""
                         UPDATE migration_vms SET migration_status='assigned'
                         WHERE id=%s AND project_id=%s AND migration_status='not_started'
@@ -10560,8 +10554,8 @@ def get_migration_progress(project_id: str):
             # VM status summary
             cur.execute(
                 """
-                SELECT vm_name, migration_status, failure_reason,
-                       migrated_at, wave_number
+                SELECT mv.vm_name, mv.migration_status, mv.failure_reason,
+                       mv.migrated_at, mwv.wave_number
                 FROM migration_vms mv
                 LEFT JOIN migration_wave_vms mwv
                     ON mwv.project_id = mv.project_id AND mwv.vm_name = mv.vm_name
