@@ -1419,7 +1419,7 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v2.0.6** (May 17, 2026)
+Current schema version: **v2.0.7** (May 17, 2026)
 
 ---
 
@@ -1451,3 +1451,50 @@ CREATE INDEX idx_mwe_project_event    ON migration_webhook_events(project_id, ev
 | `migration_vms` | `migration_status` | `TEXT DEFAULT 'pending'` | Updated by webhook: `pending`, `started`, `migrated`, `failed` |
 | `migration_vms` | `failure_reason` | `TEXT` | Error detail from `vm_failed` events |
 | `migration_vms` | `migrated_at` | `TIMESTAMPTZ` | Set when `vm_migrated` event received |
+
+---
+
+## Wave Pre-Flight Checks (v2.0.7)
+
+### migration_wave_preflights
+Per-wave pre-flight check tracking table. Rows are seeded automatically when a wave is created (via `POST .../waves` or `POST .../auto-waves`). Operators update individual check status via `PATCH .../waves/{wave_number}/preflights/{check_name}`.
+
+```sql
+CREATE TABLE IF NOT EXISTS migration_wave_preflights (
+    id              BIGSERIAL PRIMARY KEY,
+    wave_id         BIGINT    NOT NULL REFERENCES migration_waves(id) ON DELETE CASCADE,
+    check_name      TEXT      NOT NULL,
+    check_label     TEXT      NOT NULL,
+    severity        TEXT      NOT NULL DEFAULT 'info',   -- blocker | warning | info
+    check_status    TEXT      NOT NULL DEFAULT 'pending',-- pending | pass | fail | skipped
+    notes           TEXT,
+    checked_at      TIMESTAMPTZ,
+    checked_by      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (wave_id, check_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wave_preflights_wave ON migration_wave_preflights(wave_id);
+```
+
+| Column | Description |
+|---|---|
+| `wave_id` | FK → `migration_waves.id`; cascades on wave delete |
+| `check_name` | Machine identifier (e.g. `network_mapped`, `target_project_set`) |
+| `check_label` | Human-readable label shown in the UI |
+| `severity` | `blocker` — blocks wave execution; `warning` — advisory; `info` — informational |
+| `check_status` | `pending` (default), `pass`, `fail`, `skipped` |
+| `notes` | Free-form operator notes |
+| `checked_at` | Timestamp of last status update |
+| `checked_by` | Username of operator who last updated the check |
+
+**Seeded checks** (6 per wave):
+
+| `check_name` | `check_label` | `severity` |
+|---|---|---|
+| `network_mapped` | All VM networks mapped | `blocker` |
+| `target_project_set` | Target PCD project confirmed | `blocker` |
+| `no_critical_gaps` | No unresolved critical PCD gaps | `blocker` |
+| `backup_confirmed` | Pre-migration backups confirmed | `warning` |
+| `owner_notified` | VM owners notified of maintenance | `warning` |
+| `runbook_selected` | Migration runbook assigned | `info` |

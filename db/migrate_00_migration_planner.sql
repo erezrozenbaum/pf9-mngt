@@ -470,6 +470,25 @@ CREATE TABLE IF NOT EXISTS migration_wave_vms (
 CREATE INDEX IF NOT EXISTS idx_mig_wave_vms_project ON migration_wave_vms(project_id);
 CREATE INDEX IF NOT EXISTS idx_mig_wave_vms_wave    ON migration_wave_vms(project_id, wave_number);
 
+-- ---------------------------------------------------------------------------
+-- 12b. Wave pre-flight checks
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS migration_wave_preflights (
+    id              BIGSERIAL PRIMARY KEY,
+    wave_id         BIGINT    NOT NULL REFERENCES migration_waves(id) ON DELETE CASCADE,
+    check_name      TEXT      NOT NULL,
+    check_label     TEXT      NOT NULL,
+    severity        TEXT      NOT NULL DEFAULT 'info',   -- blocker | warning | info
+    check_status    TEXT      NOT NULL DEFAULT 'pending', -- pending | pass | fail | skipped | na
+    notes           TEXT,
+    checked_at      TIMESTAMPTZ,
+    checked_by      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (wave_id, check_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wave_preflights_wave ON migration_wave_preflights(wave_id);
+
 -- ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
 -- 13. Target readiness gaps (Phase 4)
 -- ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא

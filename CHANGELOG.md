@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.7] - 2026-05-17
+
+### Fixed
+- **Missing `migration_wave_preflights` table**: `POST .../waves` and `POST .../auto-waves` (commit mode) were crashing with `relation "migration_wave_preflights" does not exist` when attempting to seed pre-flight check rows after wave creation. Added the `migration_wave_preflights` table definition to the database migration SQL file. The table provides per-wave pre-flight tracking with columns `wave_id`, `check_name`, `check_label`, `severity`, `check_status`, `notes`, `checked_at`, and `checked_by`.
+
+---
+
 ## [2.0.6] - 2026-05-17
 
 ### Fixed
