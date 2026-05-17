@@ -128,7 +128,43 @@ def _stub_modules():
     copilot_llm_stub.test_anthropic = MagicMock()  # type: ignore[attr-defined]
 
 
-_stub_modules()
+# ---------------------------------------------------------------------------
+# All module names touched by _stub_modules() — used for fixture cleanup
+# ---------------------------------------------------------------------------
+_STUBBED_NAMES = {
+    "psycopg2", "psycopg2.pool", "psycopg2.extras",
+    "fastapi", "fastapi.responses", "fastapi.routing",
+    "starlette", "starlette.routing", "starlette.requests",
+    "pydantic", "pydantic.fields",
+    "cryptography", "cryptography.fernet",
+    "jose", "jose.jwt", "jose.exceptions",
+    "httpx",
+    "db_pool", "auth", "crypto_helper",
+    "copilot_intents", "copilot_context", "copilot_llm",
+    "copilot",
+}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _module_stubs():
+    """Apply module stubs before tests run; restore sys.modules afterwards.
+
+    Calling _stub_modules() inside a fixture (not at module level) ensures
+    sys.modules is NOT polluted during pytest's collection phase, which would
+    cause ImportError/AttributeError in other test files collected after this
+    one (e.g. test_crypto_helper.py, test_tenant_portal_login_integration.py).
+    """
+    saved = {name: sys.modules.get(name) for name in _STUBBED_NAMES}
+    for name in _STUBBED_NAMES:
+        sys.modules.pop(name, None)
+    _stub_modules()
+    yield
+    for name in _STUBBED_NAMES:
+        if saved[name] is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = saved[name]
+
 
 # ---------------------------------------------------------------------------
 # Helper: import the functions under test directly (not the module)
