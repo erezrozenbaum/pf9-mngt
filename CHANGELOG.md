@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.1] - 2026-05-17
+
+### Fixed
+- **Snapshot tenant event collector crash**: The `collect_tenant_snapshot_events` function referenced a `volume_name` column that does not exist in the `snapshots` table. The column was removed from the SELECT and the event payload; the `name` column (already aliased as `snapshot_name`) is used instead. Notification worker was logging an ERROR every poll cycle.
+- **Missing DB migration file**: The `tenant_notification_prefs` table and the `notification_log.notification_target` column added in v2.1.0 were defined only inside the existing `migrate_notifications.sql` (which was already applied), so new deployments could not create them. A dedicated `db/migrate_v2_1_0_tenant_notifications.sql` migration file has been added; `db/init.sql` has also been updated to include both objects for fresh installs.
+
+---
+
 ## [2.1.0] - 2026-05-18
 
 ### Added

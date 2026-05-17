@@ -736,7 +736,7 @@ def collect_tenant_snapshot_events(conn, since: datetime) -> List[Dict]:
         cur.execute(
             """
             SELECT id, project_id, project_name, name AS snapshot_name,
-                   volume_id, volume_name, size_gb, status, updated_at
+                   volume_id, size_gb, status, updated_at
             FROM   snapshots
             WHERE  updated_at >= %s
               AND  status IN ('available', 'error')
@@ -758,7 +758,6 @@ def collect_tenant_snapshot_events(conn, since: datetime) -> List[Dict]:
                 "resource_id": str(row["id"]),
                 "resource_name": row.get("snapshot_name", str(row["id"])),
                 "volume_id": row.get("volume_id", ""),
-                "volume_name": row.get("volume_name", ""),
                 "size_gb": row.get("size_gb", 0),
                 "status": row["status"],
                 "updated_at": row["updated_at"].isoformat() if row["updated_at"] else "",

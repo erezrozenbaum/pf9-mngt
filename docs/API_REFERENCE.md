@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.1.0 — Tenant-facing notification subscriptions (9 event types, email + webhook, SSRF protected); admin-configurable MFA enrollment enforcement; MFA token fail-closed security improvement
+> **Version**: v2.1.1 — Hotfix: removed non-existent `volume_name` column from snapshot tenant event collector; added `db/migrate_v2_1_0_tenant_notifications.sql` migration file
+> Previous: v2.1.0 — Tenant-facing notification subscriptions (9 event types, email + webhook, SSRF protected); admin-configurable MFA enrollment enforcement; MFA token fail-closed security improvement
 > Previous: v2.0.7 — Added missing `migration_wave_preflights` table; wave creation and auto-build no longer crash with `relation does not exist`
 > Previous: v2.0.6 — Hotfix: Auto-Build Waves (commit mode) now uses actual DB schema for `migration_waves` and `migration_wave_vms`; garbled pilot wave name prefix corrected; migration progress query ambiguous column resolved
 > Previous: v2.0.3 — Hotfix: `wave_started`/`wave_completed` webhook events return `400` on non-integer `wave_id`
