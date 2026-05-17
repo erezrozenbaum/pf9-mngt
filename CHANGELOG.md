@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.0] - 2026-05-19
+
+### Added
+- **Copilot agentic execution**: After Ops Copilot answers an infrastructure question, a "Run it" button is offered when the matched intent has a corresponding runbook. Clicking the button opens a confirmation modal; the Copilot then triggers the runbook on the user's behalf via an internal service token with no additional navigation required.
+- **Per-user hourly execution quota**: Each user is limited to a configurable number of Copilot-triggered runbook executions per hour (default: 10). The limit is enforced server-side and surfaced via `GET /api/copilot/agentic-status`.
+- **Platform-wide agentic toggle**: A superadmin-controlled system setting (`copilot.agentic_enabled`) can disable Copilot-triggered executions globally without redeployment.
+- **Dry-run mode support**: For runbooks that support preview mode, a dry-run toggle is shown in the confirmation modal (checked by default).
+- **Risk-level badges**: Intents are annotated with a risk level (`low`, `medium`, `high`). High-risk operations require the user to type `confirm` before the button is enabled.
+- **Agentic audit trail**: Every Copilot-triggered execution is recorded in the new `copilot_execution_log` table and in `auth_audit_log` with action `copilot_triggered_runbook`.
+- **New API endpoints**: `GET /api/copilot/agentic-status` (quota info) and `POST /api/copilot/execute-intent` (trigger a runbook with confirmation).
+- **DB migration**: `db/migrate_v2_2_0_copilot_agentic.sql` creates `copilot_execution_log` and seeds the new system settings.
+
+### Changed
+- Copilot `/api/copilot/ask` response now includes `action_available`, `runbook_name`, `risk_level`, and `supports_dry_run` fields when a runbook is available for the matched intent.
+- 16 Copilot intent definitions annotated with their corresponding runbook, risk level, and dry-run support.
+
+---
+
 ## [2.1.1] - 2026-05-17
 
 ### Fixed

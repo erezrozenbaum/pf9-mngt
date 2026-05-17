@@ -41,7 +41,6 @@ def _db_params() -> dict:
         user=os.getenv("TENANT_DB_USER", "tenant_portal_role"),
         password=read_secret("tenant_portal_db_password", env_var="TENANT_DB_PASSWORD"),
         connect_timeout=10,
-        options="-c search_path=public",
     )
 
 

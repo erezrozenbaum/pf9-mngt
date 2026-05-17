@@ -767,3 +767,154 @@
     display: none;
   }
 }
+
+/* ── Feature 2: Copilot Can Act ────────────────────────────── */
+
+.copilot-action-offer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--copilot-action-bg, #f0f7ff);
+  border: 1px solid var(--copilot-action-border, #bfdbfe);
+  font-size: 13px;
+}
+
+.copilot-risk-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.copilot-risk-badge.low    { background: #d1fae5; color: #065f46; }
+.copilot-risk-badge.medium { background: #fef3c7; color: #92400e; }
+.copilot-risk-badge.high   { background: #fee2e2; color: #991b1b; }
+
+.copilot-btn-run {
+  margin-left: auto;
+  padding: 4px 12px;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.copilot-btn-run:hover { background: #1d4ed8; }
+
+.copilot-exec-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--copilot-meta-color, #6b7280);
+}
+.copilot-exec-status code {
+  background: var(--copilot-code-bg, #f3f4f6);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.rb-status-badge {
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.rb-status-badge.completed  { background: #d1fae5; color: #065f46; }
+.rb-status-badge.failed     { background: #fee2e2; color: #991b1b; }
+.rb-status-badge.running    { background: #fef3c7; color: #92400e; }
+.rb-status-badge.dispatched { background: #e0f2fe; color: #0369a1; }
+
+/* Confirmation modal */
+.copilot-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.copilot-modal {
+  background: var(--copilot-bg, #fff);
+  border-radius: 12px;
+  padding: 24px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+.copilot-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 16px;
+}
+.copilot-modal-body p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.copilot-dryrun-label {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+.copilot-high-risk-warn {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-top: 10px;
+}
+.copilot-confirm-input {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.copilot-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+
+/* Dark-mode overrides for new elements */
+[data-theme="dark"] .copilot-action-offer {
+  background: #1e3a5f;
+  border-color: #1e40af;
+}
+[data-theme="dark"] .copilot-modal {
+  background: #1e293b;
+  color: #f1f5f9;
+}
+[data-theme="dark"] .copilot-high-risk-warn {
+  background: #451a03;
+  border-color: #92400e;
+}
+[data-theme="dark"] .copilot-confirm-input {
+  background: #0f172a;
+  border-color: #334155;
+  color: #f1f5f9;
+}

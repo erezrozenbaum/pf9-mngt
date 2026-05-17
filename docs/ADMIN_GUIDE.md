@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.1.1  
-**Last Updated**: May 17, 2026  
+**Version**: 2.2.0  
+**Last Updated**: May 19, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -1906,6 +1906,19 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **RBAC**: All endpoints require authentication; config endpoints require admin role. `copilot` resource added to the permission map with 3 actions: `read` (view/use), `write` (configure), `admin` (full control). Panel visibility gated by `copilot:read` — superadmins can toggle Copilot access per role from Admin → User Management → Permissions. All roles have `read` by default; `write`/`admin` restricted to admin and superadmin.
 - **Dark Mode**: Full dark theme support for panel, messages, chips, help view, welcome screen, and settings.
 - **DB Migration**: `db/migrate_copilot.sql` (3 tables: `copilot_history`, `copilot_feedback`, `copilot_config`)
+
+### Ops Copilot — Agentic Execution (v2.2.0)
+Operators can now ask a question and immediately act on the answer — without leaving the Copilot chat panel.
+
+- **"Run it" button**: After the Copilot answers an intent-matched question, a contextual action offer appears if a matching runbook is available. Clicking **▶ Run it** opens a confirmation modal.
+- **Dry-run mode**: For supported runbooks the modal defaults to dry-run (preview only, no changes). The user can uncheck to execute for real.
+- **Risk levels**: Each action is tagged `low`, `medium`, or `high`. High-risk actions require the user to type `confirm` before the button is enabled.
+- **Confirmation required**: The `confirmed: true` field is mandatory in the API call; missing or false rejects with HTTP 400.
+- **Per-user hourly quota**: Default 10 executions/hour per user. Configurable via system setting `copilot.execution_quota_per_hour`. Exceeding the limit returns HTTP 429.
+- **Platform-wide disable toggle**: Set `copilot.agentic_enabled = false` in system settings to disable all Copilot-triggered executions globally. Returns HTTP 403 to the UI; the "Run it" button is hidden.
+- **Full audit trail**: Every triggered execution is written to `copilot_execution_log` (username, intent, runbook, execution_id, dry_run, timestamp) and logged to `auth_audit_log` with action `copilot_triggered_runbook`.
+- **New API endpoints**: `GET /api/copilot/agentic-status` and `POST /api/copilot/execute-intent`.
+- **DB Migration**: `db/migrate_v2_2_0_copilot_agentic.sql`
 
 ### Policy-as-Code Runbooks (v1.21 → v1.83.12)
 - **📋 Runbooks Tab**: Operator-facing catalogue of 25+ built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Technical Tools nav group — accessible to all roles including tier 1 operators.
