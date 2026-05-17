@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.3] - 2026-05-17
+
+### Fixed
+- **Webhook `wave_id` validation**: `wave_started` and `wave_completed` webhook events now return `400 Bad Request` with a descriptive message when `wave_id` is not a valid integer (e.g. a string like `"wave-1"`). Previously this caused an unhandled `ValueError` and returned `500 Internal Server Error`.
+
+---
+
 ## [2.0.2] - 2026-05-17
 
 ### Changed

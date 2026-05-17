@@ -10530,23 +10530,31 @@ async def receive_vjailbreak_webhook(
                 )
 
             elif event_type == "wave_started" and wave_id is not None:
+                try:
+                    wave_num = int(wave_id)
+                except (ValueError, TypeError):
+                    raise HTTPException(status_code=400, detail=f"wave_id must be an integer, got: {wave_id!r}")
                 cur.execute(
                     """
                     UPDATE migration_waves
                        SET status = 'executing'
                      WHERE project_id = %s AND wave_number = %s AND status != 'completed'
                     """,
-                    (project_id, int(wave_id)),
+                    (project_id, wave_num),
                 )
 
             elif event_type == "wave_completed" and wave_id is not None:
+                try:
+                    wave_num = int(wave_id)
+                except (ValueError, TypeError):
+                    raise HTTPException(status_code=400, detail=f"wave_id must be an integer, got: {wave_id!r}")
                 cur.execute(
                     """
                     UPDATE migration_waves
                        SET status = 'completed'
                      WHERE project_id = %s AND wave_number = %s
                     """,
-                    (project_id, int(wave_id)),
+                    (project_id, wave_num),
                 )
 
     return {"status": "accepted", "event_type": event_type}
