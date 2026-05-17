@@ -1336,24 +1336,26 @@ CREATE INDEX IF NOT EXISTS idx_notification_prefs_event    ON notification_prefe
 
 -- Sent notification log (with deduplication)
 CREATE TABLE IF NOT EXISTS notification_log (
-    id              SERIAL PRIMARY KEY,
-    username        TEXT NOT NULL,
-    email           TEXT NOT NULL,
-    event_type      TEXT NOT NULL,
-    event_id        TEXT,
-    dedup_key       TEXT,
-    subject         TEXT NOT NULL,
-    body_preview    TEXT,
-    delivery_status TEXT NOT NULL DEFAULT 'pending',
-    error_message   TEXT,
-    sent_at         TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                   SERIAL PRIMARY KEY,
+    username             TEXT NOT NULL,
+    email                TEXT NOT NULL,
+    event_type           TEXT NOT NULL,
+    event_id             TEXT,
+    dedup_key            TEXT,
+    subject              TEXT NOT NULL,
+    body_preview         TEXT,
+    delivery_status      TEXT NOT NULL DEFAULT 'pending',
+    error_message        TEXT,
+    sent_at              TIMESTAMPTZ,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    notification_target  TEXT NOT NULL DEFAULT 'operator'  -- 'operator' | 'tenant'
 );
 
 CREATE INDEX IF NOT EXISTS idx_notification_log_username   ON notification_log (username);
 CREATE INDEX IF NOT EXISTS idx_notification_log_event_type ON notification_log (event_type);
 CREATE INDEX IF NOT EXISTS idx_notification_log_dedup_key  ON notification_log (dedup_key);
 CREATE INDEX IF NOT EXISTS idx_notification_log_created_at ON notification_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_log_target     ON notification_log (notification_target);
 
 -- Digest batching state per user
 CREATE TABLE IF NOT EXISTS notification_digests (
@@ -4769,3 +4771,29 @@ CREATE INDEX IF NOT EXISTS idx_mwe_project_received
 
 CREATE INDEX IF NOT EXISTS idx_mwe_project_event
     ON migration_webhook_events(project_id, event_type);
+
+-- =====================================================================
+-- TENANT NOTIFICATION PREFERENCES (v2.1.0)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS tenant_notification_prefs (
+    id               BIGSERIAL PRIMARY KEY,
+    project_id       TEXT        NOT NULL,
+    keystone_user_id TEXT        NOT NULL,
+    event_type       TEXT        NOT NULL CHECK (event_type IN (
+                         'snapshot_completed', 'snapshot_failed',
+                         'restore_completed',  'restore_failed',
+                         'quota_at_80pct',     'quota_at_95pct',
+                         'vm_provisioned',     'vm_provision_failed',
+                         'billing_invoice_ready')),
+    channel          TEXT        NOT NULL CHECK (channel IN ('email', 'webhook')),
+    endpoint         TEXT        NOT NULL,
+    enabled          BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (project_id, keystone_user_id, event_type, channel)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tnp_project ON tenant_notification_prefs (project_id);
+CREATE INDEX IF NOT EXISTS idx_tnp_user    ON tenant_notification_prefs (keystone_user_id);
+CREATE INDEX IF NOT EXISTS idx_tnp_event   ON tenant_notification_prefs (event_type);
