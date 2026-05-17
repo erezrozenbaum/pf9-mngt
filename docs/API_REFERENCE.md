@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.1.1 — Hotfix: removed non-existent `volume_name` column from snapshot tenant event collector; added `db/migrate_v2_1_0_tenant_notifications.sql` migration file
+> **Version**: v2.2.0 — Copilot agentic execution: new `POST /api/copilot/execute-intent` and `GET /api/copilot/agentic-status` endpoints; `ask` response extended with action fields.
+> Previous: v2.1.1 — Hotfix: removed non-existent `volume_name` column from snapshot tenant event collector; added `db/migrate_v2_1_0_tenant_notifications.sql` migration file
 > Previous: v2.1.0 — Tenant-facing notification subscriptions (9 event types, email + webhook, SSRF protected); admin-configurable MFA enrollment enforcement; MFA token fail-closed security improvement
 > Previous: v2.0.7 — Added missing `migration_wave_preflights` table; wave creation and auto-build no longer crash with `relation does not exist`
 > Previous: v2.0.6 — Hotfix: Auto-Build Waves (commit mode) now uses actual DB schema for `migration_waves` and `migration_wave_vms`; garbled pilot wave name prefix corrected; migration progress query ambiguous column resolved
@@ -3340,11 +3341,64 @@ Response:
   "confidence": 1.0,
   "tokens_used": null,
   "data_sent_external": false,
-  "history_id": 42
+  "history_id": 42,
+  "action_available": true,
+  "runbook_name": "stuck_vm_remediation",
+  "risk_level": "medium",
+  "supports_dry_run": true
 }
 ```
 
-**Scoping**: Append `on tenant <name>`, `for project <name>`, or `on host <hostname>` to any question. The engine dynamically injects SQL WHERE clauses to filter results.
+When `action_available` is `true`, the UI shows a "Run it" button. The `runbook_name`, `risk_level`, and `supports_dry_run` fields describe what action is available.
+
+### Agentic Status
+**GET** `/api/copilot/agentic-status`
+*Requires: authentication*
+
+Returns whether Copilot agentic execution is enabled and the current user's quota usage.
+
+Response:
+```json
+{
+  "enabled": true,
+  "quota_per_hour": 10,
+  "used_this_hour": 2,
+  "remaining": 8
+}
+```
+
+### Execute Intent
+**POST** `/api/copilot/execute-intent`
+*Requires: authentication*
+
+Triggers a runbook on behalf of the current user after explicit confirmation. The user must have already received an `ask` response with `action_available: true`.
+
+Request:
+```json
+{
+  "intent_key": "error_vms",
+  "runbook_name": "stuck_vm_remediation",
+  "confirmed": true,
+  "dry_run": true,
+  "parameters": {}
+}
+```
+
+- `confirmed` **must** be `true` — `false` returns HTTP 400
+- `dry_run` defaults to `true` (preview mode)
+- Returns HTTP 403 if agentic execution is disabled by an administrator
+- Returns HTTP 429 if the user's hourly execution quota is exceeded
+
+Response:
+```json
+{
+  "execution_id": "abc123",
+  "runbook_name": "stuck_vm_remediation",
+  "dry_run": true,
+  "status": "running",
+  "result": { ... }
+}
+```
 
 **Synonym expansion**: Words like "powered on" → "active", "vm" → "vms", "tenant" → "project" are expanded automatically for higher match accuracy.
 

@@ -36,6 +36,10 @@ class IntentMatch:
     params: tuple = ()
     formatter: Optional[Callable] = None   # rows → answer string
     api_handler: Optional[Callable] = None # question → answer (bypasses SQL)
+    # Feature 2: Copilot Can Act — action metadata
+    runbook_name: Optional[str] = None     # runbook the Copilot can offer to run
+    risk_level: str = "low"                # low | medium | high
+    supports_dry_run: bool = False         # whether the runbook supports dry_run
 
 
 @dataclass
@@ -55,6 +59,10 @@ class IntentDef:
     sql_template: str = ""
     # If set, called instead of executing SQL (for live API calls)
     api_handler: Optional[Callable] = None
+    # Feature 2: Copilot Can Act — action metadata
+    runbook_name: Optional[str] = None   # runbook to offer after this intent matches
+    risk_level: str = "low"              # low | medium | high
+    supports_dry_run: bool = False        # whether the mapped runbook supports dry_run
 
 
 # ---------------------------------------------------------------------------
@@ -643,6 +651,9 @@ INTENTS: List[IntentDef] = [
         api_handler=_fetch_configured_quota,
         supports_scope=True,
         boost=0.35,
+        runbook_name="quota_threshold_check",
+        risk_level="low",
+        supports_dry_run=False,
     ),
     IntentDef(
         key="quota_and_usage",
@@ -702,6 +713,9 @@ INTENTS: List[IntentDef] = [
                        {scope_where_project}
                        ORDER BY p.name LIMIT 30""",
         boost=0.15,
+        runbook_name="quota_threshold_check",
+        risk_level="low",
+        supports_dry_run=False,
     ),
 
     # ── List resources ─────────────────────────────────────────────────
@@ -821,6 +835,9 @@ INTENTS: List[IntentDef] = [
             if rows and rows[0]['total_vcpus'] else "No hypervisor data available."
         ),
         boost=0.1,
+        runbook_name="capacity_forecast",
+        risk_level="low",
+        supports_dry_run=False,
     ),
     IntentDef(
         key="capacity_memory",
@@ -838,6 +855,9 @@ INTENTS: List[IntentDef] = [
             if rows and rows[0]['total_mb'] else "No hypervisor data available."
         ),
         boost=0.1,
+        runbook_name="capacity_forecast",
+        risk_level="low",
+        supports_dry_run=False,
     ),
     IntentDef(
         key="capacity_storage",
@@ -856,6 +876,9 @@ INTENTS: List[IntentDef] = [
             if rows and rows[0]['total_gb'] else "No hypervisor data available."
         ),
         boost=0.1,
+        runbook_name="capacity_forecast",
+        risk_level="low",
+        supports_dry_run=False,
     ),
 
     # ── Status / Errors ────────────────────────────────────────────────
@@ -884,6 +907,9 @@ INTENTS: List[IntentDef] = [
                         LEFT JOIN projects p ON s.project_id = p.id
                         WHERE UPPER(s.status) IN ('ERROR','SHUTOFF','SUSPENDED','PAUSED') {scope_and}
                         ORDER BY s.status, s.name LIMIT 50""",
+        runbook_name="stuck_vm_remediation",
+        risk_level="medium",
+        supports_dry_run=True,
     ),
     IntentDef(
         key="down_hosts",
@@ -901,6 +927,9 @@ INTENTS: List[IntentDef] = [
             _fmt_table(rows, ["hostname", "state", "status", "vcpus", "memory_mb"])
             if rows else "All hosts are **up** and **enabled**. ✅"
         ),
+        runbook_name="diagnostics_bundle",
+        risk_level="low",
+        supports_dry_run=False,
     ),
 
     # ── Snapshots ──────────────────────────────────────────────────────
@@ -923,6 +952,9 @@ INTENTS: List[IntentDef] = [
             f"- Failed runs: {rows[0]['failed_runs']}"
             if rows else "No snapshot data available."
         ),
+        runbook_name="snapshot_quota_forecast",
+        risk_level="low",
+        supports_dry_run=False,
     ),
     IntentDef(
         key="recent_snapshots",
@@ -953,6 +985,9 @@ INTENTS: List[IntentDef] = [
             f"- Critical events: {rows[0]['critical_events']}"
             if rows else "No drift data available."
         ),
+        runbook_name="security_compliance_audit",
+        risk_level="low",
+        supports_dry_run=False,
     ),
     IntentDef(
         key="compliance_summary",
@@ -989,6 +1024,9 @@ INTENTS: List[IntentDef] = [
             f"- Flavor pricing rules: {rows[0]['pricing_rules']}"
             if rows else "No metering data available."
         ),
+        runbook_name="cost_leakage_report",
+        risk_level="low",
+        supports_dry_run=False,
     ),
 
     # ── Users / RBAC ──────────────────────────────────────────────────
@@ -1006,6 +1044,9 @@ INTENTS: List[IntentDef] = [
             _fmt_table(rows, ["username", "email", "role", "is_active"])
             if rows else "No users found."
         ),
+        runbook_name="user_last_login",
+        risk_level="low",
+        supports_dry_run=False,
     ),
     IntentDef(
         key="role_assignments",
@@ -1055,6 +1096,9 @@ INTENTS: List[IntentDef] = [
             _fmt_table(rows, ["username", "action", "success", "ip_address", "timestamp"])
             if rows else "No login events found."
         ),
+        runbook_name="user_last_login",
+        risk_level="low",
+        supports_dry_run=False,
     ),
 
     # ── Runbooks ──────────────────────────────────────────────────────
@@ -1094,6 +1138,9 @@ INTENTS: List[IntentDef] = [
             _fmt_table(rows, ["project_name", "health_score", "total_servers", "error_servers", "active_servers", "total_snapshots"])
             if rows else "No tenant health data available."
         ),
+        runbook_name="org_usage_report",
+        risk_level="low",
+        supports_dry_run=False,
     ),
     IntentDef(
         key="infrastructure_overview",
@@ -1124,6 +1171,9 @@ INTENTS: List[IntentDef] = [
             if rows else "No infrastructure data available."
         ),
         boost=0.15,
+        runbook_name="diagnostics_bundle",
+        risk_level="low",
+        supports_dry_run=False,
     ),
 
     # ── Backup ────────────────────────────────────────────────────────
@@ -1178,6 +1228,9 @@ INTENTS: List[IntentDef] = [
             f"**Security groups**: {rows[0]['total_groups']} groups with {rows[0]['total_rules']} rules total."
             if rows else "No security group data available."
         ),
+        runbook_name="security_group_audit",
+        risk_level="low",
+        supports_dry_run=True,
     ),
 
     # ── Provisioning ──────────────────────────────────────────────────
@@ -1215,6 +1268,9 @@ INTENTS: List[IntentDef] = [
             _fmt_table(rows, ["type", "entity_name", "title", "status", "detected_at"])
             if rows else "No open critical insights. ✅"
         ),
+        runbook_name="diagnostics_bundle",
+        risk_level="low",
+        supports_dry_run=False,
     ),
     IntentDef(
         key="capacity_warnings",
@@ -1720,6 +1776,9 @@ def match_intent(question: str) -> Optional[IntentMatch]:
         params=intent.param_extractor(question) if intent.param_extractor else final_params,
         formatter=final_formatter,
         api_handler=intent.api_handler,
+        runbook_name=intent.runbook_name,
+        risk_level=intent.risk_level,
+        supports_dry_run=intent.supports_dry_run,
     )
 
 

@@ -13,11 +13,13 @@ Endpoints:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
@@ -92,6 +94,11 @@ class AskResponse(BaseModel):
     tokens_used: int | None = None
     data_sent_external: bool = False
     history_id: int | None = None
+    # Feature 2: Copilot Can Act
+    action_available: bool = False
+    runbook_name: str | None = None
+    risk_level: str | None = None
+    supports_dry_run: bool = False
 
 
 class FeedbackRequest(BaseModel):
@@ -117,6 +124,15 @@ class TestConnectionRequest(BaseModel):
     url: str | None = None        # for ollama
     api_key: str | None = None    # for openai / anthropic
     model: str | None = None
+
+
+class ExecuteIntentRequest(BaseModel):
+    """Request body for POST /api/copilot/execute-intent."""
+    intent_key: str = Field(..., min_length=1, max_length=100)
+    runbook_name: str = Field(..., min_length=1, max_length=100)
+    confirmed: bool = Field(..., description="Must be true to execute")
+    dry_run: bool = True
+    parameters: dict = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +226,65 @@ def _trim_history(username: str, max_rows: int):
             """, (username, max_rows))
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Feature 2: Copilot Can Act — agentic helpers
+# ---------------------------------------------------------------------------
+
+def _get_agentic_setting(key: str, default: str) -> str:
+    """Read a copilot agentic setting from system_settings."""
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
+            row = cur.fetchone()
+            return row[0] if row else default
+    except Exception:
+        return default
+
+
+def _count_hourly_executions(username: str) -> int:
+    """Count how many copilot-triggered executions the user has made in the last hour."""
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT COUNT(*) FROM copilot_execution_log
+                WHERE username = %s AND executed_at > now() - interval '1 hour'
+            """, (username,))
+            row = cur.fetchone()
+            return row[0] if row else 0
+    except Exception:
+        return 0
+
+
+def _log_copilot_execution(
+    username: str, intent_key: str, runbook_name: str,
+    execution_id: str | None, dry_run: bool
+) -> None:
+    """Insert into copilot_execution_log and audit log."""
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO copilot_execution_log
+                    (username, intent_key, runbook_name, execution_id, dry_run)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (username, intent_key, runbook_name, execution_id, dry_run))
+            # Audit log
+            cur.execute("""
+                INSERT INTO auth_audit_log (username, action, success, details)
+                VALUES (%s, 'copilot_triggered_runbook', true,
+                        %s::jsonb)
+            """, (username, __import__('json').dumps({
+                "intent_key": intent_key,
+                "runbook_name": runbook_name,
+                "execution_id": execution_id,
+                "dry_run": dry_run,
+            })))
+    except Exception as exc:
+        logger.warning("Failed to log copilot execution: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +430,10 @@ async def ask(body: AskRequest, request: Request):
         tokens_used=tokens,
         data_sent_external=data_sent,
         history_id=history_id,
+        action_available=bool(intent_match and intent_match.runbook_name),
+        runbook_name=intent_match.runbook_name if intent_match else None,
+        risk_level=intent_match.risk_level if (intent_match and intent_match.runbook_name) else None,
+        supports_dry_run=intent_match.supports_dry_run if intent_match else False,
     )
 
 
@@ -477,3 +556,105 @@ async def feedback(body: FeedbackRequest, request: Request):
             VALUES (%s, %s, %s)
         """, (body.history_id, body.helpful, body.comment))
     return {"ok": True}
+
+
+@router.get("/agentic-status")
+async def agentic_status(request: Request):
+    """Return whether agentic (Copilot Can Act) execution is enabled, quota, and usage."""
+    username = _extract_username(request)
+    enabled = _get_agentic_setting("copilot.agentic_enabled", "true").lower() in ("true", "1", "yes")
+    quota = int(_get_agentic_setting("copilot.execution_quota_per_hour", "10"))
+    used = _count_hourly_executions(username)
+    return {
+        "enabled": enabled,
+        "quota_per_hour": quota,
+        "used_this_hour": used,
+        "remaining": max(0, quota - used),
+    }
+
+
+@router.post("/execute-intent")
+async def execute_intent(body: ExecuteIntentRequest, request: Request):
+    """
+    Execute a runbook on behalf of the Copilot after explicit user confirmation.
+
+    Safety checks:
+      - `confirmed` must be True (no accidental execution)
+      - Agentic execution must be enabled (superadmin-controlled toggle)
+      - Per-user hourly quota enforced (default 10 executions/hour)
+      - Delegates to POST /api/runbooks/trigger via internal service token
+      - Writes to copilot_execution_log + auth_audit_log
+    """
+    if not body.confirmed:
+        raise HTTPException(400, "confirmed must be true to execute a runbook via Copilot")
+
+    username = _extract_username(request)
+
+    # Check agentic toggle
+    enabled = _get_agentic_setting("copilot.agentic_enabled", "true").lower() in ("true", "1", "yes")
+    if not enabled:
+        raise HTTPException(403, "Agentic execution is currently disabled by an administrator")
+
+    # Rate limit
+    quota = int(_get_agentic_setting("copilot.execution_quota_per_hour", "10"))
+    used = _count_hourly_executions(username)
+    if used >= quota:
+        raise HTTPException(429, f"Execution quota exceeded ({used}/{quota} this hour). Try again later.")
+
+    # Retrieve user role from request state for service token
+    token_data = getattr(request.state, "token_data", None)
+    role = getattr(token_data, "role", "operator") if token_data else "operator"
+
+    # Generate a short-lived service token to call /api/runbooks/trigger internally
+    try:
+        from auth import create_access_token
+        service_token = create_access_token(
+            data={"sub": username, "role": role, "is_active": True, "service_call": True},
+            expires_delta=timedelta(minutes=5),
+        )
+        token_hash = hashlib.sha256(service_token.encode()).hexdigest()
+        now = datetime.now(timezone.utc)
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO user_sessions (username, role, token_hash, is_active, expires_at, created_at)
+                VALUES (%s, %s, %s, true, %s, %s)
+                ON CONFLICT DO NOTHING
+            """, (username, role, token_hash, now + timedelta(minutes=5), now))
+    except Exception as exc:
+        logger.warning("Could not create service token for copilot execute: %s", exc)
+        raise HTTPException(500, "Could not authenticate internal runbook call")
+
+    # Delegate to runbook trigger API
+    api_base = os.environ.get("INTERNAL_API_BASE", "http://localhost:8000")
+    payload = {
+        "runbook_name": body.runbook_name,
+        "dry_run": body.dry_run,
+        "parameters": body.parameters,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{api_base}/api/runbooks/trigger",
+                json=payload,
+                headers={"Authorization": f"Bearer {service_token}"},
+            )
+        resp.raise_for_status()
+        result = resp.json()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=exc.response.status_code,
+                            detail=f"Runbook error: {exc.response.text}")
+    except Exception as exc:
+        raise HTTPException(503, f"Runbook service unavailable: {exc}")
+
+    execution_id = result.get("execution_id") or result.get("id")
+    _log_copilot_execution(username, body.intent_key, body.runbook_name,
+                           str(execution_id) if execution_id else None, body.dry_run)
+
+    return {
+        "execution_id": execution_id,
+        "runbook_name": body.runbook_name,
+        "dry_run": body.dry_run,
+        "status": result.get("status", "dispatched"),
+        "result": result,
+    }

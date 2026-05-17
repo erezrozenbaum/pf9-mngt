@@ -4797,3 +4797,29 @@ CREATE TABLE IF NOT EXISTS tenant_notification_prefs (
 CREATE INDEX IF NOT EXISTS idx_tnp_project ON tenant_notification_prefs (project_id);
 CREATE INDEX IF NOT EXISTS idx_tnp_user    ON tenant_notification_prefs (keystone_user_id);
 CREATE INDEX IF NOT EXISTS idx_tnp_event   ON tenant_notification_prefs (event_type);
+
+-- =====================================================================
+-- COPILOT AGENTIC EXECUTION LOG (v2.2.0)
+-- Audit trail for runbooks triggered via Copilot.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS copilot_execution_log (
+    id           BIGSERIAL    PRIMARY KEY,
+    username     VARCHAR(255) NOT NULL,
+    intent_key   VARCHAR(100) NOT NULL,
+    runbook_name VARCHAR(100) NOT NULL,
+    execution_id TEXT,
+    dry_run      BOOLEAN      NOT NULL DEFAULT true,
+    executed_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_copilot_exec_log_user_ts
+    ON copilot_execution_log (username, executed_at DESC);
+
+INSERT INTO system_settings (key, value, description) VALUES
+  ('copilot.agentic_enabled',
+   'true',
+   'Allow Copilot to trigger runbook executions. Set to false to disable agentic mode platform-wide.'),
+  ('copilot.execution_quota_per_hour',
+   '10',
+   'Maximum number of runbook executions a single user can trigger via Copilot per hour.')
+ON CONFLICT (key) DO NOTHING;

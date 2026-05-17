@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.1.1
-**Last Updated**: May 14, 2026  
+**Version**: 2.2.0
+**Last Updated**: May 19, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative (Production HA)**: See [KUBERNETES_GUIDE.md](KUBERNETES_GUIDE.md) for the Kubernetes deployment guide — Helm chart, ArgoCD GitOps, and Sealed Secrets (v1.82.0+)
@@ -1635,6 +1635,16 @@ docker exec pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
 ```
 
 There are currently ~71 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
+
+**v2.2.0** adds `db/migrate_v2_2_0_copilot_agentic.sql`: creates the `copilot_execution_log` table (audit trail for Copilot-triggered runbook executions) and inserts two new system settings (`copilot.agentic_enabled`, `copilot.execution_quota_per_hour`). Apply with:
+```bash
+# Docker
+docker exec pf9_api python run_migration.py
+# Kubernetes
+kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py
+```
+
+> **Existing installations only**: The `run_migration.py` runner is idempotent — re-running it on an already-migrated database is safe. If `copilot_execution_log` already exists the `CREATE TABLE IF NOT EXISTS` is a no-op, and the `system_settings` inserts use `ON CONFLICT DO NOTHING`.
 
 **v1.94.0** adds `db/migrate_v1_94_0.sql`: creates the `dashboard_health_snapshots` table (one row per calendar day — `total_vms`, `running_vms`, `total_hosts`, `critical_count`) and a descending date index. Written by `pf9_scheduler_worker` via UPSERT; read by the new `GET /dashboard/health-trend` endpoint for admin dashboard sparkline charts. Apply with:
 ```bash

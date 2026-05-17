@@ -29,6 +29,13 @@ interface Message {
   confidence?: number | null;
   historyId?: number | null;
   feedback?: "up" | "down" | null;
+  // Feature 2: Copilot Can Act
+  actionAvailable?: boolean;
+  runbookName?: string | null;
+  riskLevel?: string | null;
+  supportsDryRun?: boolean;
+  executionId?: string | null;
+  executionStatus?: string | null;
 }
 
 interface ChipDef {
@@ -101,6 +108,18 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
     try { return localStorage.getItem("copilot_opened") === "1"; }
     catch { return false; }
   });
+  // Feature 2: Copilot Can Act
+  const [actionModal, setActionModal] = useState<{
+    msgId: string;
+    runbookName: string;
+    riskLevel: string;
+    supportsDryRun: boolean;
+    intentKey: string;
+  } | null>(null);
+  const [confirmText, setConfirmText] = useState("");
+  const [executing, setExecuting] = useState(false);
+  const [agenticEnabled, setAgenticEnabled] = useState(true);
+  const [dryRunChecked, setDryRunChecked] = useState(true);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -148,6 +167,18 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
         .catch(() => {});
     }
   }, [open, token, suggestionsData]);
+
+  // Load agentic status on open
+  useEffect(() => {
+    if (open && token) {
+      fetch(`${API_BASE}/api/copilot/agentic-status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((r) => r.json())
+        .then((d) => setAgenticEnabled(d?.enabled !== false))
+        .catch(() => {});
+    }
+  }, [open, token]);
 
   // Load config when settings view opened
   const loadConfig = useCallback(() => {
@@ -198,6 +229,10 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
           confidence: data.confidence,
           historyId: data.history_id,
           feedback: null,
+          actionAvailable: data.action_available || false,
+          runbookName: data.runbook_name || null,
+          riskLevel: data.risk_level || null,
+          supportsDryRun: data.supports_dry_run || false,
         };
         setMessages((prev) => [...prev, botMsg]);
       } catch {
@@ -319,6 +354,45 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
     setMessages([]);
   };
 
+  // ── Execute intent via Copilot (Feature 2) ───────────────────────
+
+  const executeIntent = useCallback(async () => {
+    if (!actionModal || !token) return;
+    if (actionModal.riskLevel === "high" && confirmText !== "confirm") return;
+    setExecuting(true);
+    try {
+      const resp = await fetch(`${API_BASE}/api/copilot/execute-intent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          intent_key: actionModal.intentKey,
+          runbook_name: actionModal.runbookName,
+          confirmed: true,
+          dry_run: dryRunChecked,
+          parameters: {},
+        }),
+      });
+      const data = await resp.json();
+      const execId = data.execution_id ? String(data.execution_id) : null;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === actionModal.msgId
+            ? { ...m, executionId: execId, executionStatus: data.status || "dispatched" }
+            : m
+        )
+      );
+      setActionModal(null);
+      setConfirmText("");
+    } catch {
+      // keep modal open on error
+    } finally {
+      setExecuting(false);
+    }
+  }, [actionModal, token, confirmText, dryRunChecked]);
+
   // ── Derive active backend label ───────────────────────────────────
 
   const activeBackend = config?.backend || "builtin";
@@ -341,6 +415,66 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
 
   return (
     <>
+      {/* Feature 2: Action confirmation modal */}
+      {actionModal && (
+        <div className="copilot-modal-overlay" onClick={() => { setActionModal(null); setConfirmText(""); }}>
+          <div className="copilot-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="copilot-modal-header">
+              <span className={`copilot-risk-badge ${actionModal.riskLevel}`}>{actionModal.riskLevel}</span>
+              <strong>Run runbook</strong>
+            </div>
+            <div className="copilot-modal-body">
+              <p>
+                Copilot will trigger{" "}
+                <strong>{actionModal.runbookName.replace(/_/g, " ")}</strong> on your behalf.
+              </p>
+              {actionModal.supportsDryRun && (
+                <label className="copilot-dryrun-label">
+                  <input
+                    type="checkbox"
+                    checked={dryRunChecked}
+                    onChange={(e) => setDryRunChecked(e.target.checked)}
+                  />
+                  &nbsp;Dry-run mode (preview only, no changes)
+                </label>
+              )}
+              {actionModal.riskLevel === "high" && (
+                <div className="copilot-high-risk-warn">
+                  ⚠️ This is a high-risk operation. Type <strong>confirm</strong> to proceed.
+                  <input
+                    type="text"
+                    className="copilot-confirm-input"
+                    placeholder='Type "confirm"'
+                    value={confirmText}
+                    onChange={(e) => setConfirmText(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+              )}
+            </div>
+            <div className="copilot-modal-actions">
+              <button
+                className="copilot-btn"
+                onClick={executeIntent}
+                disabled={
+                  executing ||
+                  (actionModal.riskLevel === "high" && confirmText !== "confirm")
+                }
+              >
+                {executing ? "Running…" : dryRunChecked ? "Preview" : "Execute"}
+              </button>
+              <button
+                className="copilot-btn secondary"
+                onClick={() => { setActionModal(null); setConfirmText(""); }}
+                disabled={executing}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Floating Action Button — labeled pill, with pulse animation */}
       <button
         className={`copilot-fab ${open ? "open" : ""} ${!hasOpened ? "pulse" : ""}`}
@@ -492,6 +626,44 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
                     {m.role === "bot" ? (
                       <>
                         <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderMarkdown(m.text)) }} />
+                        {/* Feature 2: Copilot Can Act — action offer */}
+                        {m.actionAvailable && m.runbookName && agenticEnabled && (
+                          <div className="copilot-action-offer">
+                            <span className={`copilot-risk-badge ${m.riskLevel || "low"}`}>
+                              {m.riskLevel || "low"}
+                            </span>
+                            <span>
+                              I can run{" "}
+                              <strong>{m.runbookName.replace(/_/g, " ")}</strong>{" "}
+                              for you
+                            </span>
+                            <button
+                              className="copilot-btn-run"
+                              onClick={() => {
+                                setDryRunChecked(m.supportsDryRun ?? true);
+                                setConfirmText("");
+                                setActionModal({
+                                  msgId: m.id,
+                                  runbookName: m.runbookName!,
+                                  riskLevel: m.riskLevel || "low",
+                                  supportsDryRun: m.supportsDryRun || false,
+                                  intentKey: m.intent || "",
+                                });
+                              }}
+                            >
+                              ▶ Run it
+                            </button>
+                          </div>
+                        )}
+                        {m.executionId && (
+                          <div className="copilot-exec-status">
+                            Execution{" "}
+                            <code>{m.executionId.slice(0, 8)}…</code>
+                            <span className={`rb-status-badge ${m.executionStatus || "dispatched"}`}>
+                              {m.executionStatus || "dispatched"}
+                            </span>
+                          </div>
+                        )}
                         <div className="copilot-msg-meta">
                           <span className={`copilot-backend-badge ${m.backend || "builtin"}`}>
                             {BACKEND_LABELS[m.backend || "builtin"]?.icon}{" "}
@@ -709,6 +881,14 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
       )}
     </>
   );
+  );
 };
 
 export default CopilotPanel;
+
+/* ── Helper: Action Confirmation Modal ────────────────────────────────────
+   Rendered outside the panel so it overlays the full viewport.           */
+// NOTE: The modal is rendered inline inside CopilotPanel's return()
+// (see JSX at the bottom of the component above). The placeholder below
+// is a type-only reference kept here for documentation.
+// -------------------------------------------------------------------------

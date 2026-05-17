@@ -1419,7 +1419,32 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v2.1.1** (May 17, 2026)
+Current schema version: **v2.2.0** (May 19, 2026)
+
+## Copilot Agentic Execution Log (v2.2.0)
+
+### copilot_execution_log
+Audit trail for runbooks triggered via Copilot's "Run it" action.
+
+```sql
+CREATE TABLE IF NOT EXISTS copilot_execution_log (
+    id           BIGSERIAL    PRIMARY KEY,
+    username     VARCHAR(255) NOT NULL,
+    intent_key   VARCHAR(100) NOT NULL,
+    runbook_name VARCHAR(100) NOT NULL,
+    execution_id TEXT,
+    dry_run      BOOLEAN      NOT NULL DEFAULT true,
+    executed_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_copilot_exec_log_user_ts
+    ON copilot_execution_log (username, executed_at DESC);
+```
+
+**New system settings (v2.2.0)**:
+| key | default | description |
+|-----|---------|-------------|
+| `copilot.agentic_enabled` | `true` | Platform-wide on/off toggle for Copilot-triggered executions |
+| `copilot.execution_quota_per_hour` | `10` | Max executions a single user can trigger per hour via Copilot |
 
 ## Tenant Notifications (v2.1.0)
 
