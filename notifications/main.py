@@ -21,6 +21,12 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
+import http.client
+import ipaddress
+import json as _json_stdlib
+import socket
+import urllib.parse
+
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 
@@ -638,6 +644,422 @@ def send_digests(conn):
             logger.error(f"Failed to send digest to {row['username']}: {e}")
 
 # ---------------------------------------------------------------------------
+# SSRF guard for tenant outbound webhooks
+# ---------------------------------------------------------------------------
+
+_TENANT_WEBHOOK_BLOCKED_RANGES = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),
+]
+
+
+def _webhook_url_allowed(url: str) -> bool:
+    """Return True if the URL host resolves only to public addresses."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    try:
+        addr_infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    for info in addr_infos:
+        addr_str = info[4][0]
+        try:
+            addr = ipaddress.ip_address(addr_str)
+        except ValueError:
+            continue
+        for blocked in _TENANT_WEBHOOK_BLOCKED_RANGES:
+            if addr in blocked:
+                return False
+    return True
+
+
+def send_tenant_webhook(url: str, payload: dict) -> bool:
+    """POST payload to tenant webhook URL. Returns True on success.
+    SSRF guard is applied before any network call.
+    Uses only stdlib http.client — no extra dependencies.
+    """
+    if not _webhook_url_allowed(url):
+        logger.warning("Tenant webhook blocked (SSRF guard): %s", url)
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        body = _json_stdlib.dumps(payload).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "PF9-Notification-Worker/2.1",
+            "Content-Length": str(len(body)),
+        }
+        port = parsed.port
+        use_tls = parsed.scheme == "https"
+        if use_tls:
+            conn_cls = http.client.HTTPSConnection
+        else:
+            conn_cls = http.client.HTTPConnection
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        c = conn_cls(parsed.hostname, port or (443 if use_tls else 80), timeout=10)
+        c.request("POST", path, body=body, headers=headers)
+        resp = c.getresponse()
+        resp.read()  # drain
+        c.close()
+        if 200 <= resp.status < 300:
+            logger.info("Tenant webhook delivered to %s: HTTP %d", url, resp.status)
+            return True
+        logger.warning("Tenant webhook non-2xx: %s → HTTP %d", url, resp.status)
+        return False
+    except Exception as exc:
+        logger.error("Tenant webhook delivery failed (%s): %s", url, exc)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Tenant event collectors
+# ---------------------------------------------------------------------------
+
+def collect_tenant_snapshot_events(conn, since: datetime) -> List[Dict]:
+    """Collect per-project snapshot status changes (completed/error) since `since`."""
+    events = []
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT id, project_id, project_name, name AS snapshot_name,
+                   volume_id, volume_name, size_gb, status, updated_at
+            FROM   snapshots
+            WHERE  updated_at >= %s
+              AND  status IN ('available', 'error')
+              AND  project_id IS NOT NULL
+            ORDER  BY updated_at DESC
+            LIMIT  200
+            """,
+            (since,),
+        )
+        for row in cur.fetchall():
+            etype = (
+                "snapshot_completed" if row["status"] == "available" else "snapshot_failed"
+            )
+            events.append({
+                "event_type": etype,
+                "event_id": str(row["id"]),
+                "project_id": row["project_id"],
+                "project_name": row.get("project_name", ""),
+                "resource_id": str(row["id"]),
+                "resource_name": row.get("snapshot_name", str(row["id"])),
+                "volume_id": row.get("volume_id", ""),
+                "volume_name": row.get("volume_name", ""),
+                "size_gb": row.get("size_gb", 0),
+                "status": row["status"],
+                "updated_at": row["updated_at"].isoformat() if row["updated_at"] else "",
+                "summary": (
+                    f"Snapshot '{row.get('snapshot_name', row['id'])}' "
+                    f"{'completed' if etype == 'snapshot_completed' else 'failed'} "
+                    f"in project {row.get('project_name', row['project_id'])}"
+                ),
+            })
+    return events
+
+
+def collect_tenant_restore_events(conn, since: datetime) -> List[Dict]:
+    """Collect per-project restore job completions/failures since `since`."""
+    events = []
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT id, project_id, project_name, vm_id, vm_name,
+                   mode, status, failure_reason, finished_at
+            FROM   restore_jobs
+            WHERE  finished_at >= %s
+              AND  status IN ('COMPLETED', 'FAILED')
+            ORDER  BY finished_at DESC
+            LIMIT  200
+            """,
+            (since,),
+        )
+        for row in cur.fetchall():
+            etype = (
+                "restore_completed" if row["status"] == "COMPLETED" else "restore_failed"
+            )
+            events.append({
+                "event_type": etype,
+                "event_id": str(row["id"]),
+                "project_id": row["project_id"],
+                "project_name": row.get("project_name", ""),
+                "resource_id": str(row["id"]),
+                "resource_name": row.get("vm_name", row.get("vm_id", str(row["id"]))),
+                "vm_id": row.get("vm_id", ""),
+                "vm_name": row.get("vm_name", ""),
+                "mode": row.get("mode", ""),
+                "status": row["status"],
+                "failure_reason": row.get("failure_reason", ""),
+                "finished_at": row["finished_at"].isoformat() if row["finished_at"] else "",
+                "summary": (
+                    f"Restore '{row.get('vm_name', row.get('vm_id', ''))}' "
+                    f"{'completed' if etype == 'restore_completed' else 'failed'} "
+                    f"in project {row.get('project_name', row['project_id'])}"
+                ),
+            })
+    return events
+
+
+def collect_tenant_quota_warnings(conn, since: datetime) -> List[Dict]:
+    """Emit quota warning events for projects that crossed 80% or 95% usage."""
+    events = []
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT pq.project_id, p.name AS project_name,
+                   pq.service, pq.resource,
+                   pq.quota_limit, pq.in_use, pq.last_seen_at
+            FROM   project_quotas pq
+            LEFT   JOIN projects p ON p.id = pq.project_id
+            WHERE  pq.quota_limit > 0
+              AND  pq.in_use IS NOT NULL
+              AND  (pq.in_use::float / pq.quota_limit) >= 0.80
+              AND  pq.last_seen_at >= %s
+            ORDER  BY (pq.in_use::float / pq.quota_limit) DESC
+            LIMIT  200
+            """,
+            (since,),
+        )
+        for row in cur.fetchall():
+            pct = (row["in_use"] / row["quota_limit"]) * 100
+            etype = "quota_at_95pct" if pct >= 95.0 else "quota_at_80pct"
+            events.append({
+                "event_type": etype,
+                "event_id": (
+                    f"quota_{row['project_id']}_{row['service']}_{row['resource']}_"
+                    f"{datetime.utcnow().strftime('%Y%m%d')}"
+                ),
+                "project_id": row["project_id"],
+                "project_name": row.get("project_name", row["project_id"]),
+                "resource_id": f"{row['service']}:{row['resource']}",
+                "resource_name": f"{row['service']} / {row['resource']}",
+                "service": row["service"],
+                "resource": row["resource"],
+                "quota_limit": row["quota_limit"],
+                "in_use": row["in_use"],
+                "pct_used": round(pct, 1),
+                "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else "",
+                "summary": (
+                    f"Quota '{row['service']}/{row['resource']}' at {round(pct, 1)}% "
+                    f"in project {row.get('project_name', row['project_id'])}"
+                ),
+            })
+    return events
+
+
+def collect_tenant_vm_provision_events(conn, since: datetime) -> List[Dict]:
+    """Collect VM provisioning completion / failure events since `since`."""
+    events = []
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT  v.id, v.vm_name_suffix, v.status, v.error_msg,
+                    v.created_at,
+                    b.project_name, b.domain_name, b.region_id, b.created_by,
+                    p.id AS project_id
+            FROM    vm_provisioning_vms v
+            JOIN    vm_provisioning_batches b ON b.id = v.batch_id
+            LEFT    JOIN projects p ON p.name = b.project_name
+            WHERE   v.created_at >= %s
+              AND   v.status IN ('completed', 'failed')
+            ORDER   BY v.created_at DESC
+            LIMIT   200
+            """,
+            (since,),
+        )
+        for row in cur.fetchall():
+            # Skip if we cannot resolve a project_id — nowhere to route notification
+            if not row.get("project_id"):
+                continue
+            etype = (
+                "vm_provisioned" if row["status"] == "completed" else "vm_provision_failed"
+            )
+            events.append({
+                "event_type": etype,
+                "event_id": f"vmprov_{row['id']}",
+                "project_id": row["project_id"],
+                "project_name": row.get("project_name", ""),
+                "resource_id": str(row["id"]),
+                "resource_name": row.get("vm_name_suffix", str(row["id"])),
+                "status": row["status"],
+                "error_msg": row.get("error_msg", ""),
+                "region_id": row.get("region_id", ""),
+                "created_by": row.get("created_by", ""),
+                "created_at": row["created_at"].isoformat() if row["created_at"] else "",
+                "summary": (
+                    f"VM '{row.get('vm_name_suffix', row['id'])}' "
+                    f"{'provisioned' if etype == 'vm_provisioned' else 'provision failed'} "
+                    f"in project {row.get('project_name', row['project_id'])}"
+                ),
+            })
+    return events
+
+
+# ---------------------------------------------------------------------------
+# Tenant notification dispatcher
+# ---------------------------------------------------------------------------
+
+def log_tenant_notification(
+    conn,
+    project_id: str,
+    keystone_user_id: str,
+    event_type: str,
+    subject: str,
+    delivery_status: str,
+    error_message: Optional[str] = None,
+    dedup_key_val: str = "",
+):
+    """Write a notification_log row tagged notification_target='tenant'."""
+    username_tag = f"tenant:{project_id}:{keystone_user_id}"
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO notification_log
+                (username, email, event_type, event_id, dedup_key, subject,
+                 body_preview, delivery_status, error_message, sent_at,
+                 notification_target)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                username_tag,
+                "",
+                event_type,
+                "",
+                dedup_key_val,
+                subject,
+                subject[:200],
+                delivery_status,
+                error_message,
+                datetime.utcnow() if delivery_status == "sent" else None,
+                "tenant",
+            ),
+        )
+    conn.commit()
+
+
+def dispatch_tenant_notifications(
+    conn,
+    event: Dict,
+):
+    """For a tenant event dict (must have project_id + event_type), look up
+    tenant_notification_prefs and deliver via email or webhook.
+    """
+    event_type = event["event_type"]
+    project_id = event.get("project_id")
+    if not project_id:
+        return
+
+    dkey = dedup_key(
+        event_type,
+        event.get("resource_id", ""),
+        event.get("event_id", ""),
+    )
+
+    # Dedup: skip if we already delivered this exact event (tenant path)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM notification_log
+            WHERE dedup_key = %s
+              AND delivery_status = 'sent'
+              AND notification_target = 'tenant'
+            LIMIT 1
+            """,
+            (dkey,),
+        )
+        if cur.fetchone():
+            return
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT id, keystone_user_id, channel, endpoint, enabled
+            FROM   tenant_notification_prefs
+            WHERE  project_id = %s
+              AND  event_type  = %s
+              AND  enabled     = true
+            """,
+            (project_id, event_type),
+        )
+        prefs = cur.fetchall()
+
+    if not prefs:
+        return
+
+    # Template mapping for email channel
+    _template_map = {
+        "snapshot_completed": "tenant_snapshot_completed.html",
+        "snapshot_failed":    "tenant_snapshot_failed.html",
+        "restore_completed":  "tenant_restore_done.html",
+        "restore_failed":     "tenant_restore_done.html",
+        "quota_at_80pct":     "tenant_quota_warning.html",
+        "quota_at_95pct":     "tenant_quota_warning.html",
+        "vm_provisioned":     "tenant_snapshot_completed.html",  # generic fallback
+        "vm_provision_failed":"tenant_snapshot_failed.html",     # generic fallback
+        "billing_invoice_ready": "tenant_snapshot_completed.html",
+    }
+
+    for pref in prefs:
+        user_id = pref["keystone_user_id"]
+        channel = pref["channel"]
+        endpoint = pref["endpoint"]
+        subject = f"Platform9: {event_type.replace('_', ' ').title()} — {event.get('resource_name', '')}"
+
+        try:
+            if channel == "email":
+                template_name = _template_map.get(event_type, "tenant_snapshot_completed.html")
+                html_body = render_template(
+                    template_name,
+                    {
+                        "event": event,
+                        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+                    },
+                )
+                success = send_email(endpoint, subject, html_body, conn=conn)
+                status_val = "sent" if success else "failed"
+
+            elif channel == "webhook":
+                success = send_tenant_webhook(endpoint, event)
+                status_val = "sent" if success else "failed"
+
+            else:
+                continue
+
+            log_tenant_notification(
+                conn, project_id, user_id, event_type, subject, status_val,
+                dedup_key_val=dkey,
+            )
+
+        except Exception as exc:
+            logger.error(
+                "Tenant notification dispatch error [project=%s event=%s channel=%s]: %s",
+                project_id, event_type, channel, exc,
+            )
+            try:
+                log_tenant_notification(
+                    conn, project_id, user_id, event_type,
+                    subject if "subject" in dir() else event_type,
+                    "failed", str(exc), dedup_key_val=dkey,
+                )
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # Main poll loop
 # ---------------------------------------------------------------------------
 
@@ -666,8 +1088,34 @@ def poll_cycle(conn):
             except Exception:
                 pass
 
+    # Tenant-facing event collectors
+    tenant_collectors = [
+        collect_tenant_snapshot_events,
+        collect_tenant_restore_events,
+        collect_tenant_quota_warnings,
+        collect_tenant_vm_provision_events,
+    ]
+
+    tenant_total = 0
+    for collector in tenant_collectors:
+        try:
+            events = collector(conn, since)
+            for event in events:
+                dispatch_tenant_notifications(conn, event)
+            tenant_total += len(events)
+        except Exception as e:
+            logger.error(f"Error in tenant collector {collector.__name__}: {e}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    total_events += tenant_total
     if total_events > 0:
-        logger.info(f"Poll cycle complete: {total_events} events processed")
+        logger.info(
+            f"Poll cycle complete: {total_events} events processed "
+            f"({tenant_total} tenant)"
+        )
 
 
 def main():

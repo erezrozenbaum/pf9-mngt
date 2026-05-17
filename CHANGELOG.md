@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0] - 2026-05-18
+
+### Added
+- **Tenant-facing notification subscriptions**: Tenants can subscribe to 9 event types (snapshot completed, snapshot failed, restore completed, restore failed, quota at 80%, quota at 95%, VM provisioned, VM provision failed, billing invoice ready) via email or outbound webhook. Subscriptions are managed through the tenant portal and tenant UI. Outbound webhooks include SSRF protection that blocks requests to private, loopback, link-local, and carrier-grade NAT address ranges.
+- **Admin-configurable MFA enrollment enforcement**: Superadmins can require MFA for specified roles (`admin`, `superadmin`, `viewer`, `operator`) via system settings. Users subject to enforcement who have not yet enrolled receive a time-limited enrollment token on login and are redirected to the MFA setup flow rather than receiving a session token.
+- **Admin MFA enforcement settings API**: `GET /admin/settings/mfa-enforcement` and `PUT /admin/settings/mfa-enforcement` for reading and updating which roles require MFA.
+- **MFA nag banner**: Admin and superadmin users who have not enrolled in MFA see a dismissible banner prompting them to set up MFA from within the admin UI.
+- **Tenant notification history**: Tenants can view the last 50 notification delivery events (status, event type, timestamp) in the tenant portal.
+
+### Security
+- **MFA token fail-closed**: Tokens issued with `mfa_pending` or `mfa_enrollment_required` claims are now rejected by the general authentication dependency. Only the MFA-specific endpoints accept these restricted tokens, preventing partial-authentication tokens from accessing any other resource.
+
+---
+
 ## [2.0.7] - 2026-05-17
 
 ### Fixed
