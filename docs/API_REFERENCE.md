@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v1.99.5 — Hotfix: SLA uptime precision overflow (DECIMAL 5,3 → 6,3)
+> **Version**: v2.0.0 — vJailbreak execution feedback webhook, migration progress API, AM Dashboard health scores
+> Previous: v1.99.5 — Hotfix: SLA uptime precision overflow (DECIMAL 5,3 → 6,3)
 > Previous: v1.99.1 — Hotfix: pgbouncer initContainer resource limits for namespace quota compliance  
 > Previous: v1.99.0 — PgBouncer connection pooling, tenant composite health scoring API  
 > Previous: v1.98.0 — Fernet rotation CLI, billing webhook CRUD + SSRF guard, append-only audit triggers, Redis AOF persistence, Linux deployment scripts  

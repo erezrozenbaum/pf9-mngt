@@ -77,8 +77,11 @@ Phase 2.8 Γאפ Pre-Phase 3 Polish:
 import os
 import io
 import json
+import hmac
+import hashlib
 import logging
 import re
+import secrets as _secrets_lib
 import traceback
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Literal, Optional
@@ -221,6 +224,32 @@ try:
     _ensure_phase4_tables()
 except Exception as e:
     logger.warning("Could not ensure phase4 tables on startup: %s", e)
+
+
+def _ensure_v2_webhook_tables():
+    """Ensure v2.0.0 vJailbreak webhook tables/columns exist (idempotent)."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'migration_webhook_events'
+                )
+            """)
+            if not cur.fetchone()[0]:
+                migration = os.path.join(
+                    os.path.dirname(__file__), "..", "db", "migrate_v2_0_0_vjailbreak_webhook.sql"
+                )
+                if os.path.exists(migration):
+                    with open(migration) as f:
+                        cur.execute(f.read())
+                    logger.info("v2.0.0 vJailbreak webhook tables created")
+
+
+try:
+    _ensure_v2_webhook_tables()
+except Exception as e:
+    logger.warning("Could not ensure v2 webhook tables on startup: %s", e)
 
 
 def _ensure_prep_approval_tables():
@@ -10380,4 +10409,258 @@ async def preview_maintenance_windows(
         cur_date = slot["end"].date() + td(days=1)
 
     return {"status": "ok", "slots": slots}
+
+
+# =============================================================================
+# v2.0.0 – vJailbreak Execution Feedback Loop
+# =============================================================================
+
+@router.post(
+    "/projects/{project_id}/webhook",
+    status_code=200,
+    summary="Receive vJailbreak execution event webhook",
+    tags=["migration"],
+)
+async def receive_vjailbreak_webhook(
+    project_id: str,
+    request: Request,
+):
+    """Called by vJailbreak when migration events occur.
+
+    Authentication uses HMAC-SHA256: the caller must set
+    ``X-vJailbreak-Signature: sha256=<hex>`` using the project webhook secret.
+    No JWT is required (this endpoint is called machine-to-machine).
+    """
+    # ── 1. Read raw body ────────────────────────────────────────────────────
+    body = await request.body()
+
+    # ── 2. Fetch project + secret ───────────────────────────────────────────
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT project_id, webhook_secret FROM migration_projects WHERE project_id = %s",
+                (project_id,),
+            )
+            row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    secret = row["webhook_secret"]
+    if not secret:
+        raise HTTPException(
+            status_code=403,
+            detail="Webhook secret not configured for this project. "
+                   "Generate one via POST /projects/{id}/webhook-secret/regenerate",
+        )
+
+    # ── 3. Verify HMAC-SHA256 signature ─────────────────────────────────────
+    sig_header = request.headers.get("X-vJailbreak-Signature", "")
+    if not sig_header.startswith("sha256="):
+        raise HTTPException(status_code=401, detail="Missing or malformed X-vJailbreak-Signature header")
+
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    provided = sig_header[len("sha256="):]
+    if not hmac.compare_digest(expected, provided):
+        raise HTTPException(status_code=401, detail="Webhook signature verification failed")
+
+    # ── 4. Parse payload ─────────────────────────────────────────────────────
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_type = payload.get("event_type") or payload.get("event", "unknown")
+    vm_id = payload.get("vm_id") or payload.get("vm_name")
+    wave_id = payload.get("wave_id")
+
+    # ── 5. Persist raw event ─────────────────────────────────────────────────
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO migration_webhook_events
+                    (project_id, event_type, vm_id, wave_id, payload)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (project_id, event_type, vm_id, wave_id, Json(payload)),
+            )
+
+            # ── 6. State machine updates ──────────────────────────────────────
+            if event_type == "vm_migrated" and vm_id:
+                cur.execute(
+                    """
+                    UPDATE migration_vms
+                       SET migration_status = 'completed',
+                           migrated_at       = NOW()
+                     WHERE project_id = %s AND vm_name = %s
+                    """,
+                    (project_id, vm_id),
+                )
+
+            elif event_type == "vm_failed" and vm_id:
+                failure_reason = payload.get("reason") or payload.get("error") or "Unknown failure"
+                cur.execute(
+                    """
+                    UPDATE migration_vms
+                       SET migration_status = 'failed',
+                           failure_reason   = %s
+                     WHERE project_id = %s AND vm_name = %s
+                    """,
+                    (failure_reason, project_id, vm_id),
+                )
+
+            elif event_type == "vm_started" and vm_id:
+                cur.execute(
+                    """
+                    UPDATE migration_vms
+                       SET migration_status = 'in-flight'
+                     WHERE project_id = %s AND vm_name = %s
+                    """,
+                    (project_id, vm_id),
+                )
+
+            elif event_type == "wave_started" and wave_id is not None:
+                cur.execute(
+                    """
+                    UPDATE migration_waves
+                       SET status = 'executing'
+                     WHERE project_id = %s AND wave_number = %s AND status != 'completed'
+                    """,
+                    (project_id, int(wave_id)),
+                )
+
+            elif event_type == "wave_completed" and wave_id is not None:
+                cur.execute(
+                    """
+                    UPDATE migration_waves
+                       SET status = 'completed'
+                     WHERE project_id = %s AND wave_number = %s
+                    """,
+                    (project_id, int(wave_id)),
+                )
+
+    return {"status": "accepted", "event_type": event_type}
+
+
+@router.get(
+    "/projects/{project_id}/progress",
+    dependencies=[Depends(require_permission("migration", "read"))],
+    summary="Get vJailbreak migration progress for a project",
+    tags=["migration"],
+)
+def get_migration_progress(project_id: str):
+    """Return wave- and VM-level migration status for the project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Wave summary
+            cur.execute(
+                """
+                SELECT wave_number, name, status, vm_count
+                FROM migration_waves
+                WHERE project_id = %s
+                ORDER BY wave_number
+                """,
+                (project_id,),
+            )
+            waves = [dict(r) for r in cur.fetchall()]
+
+            # VM status summary
+            cur.execute(
+                """
+                SELECT vm_name, migration_status, failure_reason,
+                       migrated_at, wave_number
+                FROM migration_vms mv
+                LEFT JOIN migration_wave_vms mwv
+                    ON mwv.project_id = mv.project_id AND mwv.vm_name = mv.vm_name
+                WHERE mv.project_id = %s
+                ORDER BY mv.vm_name
+                """,
+                (project_id,),
+            )
+            vms = []
+            for r in cur.fetchall():
+                row = dict(r)
+                if row.get("migrated_at"):
+                    row["migrated_at"] = row["migrated_at"].isoformat()
+                vms.append(row)
+
+            # Counts by status
+            counts: dict[str, int] = {}
+            for vm in vms:
+                s = vm.get("migration_status", "pending")
+                counts[s] = counts.get(s, 0) + 1
+
+    return {
+        "project_id": project_id,
+        "waves": waves,
+        "vms": vms,
+        "summary": counts,
+    }
+
+
+@router.post(
+    "/projects/{project_id}/webhook-secret/regenerate",
+    dependencies=[Depends(require_permission("migration", "write"))],
+    summary="Generate or rotate the webhook secret for a project",
+    tags=["migration"],
+)
+def regenerate_webhook_secret(project_id: str):
+    """Generate a new random webhook secret and store it.
+
+    Returns the secret in plain text **once** — store it securely; it cannot
+    be retrieved again (only the hashed form is stored after this call).
+    """
+    new_secret = _secrets_lib.token_hex(32)   # 256-bit random secret
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE migration_projects SET webhook_secret = %s WHERE project_id = %s",
+                (new_secret, project_id),
+            )
+
+    return {
+        "project_id": project_id,
+        "webhook_secret": new_secret,
+        "message": "Store this secret now — it will not be shown again.",
+    }
+
+
+@router.get(
+    "/projects/{project_id}/webhook-info",
+    dependencies=[Depends(require_permission("migration", "read"))],
+    summary="Get webhook configuration info for a project",
+    tags=["migration"],
+)
+def get_webhook_info(project_id: str, request: Request):
+    """Return the webhook URL and whether a secret is configured."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT project_id, webhook_secret FROM migration_projects WHERE project_id = %s",
+                (project_id,),
+            )
+            row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    base_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{base_url}/api/migration/projects/{project_id}/webhook"
+
+    return {
+        "project_id": project_id,
+        "webhook_url": webhook_url,
+        "secret_configured": bool(row["webhook_secret"]),
+        # Show only first/last 4 chars for verification without exposing the full secret
+        "secret_hint": (
+            row["webhook_secret"][:4] + "..." + row["webhook_secret"][-4:]
+            if row["webhook_secret"]
+            else None
+        ),
+    }
 

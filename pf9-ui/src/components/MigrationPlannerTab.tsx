@@ -186,6 +186,69 @@ export default function MigrationPlannerTab({ isAdmin: _isAdmin, onViewTenantGra
     }
   };
 
+  /* ---- Webhook info ---- */
+  const [webhookInfo, setWebhookInfo] = useState<{ webhook_url: string; secret_configured: boolean; secret_hint: string | null } | null>(null);
+  const [webhookSecret, setWebhookSecret] = useState<string | null>(null);
+  const [webhookLoading, setWebhookLoading] = useState(false);
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [copiedSecret, setCopiedSecret] = useState(false);
+  const [progress, setProgress] = useState<{ waves: any[]; vms: any[]; summary: Record<string, number> } | null>(null);
+
+  const loadWebhookInfo = useCallback(async (projectId: string) => {
+    try {
+      const data = await apiFetch<{ webhook_url: string; secret_configured: boolean; secret_hint: string | null }>(
+        `/api/migration/projects/${projectId}/webhook-info`
+      );
+      setWebhookInfo(data);
+    } catch (_) {
+      setWebhookInfo(null);
+    }
+  }, []);
+
+  const loadProgress = useCallback(async (projectId: string) => {
+    try {
+      const data = await apiFetch<{ waves: any[]; vms: any[]; summary: Record<string, number> }>(
+        `/api/migration/projects/${projectId}/progress`
+      );
+      setProgress(data);
+    } catch (_) {
+      setProgress(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedProject) {
+      loadWebhookInfo(selectedProject.project_id);
+      loadProgress(selectedProject.project_id);
+    }
+  }, [selectedProject, loadWebhookInfo, loadProgress]);
+
+  const handleRegenerateSecret = async () => {
+    if (!selectedProject) return;
+    if (!confirm("Regenerate the webhook secret? The old secret will stop working immediately.")) return;
+    setWebhookLoading(true);
+    try {
+      const data = await apiFetch<{ webhook_secret: string }>(
+        `/api/migration/projects/${selectedProject.project_id}/webhook-secret/regenerate`,
+        { method: "POST" }
+      );
+      setWebhookSecret(data.webhook_secret);
+      await loadWebhookInfo(selectedProject.project_id);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setWebhookLoading(false);
+    }
+  };
+
+  const copyToClipboard = async (text: string, setCopied: (v: boolean) => void) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {}
+  };
+
   /* ================================================================ */
   /*  Render                                                          */
   /* ================================================================ */
@@ -323,11 +386,92 @@ export default function MigrationPlannerTab({ isAdmin: _isAdmin, onViewTenantGra
 
       {/* ---- Setup view ---- */}
       {subView === "setup" && selectedProject && (
-        <ProjectSetup
-          project={selectedProject}
-          onProjectUpdated={(p) => { setSelectedProject(p); loadProjects(); }}
-          onNavigate={(view) => setSubView(view as SubView)}
-        />
+        <>
+          {/* Webhook panel */}
+          <div style={{ background: "var(--card-bg, #f9fafb)", border: "1px solid var(--border, #e5e7eb)", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+            <h3 style={{ marginTop: 0, marginBottom: 12 }}>🔗 vJailbreak Webhook</h3>
+            {webhookInfo ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <code style={{ flex: 1, background: "#f1f5f9", padding: "6px 10px", borderRadius: 4, fontSize: "0.82rem", wordBreak: "break-all" }}>
+                    {webhookInfo.webhook_url}
+                  </code>
+                  <button onClick={() => copyToClipboard(webhookInfo.webhook_url, setCopiedWebhook)} style={btnSmall}>
+                    {copiedWebhook ? "✅ Copied" : "📋 Copy"}
+                  </button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: "0.82rem", color: "#6b7280" }}>
+                    Secret: {webhookInfo.secret_configured
+                      ? <code style={{ background: "#f1f5f9", padding: "2px 6px", borderRadius: 4 }}>{webhookInfo.secret_hint ?? "configured"}</code>
+                      : <span style={{ color: "#dc2626" }}>⚠️ Not configured</span>
+                    }
+                  </span>
+                </div>
+                {webhookSecret && (
+                  <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: 10 }}>
+                    <div style={{ fontSize: "0.78rem", color: "#92400e", marginBottom: 4 }}>⚠️ Copy this secret now — it will not be shown again:</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <code style={{ flex: 1, fontSize: "0.82rem", wordBreak: "break-all" }}>{webhookSecret}</code>
+                      <button onClick={() => copyToClipboard(webhookSecret, setCopiedSecret)} style={btnSmall}>
+                        {copiedSecret ? "✅ Copied" : "📋 Copy"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <button onClick={handleRegenerateSecret} disabled={webhookLoading} style={btnSecondary}>
+                    {webhookLoading ? "Regenerating…" : "🔄 Regenerate Secret"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p style={{ color: "#6b7280", margin: 0 }}>Loading webhook info…</p>
+            )}
+          </div>
+
+          {/* Progress panel */}
+          {progress && (Object.keys(progress.summary).length > 0 || progress.waves.length > 0) && (
+            <div style={{ background: "var(--card-bg, #f9fafb)", border: "1px solid var(--border, #e5e7eb)", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+              <h3 style={{ marginTop: 0, marginBottom: 12 }}>📊 Migration Progress</h3>
+
+              {/* Summary counts */}
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+                {Object.entries(progress.summary).map(([status, count]) => {
+                  const color = status === "completed" ? "#22c55e" : status === "failed" ? "#ef4444" : status === "in-flight" ? "#3b82f6" : "#94a3b8";
+                  return (
+                    <div key={status} style={{ padding: "4px 12px", borderRadius: 12, background: color + "20", color, fontWeight: 600, fontSize: "0.85rem", border: `1px solid ${color}40` }}>
+                      {count} {status}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Wave status */}
+              {progress.waves.length > 0 && (
+                <div>
+                  <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#6b7280", marginBottom: 6 }}>Waves</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {progress.waves.map((w: any) => {
+                      const wcolor = w.status === "completed" ? "#22c55e" : w.status === "executing" ? "#3b82f6" : w.status === "cancelled" ? "#9ca3af" : "#8b5cf6";
+                      return (
+                        <div key={w.wave_number} style={{ padding: "4px 12px", borderRadius: 6, background: wcolor + "20", color: wcolor, fontSize: "0.82rem", border: `1px solid ${wcolor}40` }}>
+                          Wave {w.wave_number}: {w.status} ({w.vm_count ?? 0} VMs)
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <ProjectSetup
+            project={selectedProject}
+            onProjectUpdated={(p) => { setSelectedProject(p); loadProjects(); }}
+            onNavigate={(view) => setSubView(view as SubView)}
+          />
+        </>
       )}
 
       {/* ---- Analysis view ---- */}
