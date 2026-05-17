@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.4] - 2026-05-17
+
+### Fixed
+- **Wave Planner 500 error**: `GET /api/migration/projects/{id}/waves` was crashing with `psycopg2.errors.UndefinedColumn: column wv.vm_id does not exist` because the `migration_wave_vms` table uses `vm_name` (not `vm_id`) as its VM reference. Fixed the COUNT JOIN condition and the per-wave VM detail query to join on `vm_name + project_id`. Also removed non-existent `wv.wave_vm_status` column from the SELECT.
+- **Webhook `wave_id` 400 vs 500**: Moved `wave_id` integer validation to before the database connection block so `HTTPException(400)` propagates cleanly to the client instead of being masked by the DB context manager's rollback logic.
+
+---
+
 ## [2.0.3] - 2026-05-17
 
 ### Fixed

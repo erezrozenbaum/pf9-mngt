@@ -7022,7 +7022,7 @@ async def list_waves(project_id: str, cohort_id: Optional[int] = None):
                            COALESCE(c.name, '') AS cohort_name
                     FROM migration_waves w
                     LEFT JOIN migration_wave_vms wv
-                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number AND wv.vm_id IS NOT NULL
+                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number
                     LEFT JOIN migration_cohorts c ON c.id = w.cohort_id
                     WHERE w.project_id = %s AND w.cohort_id = %s
                     GROUP BY w.id, c.name
@@ -7035,7 +7035,7 @@ async def list_waves(project_id: str, cohort_id: Optional[int] = None):
                            COALESCE(c.name, '') AS cohort_name
                     FROM migration_waves w
                     LEFT JOIN migration_wave_vms wv
-                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number AND wv.vm_id IS NOT NULL
+                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number
                     LEFT JOIN migration_cohorts c ON c.id = w.cohort_id
                     WHERE w.project_id = %s
                     GROUP BY w.id, c.name
@@ -7049,9 +7049,9 @@ async def list_waves(project_id: str, cohort_id: Optional[int] = None):
                 cur.execute("""
                     SELECT v.id, v.vm_name, v.tenant_name, v.risk_category,
                            v.migration_mode, v.migration_status, v.total_disk_gb,
-                           v.in_use_gb, wv.wave_vm_status, wv.migration_order
+                           v.in_use_gb, wv.migration_order
                     FROM migration_wave_vms wv
-                    JOIN migration_vms v ON v.id = wv.vm_id
+                    JOIN migration_vms v ON v.vm_name = wv.vm_name AND v.project_id = wv.project_id
                     WHERE wv.project_id = %s AND wv.wave_number = %s
                     ORDER BY wv.migration_order, v.vm_name
                 """, (project_id, w["wave_number"]))
@@ -10483,6 +10483,14 @@ async def receive_vjailbreak_webhook(
     vm_id = payload.get("vm_id") or payload.get("vm_name")
     wave_id = payload.get("wave_id")
 
+    # Validate wave_id before opening DB connection so HTTPException propagates cleanly
+    wave_num: Optional[int] = None
+    if wave_id is not None:
+        try:
+            wave_num = int(wave_id)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail=f"wave_id must be an integer, got: {wave_id!r}")
+
     # ── 5. Persist raw event ─────────────────────────────────────────────────
     with _get_conn() as conn:
         with conn.cursor() as cur:
@@ -10529,11 +10537,7 @@ async def receive_vjailbreak_webhook(
                     (project_id, vm_id),
                 )
 
-            elif event_type == "wave_started" and wave_id is not None:
-                try:
-                    wave_num = int(wave_id)
-                except (ValueError, TypeError):
-                    raise HTTPException(status_code=400, detail=f"wave_id must be an integer, got: {wave_id!r}")
+            elif event_type == "wave_started" and wave_num is not None:
                 cur.execute(
                     """
                     UPDATE migration_waves
@@ -10543,11 +10547,7 @@ async def receive_vjailbreak_webhook(
                     (project_id, wave_num),
                 )
 
-            elif event_type == "wave_completed" and wave_id is not None:
-                try:
-                    wave_num = int(wave_id)
-                except (ValueError, TypeError):
-                    raise HTTPException(status_code=400, detail=f"wave_id must be an integer, got: {wave_id!r}")
+            elif event_type == "wave_completed" and wave_num is not None:
                 cur.execute(
                     """
                     UPDATE migration_waves
