@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.0] - 2026-05-17
+
+### Added
+- **vJailbreak Execution Feedback Loop**: Migration projects now support webhook-based execution callbacks from vJailbreak agents. A new `migration_webhook_events` table logs all incoming events. Three new API endpoints:
+  - `POST /api/migration/projects/{id}/webhook` — receives `wave_started`, `vm_started`, `vm_migrated`, `vm_failed`, `wave_completed` events, verified with HMAC-SHA256. No JWT required (machine-to-machine).
+  - `GET /api/migration/projects/{id}/progress` — returns per-wave and per-VM migration status with status counts.
+  - `POST /api/migration/projects/{id}/webhook-secret/regenerate` — generates/rotates the project's webhook secret (32-byte random hex, returned once).
+  - `GET /api/migration/projects/{id}/webhook-info` — returns webhook URL, whether a secret is configured, and a masked hint.
+- **Migration schema**: `webhook_secret` column on `migration_projects`; `migration_status`, `failure_reason`, `migrated_at` columns on `migration_vms`.
+- **Migration Planner UI**: Webhook panel in the project setup view shows the webhook URL with a copy button, the current secret hint, and a Regenerate button. A live progress panel shows wave statuses and VM migration status counts with color-coded badges, polling `/progress` on load.
+- **Account Manager Dashboard — Health Score column**: Portfolio summary now includes `health_score` and `score_grade` per tenant (joined from tenant health scores). The table has a sortable Health column (color-coded: green ≥ 70, amber 40–69, red < 40) and a new "Avg. Health Score" KPI card in the strip.
+
+---
+
 ## [1.99.5] - 2026-05-14
 
 ### Fixed

@@ -57,6 +57,10 @@ interface PortfolioTenant {
   open_critical_count: number;
   open_total_count: number;
   leakage_insight_count: number;
+
+  // Health score
+  health_score: number | null;
+  score_grade: string | null;
 }
 
 interface PortfolioSummaryResponse {
@@ -66,7 +70,7 @@ interface PortfolioSummaryResponse {
   domains: string[];
 }
 
-type SortKey = "name" | "tier" | "status" | "quota_vcpu" | "quota_ram" | "vcpu_growth" | "cost" | "critical";
+type SortKey = "name" | "tier" | "status" | "quota_vcpu" | "quota_ram" | "vcpu_growth" | "cost" | "critical" | "health_score";
 
 interface Props {
   userRole: string;
@@ -189,6 +193,7 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
       case "vcpu_growth": av = a.vcpu_growth_pct;       bv = b.vcpu_growth_pct;      break;
       case "cost":        av = a.metered_cost_this_month; bv = b.metered_cost_this_month; break;
       case "critical":    av = a.open_critical_count;   bv = b.open_critical_count;  break;
+      case "health_score": av = a.health_score;           bv = b.health_score;         break;
     }
     if (av === null && bv === null) return 0;
     if (av === null) return 1;
@@ -209,6 +214,11 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
     totalCost:      portfolio.reduce((s, t) => s + (t.metered_cost_this_month ?? 0), 0),
     metered:        portfolio.filter((t) => t.metered_vm_count != null && t.metered_vm_count > 0).length,
   };
+
+  const scoredTenants = portfolio.filter((t) => t.health_score !== null);
+  const avgHealthScore = scoredTenants.length > 0
+    ? Math.round(scoredTenants.reduce((s, t) => s + (t.health_score ?? 0), 0) / scoredTenants.length)
+    : null;
 
   // Quota pressure: tenants ≥ 80% on any quota dimension
   const quotaUnderPressure = portfolio.filter(
@@ -310,6 +320,13 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
           { label: "Quota Under Pressure", value: quotaUnderPressure,  accent: "#a855f7" },
           { label: "Growing Tenants",    value: growingTenants,        accent: "#06b6d4" },
           {
+            label: "Avg. Health Score",
+            value: avgHealthScore !== null ? `${avgHealthScore}/100` : "—",
+            accent: avgHealthScore !== null
+              ? avgHealthScore >= 70 ? "#22c55e" : avgHealthScore >= 40 ? "#f59e0b" : "#ef4444"
+              : "#94a3b8",
+          },
+          {
             label: "Est. Fleet Cost (mo.)",
             value: counts.totalCost > 0
               ? `$${counts.totalCost.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
@@ -381,6 +398,7 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
                 <th style={{ whiteSpace: "nowrap" }}>Critical</th>
                 <th style={{ whiteSpace: "nowrap" }}>Leakage</th>
                 <th style={{ whiteSpace: "nowrap" }}>Breach Fields</th>
+                {thSort("health_score", "Health")}
               </tr>
             </thead>
             <tbody>
@@ -466,6 +484,24 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
                         ? <span className="pf9-muted">{t.at_risk_fields.join(", ")} (at risk)</span>
                         : <span className="pf9-muted">—</span>
                     }
+                  </td>
+
+                  {/* Health score */}
+                  <td style={{ textAlign: "center", minWidth: "80px" }}>
+                    {t.health_score !== null ? (
+                      <span
+                        style={{
+                          fontWeight: 700,
+                          color: t.health_score >= 70 ? "#22c55e" : t.health_score >= 40 ? "#f59e0b" : "#ef4444",
+                        }}
+                        title={`Grade: ${t.score_grade ?? "—"}`}
+                      >
+                        {t.health_score}
+                        <span style={{ fontSize: "0.72rem", marginLeft: "3px", opacity: 0.7 }}>{t.score_grade}</span>
+                      </span>
+                    ) : (
+                      <span className="pf9-muted">—</span>
+                    )}
                   </td>
                 </tr>
               ))}

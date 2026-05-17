@@ -479,7 +479,11 @@ def get_portfolio_summary(
                     -- Previous-month metering aggregates (for growth)
                     pmm_prev.avg_vcpus                          AS prev_avg_vcpus,
                     pmm_prev.avg_ram_gb                         AS prev_avg_ram_gb,
-                    pmm_prev.estimated_cost                     AS prev_metered_cost
+                    pmm_prev.estimated_cost                     AS prev_metered_cost,
+
+                    -- Tenant composite health score
+                    ths.score                                   AS health_score,
+                    ths.computed_at                             AS health_score_at
 
                 FROM projects p
                 {domain_clause}
@@ -540,6 +544,10 @@ def get_portfolio_summary(
                 -- Metering aggregates — previous month
                 LEFT JOIN portfolio_metering_monthly pmm_prev
                     ON pmm_prev.tenant_id = p.id AND pmm_prev.month = %s
+
+                -- Tenant composite health score (latest computed value)
+                LEFT JOIN tenant_health_scores_latest ths
+                    ON ths.project_id = p.id
 
                 ORDER BY p.name ASC
             """, domain_params + [month_start, month_start, prev_month_start])
@@ -652,6 +660,16 @@ def get_portfolio_summary(
             "open_critical_count":   int(row.get("open_critical_count") or 0),
             "open_total_count":      int(row.get("open_total_count") or 0),
             "leakage_insight_count": int(row.get("leakage_insight_count") or 0),
+
+            # Health score
+            "health_score":          _i(row.get("health_score")),
+            "score_grade": (
+                "A" if (row.get("health_score") or 0) >= 80
+                else "B" if (row.get("health_score") or 0) >= 60
+                else "C" if (row.get("health_score") or 0) >= 40
+                else "D" if (row.get("health_score") or 0) >= 20
+                else "F"
+            ) if row.get("health_score") is not None else None,
         })
 
     # Build available domains list for the UI filter dropdown
