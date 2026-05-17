@@ -881,7 +881,6 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
       )}
     </>
   );
-  );
 };
 
 export default CopilotPanel;
