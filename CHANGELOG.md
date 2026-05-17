@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.2] - 2026-05-17
+
+### Changed
+- **Webhook secret auto-generation**: Migration project creation (`POST /api/migration/projects`) now automatically generates a 256-bit random webhook secret and returns it once in the creation response. Previously a manual call to the regenerate endpoint was required after project creation. Existing projects without a secret still require a one-time call to `POST /api/migration/projects/{id}/webhook-secret/regenerate`.
+
+---
+
 ## [2.0.1] - 2026-05-17
 
 ### Fixed
