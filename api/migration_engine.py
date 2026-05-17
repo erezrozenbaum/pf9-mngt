@@ -2278,7 +2278,7 @@ def build_wave_plan(
         pilot_ids = [v["id"] for v in sorted_vms[:pilot_vm_count] if v.get("id")]
         rest = [v for v in sorted_vms[pilot_vm_count:] if v.get("id")]
         # Pilot wave name uses the prefix so each cohort's pilot is identifiable
-        waves_spec.append({"name": f"≡ƒº¬ {wave_name_prefix}", "wave_type": "pilot", "vm_ids": pilot_ids})
+        waves_spec.append({"name": f"{wave_name_prefix} - Pilot", "wave_type": "pilot", "vm_ids": pilot_ids})
         # Fill regular waves Γאפ counter starts at 1 (independent of the pilot slot)
         for n, chunk_start in enumerate(range(0, len(rest), max_vms_per_wave), 1):
             chunk = rest[chunk_start:chunk_start + max_vms_per_wave]
