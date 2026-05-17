@@ -1419,7 +1419,7 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v2.0.4** (May 17, 2026)
+Current schema version: **v2.0.5** (May 17, 2026)
 
 ---
 

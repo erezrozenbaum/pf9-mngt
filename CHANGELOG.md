@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.5] - 2026-05-17
+
+### Fixed
+- **Wave Planner schema mismatch**: `GET /api/migration/projects/{id}/waves`, `POST .../waves`, and `PATCH .../waves/{id}` were all referencing columns that do not exist in the `migration_waves` table (`cohort_id`, `wave_type`, `agent_slots_override`, `scheduled_start`, `scheduled_end`, `owner_name`, `notes`). All three endpoints and the internal `_next_wave_number` helper have been corrected to use the actual live schema columns (`name`, `description`, `maintenance_window_start`, `maintenance_window_end`). The `GET` endpoint now also returns a `live_vm_count` field derived from the `migration_wave_vms` join.
+
+---
+
 ## [2.0.4] - 2026-05-17
 
 ### Fixed

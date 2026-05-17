@@ -6997,50 +6997,29 @@ class UpdatePreflightRequest(BaseModel):
 # --- Helper ---
 def _next_wave_number(project_id: str, cohort_id: Optional[int], conn) -> int:
     with conn.cursor() as cur:
-        if cohort_id:
-            cur.execute(
-                "SELECT COALESCE(MAX(wave_number),0)+1 FROM migration_waves "
-                "WHERE project_id=%s AND cohort_id=%s", (project_id, cohort_id))
-        else:
-            cur.execute(
-                "SELECT COALESCE(MAX(wave_number),0)+1 FROM migration_waves "
-                "WHERE project_id=%s", (project_id,))
+        cur.execute(
+            "SELECT COALESCE(MAX(wave_number),0)+1 FROM migration_waves "
+            "WHERE project_id=%s", (project_id,))
         return cur.fetchone()[0]
 
 
 @router.get("/projects/{project_id}/waves",
             dependencies=[Depends(require_permission("migration", "read"))])
 async def list_waves(project_id: str, cohort_id: Optional[int] = None):
-    """List all waves for a project, optionally filtered by cohort."""
+    """List all waves for a project."""
     with _get_conn() as conn:
         _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            if cohort_id is not None:
-                cur.execute("""
-                    SELECT w.*,
-                           COUNT(wv.id) AS vm_count,
-                           COALESCE(c.name, '') AS cohort_name
-                    FROM migration_waves w
-                    LEFT JOIN migration_wave_vms wv
-                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number
-                    LEFT JOIN migration_cohorts c ON c.id = w.cohort_id
-                    WHERE w.project_id = %s AND w.cohort_id = %s
-                    GROUP BY w.id, c.name
-                    ORDER BY w.wave_number
-                """, (project_id, cohort_id))
-            else:
-                cur.execute("""
-                    SELECT w.*,
-                           COUNT(wv.id) AS vm_count,
-                           COALESCE(c.name, '') AS cohort_name
-                    FROM migration_waves w
-                    LEFT JOIN migration_wave_vms wv
-                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number
-                    LEFT JOIN migration_cohorts c ON c.id = w.cohort_id
-                    WHERE w.project_id = %s
-                    GROUP BY w.id, c.name
-                    ORDER BY w.cohort_id NULLS LAST, w.wave_number
-                """, (project_id,))
+            cur.execute("""
+                SELECT w.*,
+                       COUNT(wv.id) AS live_vm_count
+                FROM migration_waves w
+                LEFT JOIN migration_wave_vms wv
+                       ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number
+                WHERE w.project_id = %s
+                GROUP BY w.id
+                ORDER BY w.wave_number
+            """, (project_id,))
             waves = [_serialize_row(dict(r)) for r in cur.fetchall()]
 
         # Attach VM summaries to each wave
@@ -7072,17 +7051,12 @@ async def create_wave(project_id: str, req: CreateWaveRequest,
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 INSERT INTO migration_waves
-                    (project_id, wave_number, name, wave_type, cohort_id,
-                     agent_slots_override, scheduled_start, scheduled_end,
-                     owner_name, notes, status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'planned')
+                    (project_id, wave_number, name, description, status)
+                VALUES (%s, %s, %s, %s, 'planned')
                 ON CONFLICT (project_id, wave_number) DO UPDATE SET
-                    name=EXCLUDED.name, wave_type=EXCLUDED.wave_type,
-                    cohort_id=EXCLUDED.cohort_id, updated_at=now()
+                    name=EXCLUDED.name, description=EXCLUDED.description, updated_at=now()
                 RETURNING *
-            """, (project_id, wave_number, wave_name, req.wave_type, req.cohort_id,
-                  req.agent_slots_override, req.scheduled_start, req.scheduled_end,
-                  req.owner_name, req.notes))
+            """, (project_id, wave_number, wave_name, req.notes))
             wave = _serialize_row(dict(cur.fetchone()))
         # Seed pre-flight checklist
         with conn.cursor() as cur:
@@ -7105,8 +7079,7 @@ async def update_wave(project_id: str, wave_id: int, req: UpdateWaveRequest,
     updates: Dict[str, Any] = {k: v for k, v in req.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
-    allowed = {"name", "wave_type", "cohort_id", "agent_slots_override",
-               "scheduled_start", "scheduled_end", "owner_name", "notes"}
+    allowed = {"name", "description", "maintenance_window_start", "maintenance_window_end"}
     fields = {k: v for k, v in updates.items() if k in allowed}
     if not fields:
         raise HTTPException(status_code=400, detail="No valid fields")
