@@ -4734,3 +4734,38 @@ CREATE OR REPLACE VIEW tenant_health_scores_latest AS
         details
     FROM tenant_health_scores
     ORDER BY project_id, computed_at DESC;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- v2.0.0: vJailbreak Execution Feedback Loop
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Webhook HMAC secret per migration project (set via regenerate endpoint)
+ALTER TABLE migration_projects
+    ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
+
+-- Per-VM execution state (updated via vJailbreak callbacks)
+ALTER TABLE migration_vms
+    ADD COLUMN IF NOT EXISTS migration_status TEXT NOT NULL DEFAULT 'pending';
+
+ALTER TABLE migration_vms
+    ADD COLUMN IF NOT EXISTS failure_reason TEXT;
+
+ALTER TABLE migration_vms
+    ADD COLUMN IF NOT EXISTS migrated_at TIMESTAMPTZ;
+
+-- Webhook event log (one row per inbound vJailbreak callback)
+CREATE TABLE IF NOT EXISTS migration_webhook_events (
+    id           BIGSERIAL PRIMARY KEY,
+    project_id   TEXT NOT NULL REFERENCES migration_projects(project_id) ON DELETE CASCADE,
+    received_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_type   TEXT NOT NULL,
+    vm_id        TEXT,
+    wave_id      INTEGER,
+    payload      JSONB NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_mwe_project_received
+    ON migration_webhook_events(project_id, received_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_mwe_project_event
+    ON migration_webhook_events(project_id, event_type);

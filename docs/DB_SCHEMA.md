@@ -1419,4 +1419,35 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v1.99.0** (May 14, 2026)
+Current schema version: **v2.0.1** (May 17, 2026)
+
+---
+
+## vJailbreak Execution Feedback (v2.0.0)
+
+### migration_webhook_events
+Inbound event log for vJailbreak execution callbacks. One row per accepted webhook call. Verified with HMAC-SHA256 before insert.
+
+```sql
+CREATE TABLE migration_webhook_events (
+    id           BIGSERIAL PRIMARY KEY,
+    project_id   TEXT NOT NULL REFERENCES migration_projects(project_id) ON DELETE CASCADE,
+    received_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_type   TEXT NOT NULL,   -- wave_started | vm_started | vm_migrated | vm_failed | wave_completed
+    vm_id        TEXT,
+    wave_id      INTEGER,
+    payload      JSONB NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX idx_mwe_project_received ON migration_webhook_events(project_id, received_at DESC);
+CREATE INDEX idx_mwe_project_event    ON migration_webhook_events(project_id, event_type);
+```
+
+**Schema additions on existing tables** (applied via `db/migrate_v2_0_0_vjailbreak_webhook.sql`):
+
+| Table | Column | Type | Notes |
+|---|---|---|---|
+| `migration_projects` | `webhook_secret` | `TEXT` | HMAC-SHA256 signing key; set via `/webhook-secret/regenerate` |
+| `migration_vms` | `migration_status` | `TEXT DEFAULT 'pending'` | Updated by webhook: `pending`, `started`, `migrated`, `failed` |
+| `migration_vms` | `failure_reason` | `TEXT` | Error detail from `vm_failed` events |
+| `migration_vms` | `migrated_at` | `TIMESTAMPTZ` | Set when `vm_migrated` event received |

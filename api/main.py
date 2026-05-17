@@ -509,6 +509,12 @@ async def rbac_middleware(request: Request, call_next):
     ):
         return await call_next(request)
 
+    # vJailbreak webhook endpoints use HMAC-SHA256 auth, not JWT.
+    # The handler itself verifies the signature; we skip JWT here.
+    import re as _re_mw
+    if _re_mw.match(r"^/api/migration/projects/[^/]+/webhook$", path):
+        return await call_next(request)
+
     # Validate X-Internal-Secret for all /internal paths — this is the
     # defence-in-depth gate so any future /internal route is protected even
     # if its handler forgets the per-route check.

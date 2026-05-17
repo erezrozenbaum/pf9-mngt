@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.1] - 2026-05-17
+
+### Fixed
+- **Webhook JWT bypass**: The global `rbac_middleware` in `api/main.py` was blocking the vJailbreak webhook endpoint (`POST /api/migration/projects/{id}/webhook`) with `401 Not authenticated` before the HMAC-SHA256 handler could run. Added a regex path skip for that route so HMAC verification proceeds correctly. The endpoint is intentionally unauthenticated at the JWT level — security is provided by the per-project HMAC-SHA256 secret.
+- **`db/init.sql`**: Added v2.0.0 schema blocks (missing from fresh-install script): `webhook_secret` column on `migration_projects`, `migration_status` / `failure_reason` / `migrated_at` columns on `migration_vms`, and the `migration_webhook_events` table with indexes.
+
+---
+
 ## [2.0.0] - 2026-05-17
 
 ### Added
