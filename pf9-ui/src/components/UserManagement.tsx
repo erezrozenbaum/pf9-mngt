@@ -121,7 +121,6 @@ type HsWeightsData = {
 };
 
 const HealthScoreSettings: React.FC<{ user?: AuthUser | null }> = ({ user }) => {
-  const [weights, setWeights] = useState<HsWeightsData | null>(null);
   const [editing, setEditing] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -130,7 +129,6 @@ const HealthScoreSettings: React.FC<{ user?: AuthUser | null }> = ({ user }) => 
   useEffect(() => {
     apiFetch<HsWeightsData>('/api/tenants/health-score/weights')
       .then(d => {
-        setWeights(d);
         const init: Record<string, number> = {};
         HEALTH_SCORE_COMPONENTS.forEach(c => { init[c.key] = (d as any)[c.key]; });
         setEditing(init);
@@ -148,11 +146,10 @@ const HealthScoreSettings: React.FC<{ user?: AuthUser | null }> = ({ user }) => 
   const handleSave = async () => {
     setSaving(true); setMsg('');
     try {
-      const updated = await apiFetch<HsWeightsData>('/api/tenants/health-score/weights', {
+      await apiFetch<HsWeightsData>('/api/tenants/health-score/weights', {
         method: 'PUT',
         body: JSON.stringify(editing),
       });
-      setWeights(updated);
       setMsg('✅ Weights saved — new scores will apply on the next scheduler run');
       setTimeout(() => setMsg(''), 5000);
     } catch (e: any) { setMsg(`⚠️ ${e.message}`); }
