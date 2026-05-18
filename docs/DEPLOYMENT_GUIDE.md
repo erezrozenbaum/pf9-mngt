@@ -1,6 +1,6 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.2.0
+**Version**: 2.3.0
 **Last Updated**: May 19, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
@@ -1635,6 +1635,24 @@ docker exec pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
 ```
 
 There are currently ~71 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
+
+**v2.3.0** adds three migration files:
+
+- `db/migrate_v2_3_0_health_score_config.sql`: Adds `health_score_disabled BOOLEAN NOT NULL DEFAULT false` to `projects`; inserts five `health_score.weight.*` rows into `system_settings`.
+- `db/migrate_v2_3_0_db_roles.sql`: Creates eight least-privilege PostgreSQL roles (`pf9_service_base`, `pf9_snapshot_svc`, `pf9_scheduler_svc`, `pf9_notification_svc`, `pf9_metering_svc`, `pf9_intelligence_svc`, `pf9_backup_svc`, `pf9_ldap_svc`) with table-specific GRANTs.
+- `db/migrate_v2_3_0_snapshot_chains.sql`: Adds `parent_snapshot_id`, `chain_depth`, and `chain_root_snapshot_id` columns to `snapshot_records`; creates `snapshot_chain_policies` table; adds `prevent_snapshot_chain_break` trigger.
+
+Apply directly or via the automated runner:
+```bash
+# Docker — apply directly via psql
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -f /tmp/migrate_v2_3_0_health_score_config.sql
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -f /tmp/migrate_v2_3_0_db_roles.sql
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -f /tmp/migrate_v2_3_0_snapshot_chains.sql
+# Kubernetes — pipe via kubectl exec
+Get-Content db/migrate_v2_3_0_health_score_config.sql | kubectl exec -i -n pf9-mngt pf9-db-0 -- psql -U pf9 -d pf9_mgmt
+Get-Content db/migrate_v2_3_0_db_roles.sql | kubectl exec -i -n pf9-mngt pf9-db-0 -- psql -U pf9 -d pf9_mgmt
+Get-Content db/migrate_v2_3_0_snapshot_chains.sql | kubectl exec -i -n pf9-mngt pf9-db-0 -- psql -U pf9 -d pf9_mgmt
+```
 
 **v2.2.0** adds `db/migrate_v2_2_0_copilot_agentic.sql`: creates the `copilot_execution_log` table (audit trail for Copilot-triggered runbook executions) and inserts two new system settings (`copilot.agentic_enabled`, `copilot.execution_quota_per_hour`). Apply with:
 ```bash

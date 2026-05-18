@@ -757,12 +757,28 @@ def _compute_all_tenant_health_scores() -> None:
         conn = _get_db_conn_with_cb()
         cur = conn.cursor()
 
-        # Fetch all project IDs
-        cur.execute("SELECT id FROM projects")
+        # Fetch all project IDs — exclude tenants where health scoring is disabled
+        cur.execute("SELECT id FROM projects WHERE health_score_disabled IS NOT TRUE")
         project_ids = [row[0] for row in cur.fetchall()]
         if not project_ids:
             log.debug("Health scores: no projects found")
             return
+
+        # Load configurable component weights from system_settings
+        _DEFAULT_WEIGHTS = {"snapshot_compliance": 25, "quota_headroom": 20,
+                            "drift": 20, "sla_tier": 20, "tickets": 15}
+        weights = dict(_DEFAULT_WEIGHTS)
+        try:
+            cur.execute("SELECT key, value FROM system_settings WHERE key LIKE 'health_score.weight.%'")
+            for wrow in cur.fetchall():
+                component = wrow[0].replace("health_score.weight.", "")
+                if component in weights:
+                    try:
+                        weights[component] = max(0, int(wrow[1]))
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            pass  # fall back to hardcoded defaults
 
         log.info("Health scores: computing for %d project(s)", len(project_ids))
         updated = 0
@@ -871,7 +887,18 @@ def _compute_all_tenant_health_scores() -> None:
                 scores["tickets"] = ticket_score
                 details["tickets"] = {"open_by_priority": open_tix}
 
-                total_score = sum(scores.values())
+                # Apply configured weights (scale proportionally to each default max)
+                def _scale(raw, default_max, cfg_weight):
+                    return round(raw / default_max * cfg_weight) if default_max else 0
+
+                scaled = {
+                    "snapshot_compliance": _scale(scores["snapshot_compliance"], _DEFAULT_WEIGHTS["snapshot_compliance"], weights["snapshot_compliance"]),
+                    "quota_headroom":      _scale(scores["quota_headroom"],      _DEFAULT_WEIGHTS["quota_headroom"],      weights["quota_headroom"]),
+                    "drift":               _scale(scores["drift"],               _DEFAULT_WEIGHTS["drift"],               weights["drift"]),
+                    "sla_tier":            _scale(scores["sla_tier"],            _DEFAULT_WEIGHTS["sla_tier"],            weights["sla_tier"]),
+                    "tickets":             _scale(scores["tickets"],             _DEFAULT_WEIGHTS["tickets"],             weights["tickets"]),
+                }
+                total_score = sum(scaled.values())
 
                 cur.execute(
                     """
@@ -884,8 +911,8 @@ def _compute_all_tenant_health_scores() -> None:
                     """,
                     (
                         project_id, total_score,
-                        scores["snapshot_compliance"], scores["quota_headroom"],
-                        scores["drift"], scores["sla_tier"], scores["tickets"],
+                        scaled["snapshot_compliance"], scaled["quota_headroom"],
+                        scaled["drift"], scaled["sla_tier"], scaled["tickets"],
                         json.dumps(details),
                     ),
                 )
@@ -916,7 +943,7 @@ def _compute_all_tenant_health_scores() -> None:
                                 alert_type, alert_severity, project_id,
                                 "Critical tenant health score" if total_score < 40 else "Low tenant health score",
                                 total_score,
-                                json.dumps({"score": total_score, "components": scores}),
+                                json.dumps({"score": total_score, "components": scaled}),
                             ),
                         )
                         conn.commit()

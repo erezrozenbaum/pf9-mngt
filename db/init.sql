@@ -13,11 +13,12 @@ CREATE TABLE IF NOT EXISTS domains (
 );
 
 CREATE TABLE IF NOT EXISTS projects (
-    id           TEXT PRIMARY KEY,
-    name         TEXT NOT NULL,
-    domain_id    TEXT REFERENCES domains(id),
-    raw_json     JSONB,
-    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                     TEXT PRIMARY KEY,
+    name                   TEXT NOT NULL,
+    domain_id              TEXT REFERENCES domains(id),
+    raw_json               JSONB,
+    last_seen_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    health_score_disabled  BOOLEAN NOT NULL DEFAULT false
 );
 
 -- Example: hypervisors
@@ -864,7 +865,11 @@ CREATE TABLE IF NOT EXISTS snapshot_records (
     status VARCHAR(50) DEFAULT 'pending',  -- 'pending', 'available', 'error', 'deleted'
     error_message TEXT,
     openstack_created_at TIMESTAMPTZ,  -- Timestamp from OpenStack
-    raw_snapshot_json JSONB  -- Full OpenStack snapshot object
+    raw_snapshot_json JSONB,  -- Full OpenStack snapshot object
+    -- Snapshot chain tracking
+    parent_snapshot_id TEXT,        -- NULL = base/full snapshot
+    chain_depth INTEGER NOT NULL DEFAULT 0,  -- 0 = base, 1+ = incremental
+    chain_root_snapshot_id TEXT     -- fast lookup of chain root
 );
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_run ON snapshot_records(snapshot_run_id);
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_volume ON snapshot_records(volume_id);
@@ -877,6 +882,48 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_records_snapshot ON snapshot_records(sna
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_action ON snapshot_records(action);
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_policy ON snapshot_records(policy_name);
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_created_at ON snapshot_records(created_at);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_parent ON snapshot_records(parent_snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_chain_root ON snapshot_records(chain_root_snapshot_id);
+
+-- Self-referential FK for chain parent (deferred to allow bulk inserts)
+ALTER TABLE snapshot_records
+    ADD CONSTRAINT fk_snapshot_parent
+    FOREIGN KEY (parent_snapshot_id) REFERENCES snapshot_records(snapshot_id)
+    DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE IF NOT EXISTS snapshot_chain_policies (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    volume_id       TEXT NOT NULL,
+    max_chain_depth INTEGER NOT NULL DEFAULT 5,
+    auto_rebase     BOOLEAN NOT NULL DEFAULT true,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, volume_id)
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_chain_policies_project
+    ON snapshot_chain_policies(project_id);
+
+CREATE OR REPLACE FUNCTION prevent_snapshot_chain_break()
+RETURNS TRIGGER AS $$
+DECLARE child_count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO child_count
+      FROM snapshot_records
+     WHERE parent_snapshot_id = OLD.snapshot_id
+       AND status <> 'deleted' AND id <> OLD.id;
+    IF child_count > 0 THEN
+        RAISE EXCEPTION 'Cannot delete snapshot % — % child snapshot(s) still exist.',
+            OLD.snapshot_id, child_count USING ERRCODE = '23503';
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_prevent_snapshot_chain_break ON snapshot_records;
+CREATE TRIGGER trg_prevent_snapshot_chain_break
+    BEFORE DELETE ON snapshot_records
+    FOR EACH ROW EXECUTE FUNCTION prevent_snapshot_chain_break();
 
 -- On-demand snapshot pipeline runs (API → scheduler signaling)
 CREATE TABLE IF NOT EXISTS snapshot_on_demand_runs (
@@ -4038,6 +4085,15 @@ CREATE TABLE IF NOT EXISTS system_settings (
 
 INSERT INTO system_settings (key, value, description)
 VALUES ('rvtools_retention_days', '30', 'Number of days to keep RVTools Excel exports on disk')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO system_settings (key, value, description)
+VALUES
+  ('health_score.weight.snapshot_compliance', '25', 'Max points for snapshot compliance component'),
+  ('health_score.weight.quota_headroom',      '20', 'Max points for quota headroom component'),
+  ('health_score.weight.drift',               '20', 'Max points for drift component'),
+  ('health_score.weight.sla_tier',            '20', 'Max points for SLA tier component'),
+  ('health_score.weight.tickets',             '15', 'Max points for tickets component')
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO system_settings (key, value, description) VALUES

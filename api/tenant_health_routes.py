@@ -55,9 +55,39 @@ class HealthScoreHistoryItem(BaseModel):
     score: int
 
 
+class HealthScoreWeightsOut(BaseModel):
+    snapshot_compliance: int
+    quota_headroom: int
+    drift: int
+    sla_tier: int
+    tickets: int
+    total: int
+
+
+class HealthScoreWeightsIn(BaseModel):
+    snapshot_compliance: int
+    quota_headroom: int
+    drift: int
+    sla_tier: int
+    tickets: int
+
+
+class HealthScoreToggleIn(BaseModel):
+    disabled: bool
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_DEFAULT_WEIGHTS = {
+    "snapshot_compliance": 25,
+    "quota_headroom": 20,
+    "drift": 20,
+    "sla_tier": 20,
+    "tickets": 15,
+}
+
 
 def _grade(score: int) -> str:
     if score >= 90:
@@ -71,11 +101,14 @@ def _grade(score: int) -> str:
     return "F"
 
 
-def _compute_score(conn, project_id: str) -> dict:
+def _compute_score(conn, project_id: str, weights: Optional[dict] = None) -> dict:
     """
     Compute a fresh health score for *project_id* using the live DB data.
+    Optionally accepts *weights* dict; if None, falls back to _DEFAULT_WEIGHTS.
     Returns a dict suitable for inserting into tenant_health_scores.
     """
+    if weights is None:
+        weights = dict(_DEFAULT_WEIGHTS)
     scores: dict = {}
     details: dict = {}
 
@@ -201,16 +234,51 @@ def _compute_score(conn, project_id: str) -> dict:
         scores["tickets"] = ticket_score
         details["tickets"] = {"open_by_priority": open_tickets}
 
-    total = sum(scores.values())
+    # Apply configured weights (scale proportionally to each component's default max)
+    scaled = {
+        "snapshot_compliance": _scale_component(scores["snapshot_compliance"], _DEFAULT_WEIGHTS["snapshot_compliance"], weights["snapshot_compliance"]),
+        "quota_headroom":      _scale_component(scores["quota_headroom"],      _DEFAULT_WEIGHTS["quota_headroom"],      weights["quota_headroom"]),
+        "drift":               _scale_component(scores["drift"],               _DEFAULT_WEIGHTS["drift"],               weights["drift"]),
+        "sla_tier":            _scale_component(scores["sla_tier"],            _DEFAULT_WEIGHTS["sla_tier"],            weights["sla_tier"]),
+        "tickets":             _scale_component(scores["tickets"],             _DEFAULT_WEIGHTS["tickets"],             weights["tickets"]),
+    }
+    total = sum(scaled.values())
     return {
         "score": total,
-        "snapshot_compliance": scores["snapshot_compliance"],
-        "quota_headroom": scores["quota_headroom"],
-        "drift": scores["drift"],
-        "sla_tier": scores["sla_tier"],
-        "tickets": scores["tickets"],
+        "snapshot_compliance": scaled["snapshot_compliance"],
+        "quota_headroom":      scaled["quota_headroom"],
+        "drift":               scaled["drift"],
+        "sla_tier":            scaled["sla_tier"],
+        "tickets":             scaled["tickets"],
         "details": details,
     }
+
+
+def _get_health_score_weights(conn) -> dict:
+    """Load health score component weights from system_settings (falls back to defaults)."""
+    weights = dict(_DEFAULT_WEIGHTS)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT key, value FROM system_settings WHERE key LIKE 'health_score.weight.%'"
+            )
+            for row in cur.fetchall():
+                component = row["key"].replace("health_score.weight.", "")
+                if component in weights:
+                    try:
+                        weights[component] = max(0, int(row["value"]))
+                    except (ValueError, TypeError):
+                        pass
+    except Exception:
+        pass  # always fall back to defaults
+    return weights
+
+
+def _scale_component(raw_score: int, default_max: int, configured_weight: int) -> int:
+    """Scale a component's raw score proportionally to its configured weight."""
+    if default_max == 0:
+        return 0
+    return round(raw_score / default_max * configured_weight)
 
 
 def _store_score(conn, project_id: str, result: dict) -> None:
@@ -312,7 +380,7 @@ async def recalculate_tenant_health_score(
                     detail=f"Project {project_id!r} not found",
                 )
 
-        result = _compute_score(conn, project_id)
+        result = _compute_score(conn, project_id, _get_health_score_weights(conn))
         _store_score(conn, project_id, result)
 
     logger.info(
@@ -373,3 +441,103 @@ async def get_tenant_health_score_history(
         )
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Health score weights admin settings
+# ---------------------------------------------------------------------------
+
+@router.get("/health-score/weights", response_model=HealthScoreWeightsOut, tags=["admin-settings"])
+async def get_health_score_weights(
+    current_user: User = Depends(require_permission("tenants", "read")),
+):
+    """Return the current health score component weights (superadmin-configurable)."""
+    with get_connection() as conn:
+        w = _get_health_score_weights(conn)
+    return HealthScoreWeightsOut(
+        snapshot_compliance=w["snapshot_compliance"],
+        quota_headroom=w["quota_headroom"],
+        drift=w["drift"],
+        sla_tier=w["sla_tier"],
+        tickets=w["tickets"],
+        total=sum(w.values()),
+    )
+
+
+@router.put("/health-score/weights", response_model=HealthScoreWeightsOut, tags=["admin-settings"])
+async def update_health_score_weights(
+    body: HealthScoreWeightsIn,
+    current_user: User = Depends(require_permission("tenants", "write")),
+):
+    """Update health score component weights. Only superadmin role should use this."""
+    total = body.snapshot_compliance + body.quota_headroom + body.drift + body.sla_tier + body.tickets
+    if total < 1:
+        raise HTTPException(status_code=422, detail="Weights must sum to at least 1")
+
+    updates = [
+        ("health_score.weight.snapshot_compliance", body.snapshot_compliance),
+        ("health_score.weight.quota_headroom",      body.quota_headroom),
+        ("health_score.weight.drift",               body.drift),
+        ("health_score.weight.sla_tier",            body.sla_tier),
+        ("health_score.weight.tickets",             body.tickets),
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for key, val in updates:
+                cur.execute(
+                    """INSERT INTO system_settings (key, value)
+                       VALUES (%s, %s)
+                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()""",
+                    (key, str(val)),
+                )
+        conn.commit()
+        w = _get_health_score_weights(conn)
+
+    logger.info(
+        "Health score weights updated by %s: snap=%d quota=%d drift=%d sla=%d tickets=%d",
+        current_user.username,
+        body.snapshot_compliance, body.quota_headroom, body.drift,
+        body.sla_tier, body.tickets,
+    )
+    return HealthScoreWeightsOut(
+        snapshot_compliance=w["snapshot_compliance"],
+        quota_headroom=w["quota_headroom"],
+        drift=w["drift"],
+        sla_tier=w["sla_tier"],
+        tickets=w["tickets"],
+        total=sum(w.values()),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-tenant health score disable toggle
+# ---------------------------------------------------------------------------
+
+@router.put("/{project_id}/health-score/toggle", tags=["tenant-health"])
+async def toggle_tenant_health_score(
+    project_id: str,
+    body: HealthScoreToggleIn,
+    current_user: User = Depends(require_permission("tenants", "write")),
+):
+    """Enable or disable health score computation for a specific tenant."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM projects WHERE id = %s", (project_id,))
+            if not cur.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Project {project_id!r} not found",
+                )
+            cur.execute(
+                "UPDATE projects SET health_score_disabled = %s WHERE id = %s",
+                (body.disabled, project_id),
+            )
+        conn.commit()
+
+    logger.info(
+        "Health score %s for project=%s by %s",
+        "disabled" if body.disabled else "enabled",
+        project_id,
+        current_user.username,
+    )
+    return {"project_id": project_id, "health_score_disabled": body.disabled}

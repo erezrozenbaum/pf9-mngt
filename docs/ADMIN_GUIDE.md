@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.2.0  
+**Version**: 2.3.0  
 **Last Updated**: May 19, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.3.0 — Health Score Configuration, Per-Worker DB Roles, Snapshot Chain Explorer
+
+- **Configurable health score weights** — Each of the five health score components (snapshot compliance, quota headroom, drift, SLA tier, tickets) now has an admin-configurable weight stored in `system_settings`. Weights must sum to 100. Configure via `PUT /api/tenants/health-score/weights` in the admin UI (Settings → Health Score tab) or directly via API.
+- **Per-project health score toggle** — Projects can have health score calculation disabled individually via `PUT /api/tenants/{project_id}/health-score/toggle`. Useful for projects under maintenance or decommission.
+- **Per-worker PostgreSQL roles** — Eight least-privilege roles (`pf9_service_base`, `pf9_snapshot_svc`, etc.) created in the database. Each worker service can be configured with its own login credentials for tighter service isolation. Roles are `NOLOGIN` by default; assign passwords to activate.
+- **Snapshot chain explorer** — New API (`GET /api/snapshots/{id}/chain`, `GET /api/volumes/{id}/chains`) and admin UI tab for visualizing snapshot parent–child chains. Chain depth and root tracking added to `snapshot_records`. Per-volume chain policies (max depth, auto-rebase) managed via `PUT /api/projects/{id}/chain-policies/{volume_id}`.
+- **Circuit breaker for PF9 control plane calls** — All outbound calls to OpenStack APIs now go through a circuit breaker (`pf9_control.py`) with half-open probing and automatic recovery.
+- **Alembic migration framework** — Four Alembic revision files added alongside the existing psql-based migrations. Both runners remain fully supported.
 
 ### v1.94.1 — UI layout and dark mode fixes (✅ Complete)
 

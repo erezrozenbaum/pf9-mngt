@@ -106,6 +106,15 @@ class TestPf9ClientQuotaUrls:
         client._headers = MagicMock(return_value={"X-Auth-Token": "tok"})
         # Prevent cache decorator from short-circuiting
         client._cache = {}
+        # Mock circuit breaker so tests work without Redis
+        cb = MagicMock()
+        cb.allow_request = MagicMock()  # no-op (CLOSED state)
+        cb.record_success = MagicMock()
+        cb.record_failure = MagicMock()
+        client._cb = cb
+        # Rate-limiter attrs
+        client._rl_enabled = False
+        client._rl_lock = __import__("threading").Lock()
         return client
 
     def test_compute_with_usage_appends_query_param(self):
@@ -114,17 +123,18 @@ class TestPf9ClientQuotaUrls:
         client = self._make_client()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {
             "quota_set": {
                 "instances": {"limit": 17, "in_use": 5, "reserved": 0},
                 "cores": {"limit": 46, "in_use": 12, "reserved": 0},
             }
         }
-        client.session.get = MagicMock(return_value=mock_resp)
+        client.session.request = MagicMock(return_value=mock_resp)
 
         result = _pc.Pf9Client.get_compute_quotas_with_usage(client, "proj-123")
 
-        call_url = client.session.get.call_args[0][0]
+        call_url = client.session.request.call_args[0][1]
         assert "?usage=true" in call_url, f"Expected ?usage=true in URL, got: {call_url}"
         assert result["instances"]["in_use"] == 5
 
@@ -134,17 +144,18 @@ class TestPf9ClientQuotaUrls:
         client = self._make_client()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {
             "quota_set": {
                 "gigabytes": {"limit": 1000, "in_use": 200, "reserved": 0},
                 "volumes": {"limit": 50, "in_use": 3, "reserved": 0},
             }
         }
-        client.session.get = MagicMock(return_value=mock_resp)
+        client.session.request = MagicMock(return_value=mock_resp)
 
         result = _pc.Pf9Client.get_storage_quotas_with_usage(client, "proj-123")
 
-        call_url = client.session.get.call_args[0][0]
+        call_url = client.session.request.call_args[0][1]
         assert "?usage=true" in call_url, f"Expected ?usage=true in URL, got: {call_url}"
         assert result["gigabytes"]["in_use"] == 200
 
@@ -157,7 +168,7 @@ class TestPf9ClientQuotaUrls:
         result = _pc.Pf9Client.get_storage_quotas_with_usage(client, "proj-123")
 
         assert result == {}
-        client.session.get.assert_not_called()
+        client.session.request.assert_not_called()
 
     def test_get_compute_quotas_original_unchanged(self):
         """Original get_compute_quotas must NOT append ?usage=true (preserves backward compat)."""
@@ -166,12 +177,13 @@ class TestPf9ClientQuotaUrls:
         client = self._make_client()
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"quota_set": {"instances": 17, "cores": 46}}
-        client.session.get = MagicMock(return_value=mock_resp)
+        client.session.request = MagicMock(return_value=mock_resp)
 
         _pc.Pf9Client.get_compute_quotas(client, "proj-456")
 
-        call_url = client.session.get.call_args[0][0]
+        call_url = client.session.request.call_args[0][1]
         assert "usage" not in call_url, f"Original method must not add usage param, got: {call_url}"
 
 

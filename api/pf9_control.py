@@ -9,10 +9,192 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from cache import cached
+from cache import cached, _get_client as _get_redis
 from secret_helper import read_secret
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Redis-backed per-region circuit breaker
+# ---------------------------------------------------------------------------
+
+class CircuitBreakerOpenError(Exception):
+    """Raised when the circuit breaker is OPEN and calls are being fast-failed."""
+
+
+class RegionCircuitBreaker:
+    """
+    A Redis-backed circuit breaker for outbound Platform9 API calls.
+
+    States:
+      CLOSED    — normal operation; failures are counted.
+      OPEN      — calls are rejected immediately with CircuitBreakerOpenError
+                  for RECOVERY_TIMEOUT seconds.
+      HALF_OPEN — one probe request is allowed through after the recovery
+                  timeout expires; success → CLOSED, failure → OPEN again.
+
+    All state is stored in Redis so it is shared across multiple API worker
+    processes.  If Redis is unavailable the circuit breaker degrades
+    gracefully (calls always pass through).
+
+    Configuration via env vars:
+      CB_FAILURE_THRESHOLD  — consecutive failures before opening  (default 5)
+      CB_RECOVERY_TIMEOUT   — seconds to stay OPEN before probing  (default 30)
+    """
+
+    FAILURE_THRESHOLD: int = int(os.getenv("CB_FAILURE_THRESHOLD", "5"))
+    RECOVERY_TIMEOUT: int  = int(os.getenv("CB_RECOVERY_TIMEOUT", "30"))
+
+    _STATE_CLOSED    = "closed"
+    _STATE_OPEN      = "open"
+    _STATE_HALF_OPEN = "half_open"
+
+    def __init__(self, region_id: str) -> None:
+        self._region_id = region_id
+        self._key_state  = f"cb:pf9:{region_id}:state"
+        self._key_fails  = f"cb:pf9:{region_id}:failures"
+        self._key_until  = f"cb:pf9:{region_id}:open_until"
+        # Local fallback counters when Redis is absent
+        self._local_lock    = threading.Lock()
+        self._local_fails   = 0
+        self._local_state   = self._STATE_CLOSED
+        self._local_until   = 0.0
+
+    # ── Public interface ──────────────────────────────────────────────────
+
+    def allow_request(self) -> bool:
+        """Return True if a request should be allowed through.
+
+        Raises CircuitBreakerOpenError when the circuit is OPEN and the
+        recovery timeout has not elapsed yet.
+        """
+        state = self._get_state()
+        if state == self._STATE_CLOSED:
+            return True
+        if state == self._STATE_OPEN:
+            # Check if recovery window has elapsed
+            if self._recovery_elapsed():
+                self._set_state(self._STATE_HALF_OPEN)
+                log.info("Circuit breaker [%s]: HALF_OPEN — probing", self._region_id)
+                return True
+            raise CircuitBreakerOpenError(
+                f"Circuit breaker for region '{self._region_id}' is OPEN. "
+                "Platform9 API calls are being fast-failed."
+            )
+        # HALF_OPEN — allow the single probe
+        return True
+
+    def record_success(self) -> None:
+        """Record a successful call; reset failure counter and close the circuit."""
+        self._set_failures(0)
+        self._set_state(self._STATE_CLOSED)
+        log.info("Circuit breaker [%s]: CLOSED (success)", self._region_id)
+
+    def record_failure(self) -> None:
+        """Record a failed call; open the circuit if threshold is reached."""
+        fails = self._increment_failures()
+        if fails >= self.FAILURE_THRESHOLD:
+            self._open_circuit()
+
+    # ── Redis helpers (with local fallback) ───────────────────────────────
+
+    def _get_state(self) -> str:
+        rc = _get_redis()
+        if rc is None:
+            return self._local_state
+        try:
+            return rc.get(self._key_state) or self._STATE_CLOSED
+        except Exception:
+            return self._local_state
+
+    def _set_state(self, state: str) -> None:
+        rc = _get_redis()
+        with self._local_lock:
+            self._local_state = state
+        if rc is None:
+            return
+        try:
+            rc.set(self._key_state, state, ex=self.RECOVERY_TIMEOUT * 10)
+        except Exception:
+            pass
+
+    def _get_failures(self) -> int:
+        rc = _get_redis()
+        if rc is None:
+            return self._local_fails
+        try:
+            v = rc.get(self._key_fails)
+            return int(v) if v else 0
+        except Exception:
+            return self._local_fails
+
+    def _set_failures(self, n: int) -> None:
+        rc = _get_redis()
+        with self._local_lock:
+            self._local_fails = n
+        if rc is None:
+            return
+        try:
+            rc.set(self._key_fails, n, ex=self.RECOVERY_TIMEOUT * 10)
+        except Exception:
+            pass
+
+    def _increment_failures(self) -> int:
+        rc = _get_redis()
+        with self._local_lock:
+            self._local_fails += 1
+            local = self._local_fails
+        if rc is None:
+            return local
+        try:
+            return rc.incr(self._key_fails)
+        except Exception:
+            return local
+
+    def _recovery_elapsed(self) -> bool:
+        rc = _get_redis()
+        if rc is None:
+            return time.monotonic() >= self._local_until
+        try:
+            v = rc.get(self._key_until)
+            if v is None:
+                return True
+            return time.time() >= float(v)
+        except Exception:
+            return time.monotonic() >= self._local_until
+
+    def _open_circuit(self) -> None:
+        until = time.time() + self.RECOVERY_TIMEOUT
+        rc = _get_redis()
+        with self._local_lock:
+            self._local_state = self._STATE_OPEN
+            self._local_until = time.monotonic() + self.RECOVERY_TIMEOUT
+        if rc is not None:
+            try:
+                rc.set(self._key_state, self._STATE_OPEN, ex=self.RECOVERY_TIMEOUT * 10)
+                rc.set(self._key_until, until, ex=self.RECOVERY_TIMEOUT * 10)
+            except Exception:
+                pass
+        log.warning(
+            "Circuit breaker [%s]: OPEN — %d failures, recovery in %ds",
+            self._region_id, self.FAILURE_THRESHOLD, self.RECOVERY_TIMEOUT,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Module-level circuit breaker registry (one CB per region_id)
+# ---------------------------------------------------------------------------
+
+_cb_registry: Dict[str, RegionCircuitBreaker] = {}
+_cb_lock = threading.Lock()
+
+
+def _get_circuit_breaker(region_id: str) -> RegionCircuitBreaker:
+    with _cb_lock:
+        if region_id not in _cb_registry:
+            _cb_registry[region_id] = RegionCircuitBreaker(region_id)
+        return _cb_registry[region_id]
 
 
 class Pf9Client:
@@ -54,6 +236,9 @@ class Pf9Client:
         self._rl_tokens: float = self._rl_rate
         self._rl_last: float = time.monotonic()
         self._rl_lock = threading.Lock()
+
+        # Circuit breaker for this region
+        self._cb = _get_circuit_breaker(region_id)
 
     @classmethod
     def from_env(cls) -> "Pf9Client":
@@ -104,6 +289,29 @@ class Pf9Client:
         self.token = None
         self._token_expires_at = None
 
+    def _cb_request(self, method: str, url: str, **kwargs: Any) -> "requests.Response":
+        """Execute an HTTP request through the circuit breaker + rate limiter.
+
+        Raises CircuitBreakerOpenError when the region circuit is OPEN.
+        Records success/failure on the shared RegionCircuitBreaker.
+        """
+        self._cb.allow_request()   # raises CircuitBreakerOpenError if OPEN
+        self._throttle()
+        try:
+            r: "requests.Response" = self.session.request(method, url, **kwargs)
+            # Treat server-side 5xx as circuit-breaker failures
+            if r.status_code >= 500:
+                self._cb.record_failure()
+            else:
+                self._cb.record_success()
+            return r
+        except requests.exceptions.ConnectionError as exc:
+            self._cb.record_failure()
+            raise
+        except requests.exceptions.Timeout as exc:
+            self._cb.record_failure()
+            raise
+
     def authenticate(self) -> None:
         """
         Get a project-scoped token & service endpoints for Nova/Neutron.
@@ -134,7 +342,7 @@ class Pf9Client:
         }
 
         url = f"{self.auth_url}/auth/tokens"
-        r = self.session.post(url, json=payload)
+        r = self._cb_request("POST", url, json=payload)
         r.raise_for_status()
 
         self.token = r.headers["X-Subject-Token"]
@@ -195,7 +403,6 @@ class Pf9Client:
         )
 
     def _headers(self) -> Dict[str, str]:
-        self._throttle()
         if self.token is None:
             self.authenticate()
         return {
@@ -242,7 +449,7 @@ class Pf9Client:
             params["all_tenants"] = "1"
         if project_id:
             params["project_id"] = project_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("servers", [])
 
@@ -253,7 +460,7 @@ class Pf9Client:
         url = f"{self.nova_endpoint}/servers/{server_id}"
         priv_token = self.get_privileged_token()
         h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
-        r = self.session.delete(url, headers=h)
+        r = self._cb_request("DELETE", url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -265,7 +472,7 @@ class Pf9Client:
         url = f"{self.nova_endpoint}/flavors/detail"
         # is_public=None (send as empty string) tells Nova to return ALL flavors
         # regardless of public/private status — requires admin token
-        r = self.session.get(url, headers=self._headers(), params={"is_public": "None"})
+        r = self._cb_request("GET", url, headers=self._headers(), params={"is_public": "None"})
         r.raise_for_status()
         return r.json().get("flavors", [])
 
@@ -295,7 +502,7 @@ class Pf9Client:
             }
         }
 
-        r = self.session.post(url, headers=self._headers(), json=payload)
+        r = self._cb_request("POST", url, headers=self._headers(), json=payload)
         r.raise_for_status()
         return r.json()
 
@@ -303,7 +510,7 @@ class Pf9Client:
         self.authenticate()
         assert self.nova_endpoint
         url = f"{self.nova_endpoint}/flavors/{flavor_id}"
-        r = self.session.delete(url, headers=self._headers())
+        r = self._cb_request("DELETE", url, headers=self._headers())
         # 404 -> already deleted, treat as success
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
@@ -319,7 +526,7 @@ class Pf9Client:
         params: Dict[str, str] = {}
         if project_id:
             params["project_id"] = project_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("networks", [])
 
@@ -333,7 +540,7 @@ class Pf9Client:
             params["project_id"] = project_id
         if network_id:
             params["network_id"] = network_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("subnets", [])
 
@@ -345,7 +552,7 @@ class Pf9Client:
         params: Dict[str, str] = {}
         if project_id:
             params["project_id"] = project_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("routers", [])
 
@@ -356,7 +563,7 @@ class Pf9Client:
         url = f"{self.neutron_endpoint}/v2.0/routers/{router_id}"
         priv_token = self.get_privileged_token()
         h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
-        r = self.session.delete(url, headers=h)
+        r = self._cb_request("DELETE", url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -368,7 +575,7 @@ class Pf9Client:
         params: Dict[str, str] = {}
         if project_id:
             params["project_id"] = project_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("floatingips", [])
 
@@ -379,7 +586,7 @@ class Pf9Client:
         url = f"{self.neutron_endpoint}/v2.0/floatingips/{floatingip_id}"
         priv_token = self.get_privileged_token()
         h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
-        r = self.session.delete(url, headers=h)
+        r = self._cb_request("DELETE", url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -391,7 +598,7 @@ class Pf9Client:
         params: Dict[str, str] = {}
         if project_id:
             params["project_id"] = project_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("ports", [])
 
@@ -402,7 +609,7 @@ class Pf9Client:
         url = f"{self.neutron_endpoint}/v2.0/ports/{port_id}"
         priv_token = self.get_privileged_token()
         h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
-        r = self.session.delete(url, headers=h)
+        r = self._cb_request("DELETE", url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -432,7 +639,7 @@ class Pf9Client:
             body["mtu"] = mtu
 
         payload = {"network": body}
-        r = self.session.post(url, headers=self._headers(), json=payload)
+        r = self._cb_request("POST", url, headers=self._headers(), json=payload)
         r.raise_for_status()
         return r.json().get("network", {})
 
@@ -466,7 +673,7 @@ class Pf9Client:
             }
         }
         try:
-            r = self.session.post(
+            r = self._cb_request("POST", 
                 f"{self.auth_url}/auth/tokens", json=payload, timeout=15
             )
             if r.status_code == 201:
@@ -487,7 +694,7 @@ class Pf9Client:
         headers = {"X-Auth-Token": self.token}
 
         # 1. Look up service user ID
-        r = self.session.get(
+        r = self._cb_request("GET", 
             f"{self.keystone_endpoint}/users",
             params={"name": svc_email},
             headers=headers,
@@ -501,7 +708,7 @@ class Pf9Client:
         user_id = users[0]["id"]
 
         # 2. Look up admin role ID
-        r = self.session.get(
+        r = self._cb_request("GET", 
             f"{self.keystone_endpoint}/roles",
             params={"name": "admin"},
             headers=headers,
@@ -519,7 +726,7 @@ class Pf9Client:
         check = self.session.head(role_url, headers=headers, timeout=30)
         if check.status_code == 204:
             return  # already has role
-        self.session.put(role_url, headers=headers, timeout=30)
+        self._cb_request("PUT", role_url, headers=headers, timeout=30)
 
     def get_privileged_token(self, project_id: Optional[str] = None) -> Optional[str]:
         """
@@ -570,7 +777,7 @@ class Pf9Client:
                         "scope": {"project": {"id": project_id}},
                     }
                 }
-                r = self.session.post(
+                r = self._cb_request("POST", 
                     f"{self.auth_url}/auth/tokens", json=payload, timeout=15
                 )
                 if r.status_code == 201:
@@ -639,7 +846,7 @@ class Pf9Client:
                     }},
                 }
             }
-            r = self.session.post(
+            r = self._cb_request("POST", 
                 f"{self.auth_url}/auth/tokens", json=payload, timeout=15
             )
             if r.status_code == 201:
@@ -658,7 +865,7 @@ class Pf9Client:
         # token scoped to that project (required for cross-tenant deletes).
         network_project_id: Optional[str] = None
         try:
-            r = self.session.get(url, headers=self._headers(), timeout=15)
+            r = self._cb_request("GET", url, headers=self._headers(), timeout=15)
             if r.status_code == 200:
                 net = r.json().get("network", {})
                 network_project_id = net.get("tenant_id") or net.get("project_id")
@@ -668,12 +875,12 @@ class Pf9Client:
         # Build a privileged token scoped to the network's project
         priv_token = self.get_privileged_token(network_project_id)
         if priv_token:
-            r = self.session.delete(
+            r = self._cb_request("DELETE", 
                 url,
                 headers={"X-Auth-Token": priv_token, "Content-Type": "application/json"},
             )
         else:
-            r = self.session.delete(url, headers=self._headers())
+            r = self._cb_request("DELETE", url, headers=self._headers())
 
         # careful: this will fail if ports exist
         if r.status_code == 403:
@@ -694,7 +901,7 @@ class Pf9Client:
         params = {}
         if project_id:
             params["project_id"] = project_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("security_groups", [])
 
@@ -702,7 +909,7 @@ class Pf9Client:
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/security-groups/{sg_id}"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("security_group", {})
 
@@ -718,7 +925,7 @@ class Pf9Client:
         body: Dict[str, Any] = {"name": name, "description": description}
         if project_id:
             body["project_id"] = project_id
-        r = self.session.post(url, headers=self._headers(), json={"security_group": body})
+        r = self._cb_request("POST", url, headers=self._headers(), json={"security_group": body})
         r.raise_for_status()
         return r.json()
 
@@ -728,7 +935,7 @@ class Pf9Client:
         url = f"{self.neutron_endpoint}/v2.0/security-groups/{sg_id}"
         priv_token = self.get_privileged_token()
         h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
-        r = self.session.delete(url, headers=h)
+        r = self._cb_request("DELETE", url, headers=h)
         if r.status_code == 409:
             raise Exception(
                 "Cannot delete this security group — it is the OpenStack "
@@ -770,7 +977,7 @@ class Pf9Client:
             body["remote_group_id"] = remote_group_id
         if description:
             body["description"] = description
-        r = self.session.post(url, headers=self._headers(), json={"security_group_rule": body})
+        r = self._cb_request("POST", url, headers=self._headers(), json={"security_group_rule": body})
         r.raise_for_status()
         return r.json()
 
@@ -780,7 +987,7 @@ class Pf9Client:
         url = f"{self.neutron_endpoint}/v2.0/security-group-rules/{rule_id}"
         priv_token = self.get_privileged_token()
         h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
-        r = self.session.delete(url, headers=h)
+        r = self._cb_request("DELETE", url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -793,14 +1000,14 @@ class Pf9Client:
         body: Dict[str, Any] = {"name": name, "enabled": True}
         if description:
             body["description"] = description
-        r = self.session.post(url, headers=self._headers(), json={"domain": body})
+        r = self._cb_request("POST", url, headers=self._headers(), json={"domain": body})
         r.raise_for_status()
         return r.json().get("domain", {})
 
     def get_domain(self, domain_id: str) -> Dict[str, Any]:
         self.authenticate()
         url = f"{self.keystone_endpoint}/domains/{domain_id}"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("domain", {})
 
@@ -808,7 +1015,7 @@ class Pf9Client:
     def list_domains(self) -> List[Dict[str, Any]]:
         self.authenticate()
         url = f"{self.keystone_endpoint}/domains"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("domains", [])
 
@@ -816,7 +1023,7 @@ class Pf9Client:
         """Update domain fields (enabled, name, description)."""
         self.authenticate()
         url = f"{self.keystone_endpoint}/domains/{domain_id}"
-        r = self.session.patch(url, headers=self._headers(), json={"domain": kwargs})
+        r = self._cb_request("PATCH", url, headers=self._headers(), json={"domain": kwargs})
         r.raise_for_status()
         return r.json().get("domain", {})
 
@@ -824,7 +1031,7 @@ class Pf9Client:
         """Delete a domain. Domain must be disabled first."""
         self.authenticate()
         url = f"{self.keystone_endpoint}/domains/{domain_id}"
-        r = self.session.delete(url, headers=self._headers())
+        r = self._cb_request("DELETE", url, headers=self._headers())
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -843,7 +1050,7 @@ class Pf9Client:
         }
         if description:
             body["description"] = description
-        r = self.session.post(url, headers=self._headers(), json={"project": body})
+        r = self._cb_request("POST", url, headers=self._headers(), json={"project": body})
         r.raise_for_status()
         return r.json().get("project", {})
 
@@ -854,7 +1061,7 @@ class Pf9Client:
         params: Dict[str, str] = {}
         if domain_id:
             params["domain_id"] = domain_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("projects", [])
 
@@ -866,7 +1073,7 @@ class Pf9Client:
         """
         self.authenticate()
         # Resolve domain_id
-        r = self.session.get(
+        r = self._cb_request("GET", 
             f"{self.keystone_endpoint}/domains",
             headers=self._headers(),
             params={"name": domain_name},
@@ -877,7 +1084,7 @@ class Pf9Client:
             raise ValueError(f"Domain '{domain_name}' not found")
         domain_id = domains[0]["id"]
         # Resolve project_id within that domain
-        r = self.session.get(
+        r = self._cb_request("GET", 
             f"{self.keystone_endpoint}/projects",
             headers=self._headers(),
             params={"domain_id": domain_id, "name": project_name},
@@ -891,7 +1098,7 @@ class Pf9Client:
     def delete_project(self, project_id: str) -> None:
         self.authenticate()
         url = f"{self.keystone_endpoint}/projects/{project_id}"
-        r = self.session.delete(url, headers=self._headers())
+        r = self._cb_request("DELETE", url, headers=self._headers())
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -925,11 +1132,11 @@ class Pf9Client:
         # ── 1. Servers (Nova) ──────────────────────────────────────────────
         try:
             url = f"{self.nova_endpoint}/servers?all_tenants=1&project_id={project_id}"
-            resp = self.session.get(url, headers=self._headers())
+            resp = self._cb_request("GET", url, headers=self._headers())
             if resp.ok:
                 for srv in resp.json().get("servers", []):
                     try:
-                        r = self.session.delete(
+                        r = self._cb_request("DELETE", 
                             f"{self.nova_endpoint}/servers/{srv['id']}", headers=h
                         )
                         if r.status_code in (202, 204, 404):
@@ -946,11 +1153,11 @@ class Pf9Client:
             try:
                 cinder_base = self._cinder_base()
                 vol_url = f"{cinder_base}/{project_id}/volumes/detail"
-                resp = self.session.get(vol_url, headers=h)
+                resp = self._cb_request("GET", vol_url, headers=h)
                 if resp.ok:
                     for vol in resp.json().get("volumes", []):
                         try:
-                            r = self.session.delete(
+                            r = self._cb_request("DELETE", 
                                 f"{cinder_base}/{project_id}/volumes/{vol['id']}", headers=h
                             )
                             if r.status_code in (200, 202, 204, 404):
@@ -964,13 +1171,13 @@ class Pf9Client:
 
         # ── 3. Floating IPs (Neutron) ──────────────────────────────────────
         try:
-            resp = self.session.get(
+            resp = self._cb_request("GET", 
                 f"{self.neutron_endpoint}/v2.0/floatingips?project_id={project_id}", headers=h
             )
             if resp.ok:
                 for fip in resp.json().get("floatingips", []):
                     try:
-                        r = self.session.delete(
+                        r = self._cb_request("DELETE", 
                             f"{self.neutron_endpoint}/v2.0/floatingips/{fip['id']}", headers=h
                         )
                         if r.status_code in (200, 202, 204, 404):
@@ -984,7 +1191,7 @@ class Pf9Client:
 
         # ── 4. Ports (Neutron — unattached ones) ──────────────────────────
         try:
-            resp = self.session.get(
+            resp = self._cb_request("GET", 
                 f"{self.neutron_endpoint}/v2.0/ports?project_id={project_id}", headers=h
             )
             if resp.ok:
@@ -995,7 +1202,7 @@ class Pf9Client:
                     if owner.startswith("network:") or owner.startswith("compute:"):
                         continue
                     try:
-                        r = self.session.delete(
+                        r = self._cb_request("DELETE", 
                             f"{self.neutron_endpoint}/v2.0/ports/{port['id']}", headers=h
                         )
                         if r.status_code in (202, 204, 404):
@@ -1009,13 +1216,13 @@ class Pf9Client:
 
         # ── 5. Networks (Neutron — delete last) ───────────────────────────
         try:
-            resp = self.session.get(
+            resp = self._cb_request("GET", 
                 f"{self.neutron_endpoint}/v2.0/networks?project_id={project_id}", headers=h
             )
             if resp.ok:
                 for net in resp.json().get("networks", []):
                     try:
-                        r = self.session.delete(
+                        r = self._cb_request("DELETE", 
                             f"{self.neutron_endpoint}/v2.0/networks/{net['id']}", headers=h
                         )
                         if r.status_code in (202, 204, 404):
@@ -1070,7 +1277,7 @@ class Pf9Client:
             body["password_expires_at"] = (
                 datetime.now(timezone.utc) + timedelta(days=1)
             ).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
-        r = self.session.post(url, headers=self._headers(), json={"user": body})
+        r = self._cb_request("POST", url, headers=self._headers(), json={"user": body})
         r.raise_for_status()
         return r.json().get("user", {})
 
@@ -1080,14 +1287,14 @@ class Pf9Client:
         params: Dict[str, str] = {}
         if domain_id:
             params["domain_id"] = domain_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("users", [])
 
     def delete_user(self, user_id: str) -> None:
         self.authenticate()
         url = f"{self.keystone_endpoint}/users/{user_id}"
-        r = self.session.delete(url, headers=self._headers())
+        r = self._cb_request("DELETE", url, headers=self._headers())
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -1097,7 +1304,7 @@ class Pf9Client:
     def list_roles(self) -> List[Dict[str, Any]]:
         self.authenticate()
         url = f"{self.keystone_endpoint}/roles"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("roles", [])
 
@@ -1115,7 +1322,7 @@ class Pf9Client:
         params: Dict[str, str] = {"include_names": "true"}
         if user_id:
             params["user.id"] = user_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("role_assignments", [])
 
@@ -1125,7 +1332,7 @@ class Pf9Client:
         """PUT /v3/projects/{project_id}/users/{user_id}/roles/{role_id}"""
         self.authenticate()
         url = f"{self.keystone_endpoint}/projects/{project_id}/users/{user_id}/roles/{role_id}"
-        r = self.session.put(url, headers=self._headers())
+        r = self._cb_request("PUT", url, headers=self._headers())
         r.raise_for_status()
 
     def assign_role_to_user_on_domain(
@@ -1134,7 +1341,7 @@ class Pf9Client:
         """PUT /v3/domains/{domain_id}/users/{user_id}/roles/{role_id}"""
         self.authenticate()
         url = f"{self.keystone_endpoint}/domains/{domain_id}/users/{user_id}/roles/{role_id}"
-        r = self.session.put(url, headers=self._headers())
+        r = self._cb_request("PUT", url, headers=self._headers())
         r.raise_for_status()
 
     # ---------------------------
@@ -1152,7 +1359,7 @@ class Pf9Client:
             params["all_tenants"] = "1"
         if project_id:
             params["project_id"] = project_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("volumes", [])
 
@@ -1189,19 +1396,19 @@ class Pf9Client:
             h = {"X-Auth-Token": priv_token, "Content-Type": "application/json"} if priv_token else self._headers()
             if force:
                 url = f"{cinder_base}/{project_id}/volumes/{volume_id}/action"
-                r = self.session.post(url, headers=h, json={"os-force_delete": {}})
+                r = self._cb_request("POST", url, headers=h, json={"os-force_delete": {}})
             else:
                 url = f"{cinder_base}/{project_id}/volumes/{volume_id}"
-                r = self.session.delete(url, headers=h)
+                r = self._cb_request("DELETE", url, headers=h)
         else:
             priv_token = self.get_privileged_token()
             h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
             if force:
                 url = f"{self.cinder_endpoint}/volumes/{volume_id}/action"
-                r = self.session.post(url, headers=h, json={"os-force_delete": {}})
+                r = self._cb_request("POST", url, headers=h, json={"os-force_delete": {}})
             else:
                 url = f"{self.cinder_endpoint}/volumes/{volume_id}"
-                r = self.session.delete(url, headers=h)
+                r = self._cb_request("DELETE", url, headers=h)
 
         if r.status_code not in (200, 202, 204, 404):
             r.raise_for_status()
@@ -1220,7 +1427,7 @@ class Pf9Client:
             params["all_tenants"] = "1"
         if project_id:
             params["project_id"] = project_id
-        r = self.session.get(url, headers=self._headers(), params=params)
+        r = self._cb_request("GET", url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json().get("snapshots", [])
 
@@ -1232,7 +1439,7 @@ class Pf9Client:
         self.authenticate()
         assert self.nova_endpoint
         url = f"{self.nova_endpoint}/os-quota-sets/{project_id}"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("quota_set", {})
 
@@ -1242,7 +1449,7 @@ class Pf9Client:
         self.authenticate()
         assert self.nova_endpoint
         url = f"{self.nova_endpoint}/os-quota-sets/{project_id}?usage=true"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("quota_set", {})
 
@@ -1259,7 +1466,7 @@ class Pf9Client:
         assert self.nova_endpoint
         url = f"{self.nova_endpoint}/os-quota-sets/{project_id}"
         payload = {"quota_set": quotas}
-        r = self.session.put(url, headers=self._headers(), json=payload)
+        r = self._cb_request("PUT", url, headers=self._headers(), json=payload)
         r.raise_for_status()
         return r.json().get("quota_set", {})
 
@@ -1271,7 +1478,7 @@ class Pf9Client:
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/quotas/{project_id}"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("quota", {})
 
@@ -1287,7 +1494,7 @@ class Pf9Client:
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/quotas/{project_id}"
         payload = {"quota": quotas}
-        r = self.session.put(url, headers=self._headers(), json=payload)
+        r = self._cb_request("PUT", url, headers=self._headers(), json=payload)
         r.raise_for_status()
         return r.json().get("quota", {})
 
@@ -1299,7 +1506,7 @@ class Pf9Client:
         if not self.cinder_endpoint:
             return {}
         url = f"{self.cinder_endpoint}/os-quota-sets/{project_id}"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("quota_set", {})
 
@@ -1309,7 +1516,7 @@ class Pf9Client:
         if not self.cinder_endpoint:
             return {}
         url = f"{self.cinder_endpoint}/os-quota-sets/{project_id}?usage=true"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("quota_set", {})
 
@@ -1326,7 +1533,7 @@ class Pf9Client:
             return {}
         url = f"{self.cinder_endpoint}/os-quota-sets/{project_id}"
         payload = {"quota_set": quotas}
-        r = self.session.put(url, headers=self._headers(), json=payload)
+        r = self._cb_request("PUT", url, headers=self._headers(), json=payload)
         r.raise_for_status()
         return r.json().get("quota_set", {})
 
@@ -1364,7 +1571,7 @@ class Pf9Client:
             body["allocation_pools"] = allocation_pools
         if project_id:
             body["tenant_id"] = project_id
-        r = self.session.post(url, headers=self._headers(), json={"subnet": body})
+        r = self._cb_request("POST", url, headers=self._headers(), json={"subnet": body})
         if not r.ok:
             try:
                 _detail = r.json()
@@ -1382,7 +1589,7 @@ class Pf9Client:
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/networks"
-        r = self.session.get(url, headers=self._headers(), params={"fields": "provider:physical_network"})
+        r = self._cb_request("GET", url, headers=self._headers(), params={"fields": "provider:physical_network"})
         r.raise_for_status()
         networks = r.json().get("networks", [])
         physnets: set = set()
@@ -1420,7 +1627,7 @@ class Pf9Client:
             body["project_id"] = project_id
         if mtu is not None:
             body["mtu"] = mtu
-        r = self.session.post(url, headers=self._headers(), json={"network": body})
+        r = self._cb_request("POST", url, headers=self._headers(), json={"network": body})
         r.raise_for_status()
         return r.json().get("network", {})
 
@@ -1441,7 +1648,7 @@ class Pf9Client:
             body["external_gateway_info"] = {"network_id": external_network_id}
         if project_id:
             body["project_id"] = project_id
-        r = self.session.post(url, headers=self._headers(), json={"router": body})
+        r = self._cb_request("POST", url, headers=self._headers(), json={"router": body})
         r.raise_for_status()
         return r.json().get("router", {})
 
@@ -1472,7 +1679,7 @@ class Pf9Client:
             params["visibility"] = visibility
         images: List[Dict[str, Any]] = []
         while url:
-            r = self.session.get(url, headers=self._headers(), params=params)
+            r = self._cb_request("GET", url, headers=self._headers(), params=params)
             r.raise_for_status()
             body = r.json()
             images.extend(body.get("images", []))
@@ -1489,7 +1696,7 @@ class Pf9Client:
         if not self.glance_endpoint:
             raise RuntimeError("Glance endpoint not available")
         url = f"{self.glance_endpoint}/v2/images/{image_id}"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         r.raise_for_status()
         return r.json()
 
@@ -1513,7 +1720,7 @@ class Pf9Client:
         # Glance v2 PATCH uses a JSON-Patch array; "add" works for both new and existing props
         patch = [{"op": "add", "path": f"/{k}", "value": v} for k, v in properties.items()]
         hdrs = {**self._headers(), "Content-Type": "application/openstack-images-v2.1-json-patch"}
-        r = self.session.patch(url, headers=hdrs, json=patch)
+        r = self._cb_request("PATCH", url, headers=hdrs, json=patch)
         if not r.ok:
             raise RuntimeError(f"Glance PATCH {image_id} failed: {r.status_code} {r.text[:300]}")
 
@@ -1539,7 +1746,7 @@ class Pf9Client:
         if not self.glance_endpoint:
             return
         try:
-            r = self.session.get(
+            r = self._cb_request("GET", 
                 f"{self.glance_endpoint}/v2/images/{image_id}",
                 headers=self._headers(),
             )
@@ -1551,7 +1758,7 @@ class Pf9Client:
             # Promote to community so any project-scoped token can reference it
             patch = [{"op": "replace", "path": "/visibility", "value": "community"}]
             hdrs = {**self._headers(), "Content-Type": "application/openstack-images-v2.1-json-patch"}
-            pr = self.session.patch(
+            pr = self._cb_request("PATCH", 
                 f"{self.glance_endpoint}/v2/images/{image_id}",
                 headers=hdrs,
                 json=patch,
@@ -1582,18 +1789,18 @@ class Pf9Client:
         assert self.nova_endpoint
         # Nova — use /detail endpoint which returns {in_use, limit, reserved} for admin cross-project queries
         compute_url = f"{self.nova_endpoint}/os-quota-sets/{project_id}/detail"
-        cr = self.session.get(compute_url, headers=self._headers())
+        cr = self._cb_request("GET", compute_url, headers=self._headers())
         if cr.status_code == 404:
             # Fallback: some older Nova versions use ?usage=True instead of /detail
             compute_url = f"{self.nova_endpoint}/os-quota-sets/{project_id}?usage=True"
-            cr = self.session.get(compute_url, headers=self._headers())
+            cr = self._cb_request("GET", compute_url, headers=self._headers())
         cr.raise_for_status()
         compute = cr.json().get("quota_set", {})
         # Cinder
         storage: Dict[str, Any] = {}
         if self.cinder_endpoint:
             storage_url = f"{self.cinder_endpoint}/os-quota-sets/{project_id}?usage=True"
-            sr = self.session.get(storage_url, headers=self._headers())
+            sr = self._cb_request("GET", storage_url, headers=self._headers())
             if sr.status_code == 200:
                 storage = sr.json().get("quota_set", {})
         return {"compute": compute, "storage": storage}
@@ -1615,7 +1822,7 @@ class Pf9Client:
             return []
         # Get all allocated fixed IPs on this network
         ports_url = f"{self.neutron_endpoint}/v2.0/ports"
-        pr = self.session.get(ports_url, headers=self._headers(), params={"network_id": network_id})
+        pr = self._cb_request("GET", ports_url, headers=self._headers(), params={"network_id": network_id})
         pr.raise_for_status()
         allocated: set = set()
         for port in pr.json().get("ports", []):
@@ -1683,7 +1890,7 @@ class Pf9Client:
         }
         if volume_type:
             body["volume"]["volume_type"] = volume_type
-        r = self.session.post(url, headers=self._headers(), json=body)
+        r = self._cb_request("POST", url, headers=self._headers(), json=body)
         if not r.ok:
             raise RuntimeError(f"{r.status_code} {r.reason} — {r.text[:400]}")
         return r.json().get("volume", {})
@@ -1698,7 +1905,7 @@ class Pf9Client:
         if not self.cinder_endpoint:
             return {}
         url = f"{self.cinder_endpoint}/volumes/{volume_id}"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         if r.status_code == 404:
             return {}
         r.raise_for_status()
@@ -1786,7 +1993,7 @@ class Pf9Client:
 
         # Use X-Project-Id header so admin token creates VM in the target project
         hdrs = {**self._headers(), "X-Project-Id": project_id} if project_id else self._headers()
-        r = self.session.post(url, headers=hdrs, json=body)
+        r = self._cb_request("POST", url, headers=hdrs, json=body)
         if not r.ok:
             raise RuntimeError(f"{r.status_code} {r.reason} — {r.text[:600]}")
         return r.json().get("server", {})
@@ -1796,7 +2003,7 @@ class Pf9Client:
         self.authenticate()
         assert self.nova_endpoint
         url = f"{self.nova_endpoint}/servers/{server_id}"
-        r = self.session.get(url, headers=self._headers())
+        r = self._cb_request("GET", url, headers=self._headers())
         if r.status_code == 404:
             return {}
         r.raise_for_status()
@@ -1807,7 +2014,7 @@ class Pf9Client:
         self.authenticate()
         assert self.nova_endpoint
         url = f"{self.nova_endpoint}/servers/{server_id}/action"
-        r = self.session.post(
+        r = self._cb_request("POST", 
             url,
             headers=self._headers(),
             json={"os-getConsoleOutput": {"length": length}},

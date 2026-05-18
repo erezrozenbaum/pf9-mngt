@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.2.0 — Copilot agentic execution: new `POST /api/copilot/execute-intent` and `GET /api/copilot/agentic-status` endpoints; `ask` response extended with action fields.
+> **Version**: v2.3.0 — Health score weight configuration (`GET/PUT /api/tenants/health-score/weights`), health score toggle per project (`PUT /api/tenants/{project_id}/health-score/toggle`), snapshot chain explorer (`GET /api/snapshots/{id}/chain`, `GET /api/volumes/{id}/chains`, `GET/PUT /api/projects/{id}/chain-policies`).
+> Previous: v2.2.0 — Copilot agentic execution: new `POST /api/copilot/execute-intent` and `GET /api/copilot/agentic-status` endpoints; `ask` response extended with action fields.
 > Previous: v2.1.1 — Hotfix: removed non-existent `volume_name` column from snapshot tenant event collector; added `db/migrate_v2_1_0_tenant_notifications.sql` migration file
 > Previous: v2.1.0 — Tenant-facing notification subscriptions (9 event types, email + webhook, SSRF protected); admin-configurable MFA enrollment enforcement; MFA token fail-closed security improvement
 > Previous: v2.0.7 — Added missing `migration_wave_preflights` table; wave creation and auto-build no longer crash with `relation does not exist`
@@ -4637,6 +4638,113 @@ Returns event counts grouped by category and severity for dashboard widgets.
 | `to` | ISO datetime | now() | End of time range |
 | `domain_id` | string | — | Restrict to tenant domain |
 | `region_id` | string | — | Restrict to region |
+
+---
+
+## Health Score Weight Configuration (v2.3.0)
+
+Configurable per-component weights (must sum to 100) and per-project health score toggle.
+
+> **RBAC**: Read (`admin`, `superadmin`, `technical`); write (`admin`, `superadmin`).
+
+**GET** `/api/tenants/health-score/weights`
+
+Returns the current weight for each health score component.
+
+```json
+{
+  "snapshot_compliance": 25,
+  "quota_headroom": 20,
+  "drift": 20,
+  "sla_tier": 20,
+  "tickets": 15,
+  "total": 100
+}
+```
+
+**PUT** `/api/tenants/health-score/weights`
+
+Update component weights. All five values must be provided and must sum to 100.
+
+```json
+{
+  "snapshot_compliance": 30,
+  "quota_headroom": 20,
+  "drift": 20,
+  "sla_tier": 15,
+  "tickets": 15
+}
+```
+
+**PUT** `/api/tenants/{project_id}/health-score/toggle`
+
+Enable or disable health score calculation for a specific project.
+
+```json
+{ "disabled": true }
+```
+
+Response: `{ "project_id": "...", "health_score_disabled": true }`
+
+---
+
+## Snapshot Chain Explorer (v2.3.0)
+
+APIs for traversing snapshot parent-child chains and managing chain depth policies.
+
+> **RBAC**: Read requires `snapshots:read`; policy write requires `snapshots:write`.
+
+**GET** `/api/snapshots/{snapshot_id}/chain`
+
+Returns the full tree rooted at `snapshot_id`, recursively expanding children.
+
+```json
+{
+  "snapshot_id": "snap-abc",
+  "chain_depth": 0,
+  "children": [
+    {
+      "snapshot_id": "snap-def",
+      "chain_depth": 1,
+      "children": []
+    }
+  ]
+}
+```
+
+**GET** `/api/volumes/{volume_id}/chains`
+
+Returns a chain summary for all snapshots of a volume.
+
+```json
+{
+  "volume_id": "vol-xyz",
+  "total_snapshots": 7,
+  "base_snapshots": 2,
+  "max_depth": 3,
+  "total_size_gb": 420,
+  "chains": [...]
+}
+```
+
+Returns `404` if no snapshots exist for the volume.
+
+**GET** `/api/projects/{project_id}/chain-policies`
+
+Returns all chain policies for a project (empty array if none configured).
+
+**PUT** `/api/projects/{project_id}/chain-policies/{volume_id}`
+
+Upsert a chain policy (max depth + auto-rebase) for a specific volume within the project.
+
+```json
+{
+  "max_chain_depth": 5,
+  "auto_rebase": true
+}
+```
+
+Response includes `id`, `project_id`, `volume_id`, `max_chain_depth`, `auto_rebase`, `created_at`, `updated_at`.
 
 **Response**:
 ```json

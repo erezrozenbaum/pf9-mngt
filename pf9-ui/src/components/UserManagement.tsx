@@ -101,6 +101,125 @@ const ContainerAlertSettings: React.FC<{ user?: AuthUser | null }> = ({ user }) 
 };
 
 // ---------------------------------------------------------------------------
+// Health Score Weights Sub-Component (superadmin only)
+// ---------------------------------------------------------------------------
+const HEALTH_SCORE_COMPONENTS = [
+  { key: "snapshot_compliance", label: "Snapshot Compliance", icon: "📸", defaultMax: 25 },
+  { key: "quota_headroom",      label: "Quota Headroom",      icon: "📊", defaultMax: 20 },
+  { key: "drift",               label: "Drift",               icon: "🔀", defaultMax: 20 },
+  { key: "sla_tier",            label: "SLA Tier",            icon: "🎯", defaultMax: 20 },
+  { key: "tickets",             label: "Open Tickets",        icon: "🎫", defaultMax: 15 },
+] as const;
+
+type HsWeightsData = {
+  snapshot_compliance: number;
+  quota_headroom: number;
+  drift: number;
+  sla_tier: number;
+  tickets: number;
+  total: number;
+};
+
+const HealthScoreSettings: React.FC<{ user?: AuthUser | null }> = ({ user }) => {
+  const [weights, setWeights] = useState<HsWeightsData | null>(null);
+  const [editing, setEditing] = useState<Record<string, number>>({});
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const isSuperadmin = user?.role === 'superadmin';
+
+  useEffect(() => {
+    apiFetch<HsWeightsData>('/api/tenants/health-score/weights')
+      .then(d => {
+        setWeights(d);
+        const init: Record<string, number> = {};
+        HEALTH_SCORE_COMPONENTS.forEach(c => { init[c.key] = (d as any)[c.key]; });
+        setEditing(init);
+      })
+      .catch(() => {
+        // Fall back to defaults
+        const init: Record<string, number> = {};
+        HEALTH_SCORE_COMPONENTS.forEach(c => { init[c.key] = c.defaultMax; });
+        setEditing(init);
+      });
+  }, []);
+
+  const total = Object.values(editing).reduce((s, v) => s + (v || 0), 0);
+
+  const handleSave = async () => {
+    setSaving(true); setMsg('');
+    try {
+      const updated = await apiFetch<HsWeightsData>('/api/tenants/health-score/weights', {
+        method: 'PUT',
+        body: JSON.stringify(editing),
+      });
+      setWeights(updated);
+      setMsg('✅ Weights saved — new scores will apply on the next scheduler run');
+      setTimeout(() => setMsg(''), 5000);
+    } catch (e: any) { setMsg(`⚠️ ${e.message}`); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ maxWidth: '600px' }}>
+      <h3 style={{ marginTop: 0, marginBottom: '16px' }}>🏥 Health Score Component Weights</h3>
+      <p style={{ fontSize: '13px', color: 'var(--color-text-secondary, #888)', marginBottom: '20px' }}>
+        Adjust how much each component contributes to the overall tenant health score (0–100).
+        The weights are absolute point values; they do not need to sum to 100 but the maximum
+        possible score equals their total.
+      </p>
+      {!isSuperadmin && (
+        <div style={{ padding: '10px 14px', borderRadius: '6px', background: '#fef3c7', color: '#92400e', marginBottom: '16px', fontSize: '13px' }}>
+          ⚠️ View-only — superadmin access required to change these settings.
+        </div>
+      )}
+      {msg && (
+        <div style={{ padding: '10px', borderRadius: '6px', marginBottom: '16px',
+          background: msg.startsWith('✅') ? '#dcfce7' : '#fee2e2',
+          color: msg.startsWith('✅') ? '#166534' : '#991b1b' }}>{msg}
+        </div>
+      )}
+      {HEALTH_SCORE_COMPONENTS.map(({ key, label, icon, defaultMax }) => (
+        <div key={key} style={{ marginBottom: '16px' }}>
+          <label style={{ fontWeight: 600, fontSize: '13px', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+            <span>{icon} {label}</span>
+            <span style={{ fontWeight: 400, color: '#888', fontSize: '12px' }}>default: {defaultMax}</span>
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="range" min={0} max={50} step={1}
+              value={editing[key] ?? defaultMax}
+              onChange={e => setEditing(p => ({ ...p, [key]: Number(e.target.value) }))}
+              disabled={!isSuperadmin}
+              style={{ flex: 1 }}
+            />
+            <input
+              type="number" min={0} max={50}
+              value={editing[key] ?? defaultMax}
+              onChange={e => setEditing(p => ({ ...p, [key]: Math.max(0, Math.min(50, Number(e.target.value))) }))}
+              disabled={!isSuperadmin}
+              style={{ width: 60, padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc', textAlign: 'center' }}
+            />
+          </div>
+        </div>
+      ))}
+      <div style={{ fontSize: '13px', color: '#555', marginBottom: '16px' }}>
+        Maximum possible score with current weights: <strong>{total}</strong>
+      </div>
+      {isSuperadmin && (
+        <button
+          onClick={handleSave}
+          disabled={saving || total < 1}
+          style={{ padding: '10px 24px', background: '#2563eb', color: 'white', border: 'none',
+            borderRadius: '6px', cursor: saving ? 'wait' : 'pointer', fontWeight: 600, fontSize: '14px' }}
+        >
+          {saving ? 'Saving...' : '💾 Save Weights'}
+        </button>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Branding Settings Sub-Component
 // ---------------------------------------------------------------------------
 const BrandingSettings: React.FC = () => {
@@ -1727,6 +1846,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           { id: 'rb_policies', label: 'Runbook Policies', icon: '📐', adminOnly: true },
           { id: 'data_reset', label: 'Data Reset', icon: '⚠️', adminOnly: true },
           { id: 'container_alerts', label: 'Container Alerts', icon: '🔔', adminOnly: true, superadminOnly: true },
+          { id: 'health_score_settings', label: 'Health Score Weights', icon: '🏥', adminOnly: true, superadminOnly: true },
           { id: 'ldap_sync', label: 'External LDAP Sync', icon: '🔄', adminOnly: true, superadminOnly: true },
           { id: 'system_config', label: 'System Config', icon: '⚙️', adminOnly: true, superadminOnly: true }
         ]
@@ -2707,6 +2827,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
       {/* Container Alert Settings */}
       {activeTab === 'container_alerts' && <ContainerAlertSettings user={user} />}
+
+      {/* Health Score Weights Settings */}
+      {activeTab === 'health_score_settings' && <HealthScoreSettings user={user} />}
 
       {/* External LDAP Sync */}
       {activeTab === 'ldap_sync' && <LdapSyncSettings user={user} />}

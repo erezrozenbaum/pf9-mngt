@@ -472,3 +472,29 @@ jobs:
     steps:
       - name: ESLint ran in frontend-typecheck job
         run: echo "ESLint is now part of the frontend-typecheck job above. Nothing to do here."
+
+  # -------------------------------------------------------------------------
+  # Job 10: Shell script lint (ShellCheck)
+  # Verifies all .sh scripts in the repo pass ShellCheck static analysis.
+  # Catches undefined variables, unquoted expansions, and portability issues.
+  # -------------------------------------------------------------------------
+  shell-lint:
+    name: Shell Script Lint (ShellCheck)
+    runs-on: ubuntu-latest
+    needs: [lint]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on all .sh scripts
+        run: |
+          echo "=== ShellCheck ==="
+          find . -name "*.sh" \
+            -not -path "./.venv/*" \
+            -not -path "./*/node_modules/*" \
+            | sort | tee /dev/stderr | xargs shellcheck --severity=warning
+          echo "All shell scripts pass ShellCheck."

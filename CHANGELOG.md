@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.0] - 2026-05-18
+
+### Added
+- **Health score component weights**: Admins can configure per-component weights (Snapshot Compliance, Quota Headroom, Drift, SLA Tier, Open Tickets) via `GET/PUT /api/tenants/health-score/weights`. Weights are persisted in `system_settings` and applied at compute time in both the API and the scheduler worker. Defaults match the previous hard-coded distribution (25/20/20/20/15).
+- **Per-tenant health score disable toggle**: Individual tenants can be excluded from health score computation via `PUT /api/tenants/{project_id}/health-score/toggle`. Disabled tenants are skipped by the scheduler worker and the `projects` table gains a `health_score_disabled` boolean column.
+- **Health score breakdown card**: The tenant detail view now shows a per-component horizontal bar chart and a 30-day history sparkline with a trend arrow next to the overall health score.
+- **Health score weights settings panel**: Superadmins can adjust component weights via sliders and numeric inputs in the Settings → Health Score Weights tab.
+- **Database migration framework (Alembic)**: Alembic is now the standard tool for all future schema changes. A baseline revision marks the existing schema; versioned revision files live under `db/alembic/versions/`. Alembic ≥ 1.13.0 added to `api/requirements.txt`.
+- **Region circuit breaker**: `pf9_control.py` wraps every outbound OpenStack API call in a `RegionCircuitBreaker` backed by Redis (with an in-memory fallback). After `CB_FAILURE_THRESHOLD` (default: 5) consecutive failures the circuit opens for `CB_RECOVERY_TIMEOUT` (default: 30 s), preventing cascading timeouts to unresponsive regions. Both thresholds are configurable via environment variables.
+- **Per-worker database roles**: `db/migrate_v2_3_0_db_roles.sql` provisions least-privilege PostgreSQL roles for each background worker (snapshot, scheduler, notification, metering, intelligence, backup, LDAP). Each role inherits from `pf9_service_base` and holds only the SELECT/INSERT/UPDATE grants its worker requires.
+- **Snapshot chain tracking**: Block-storage snapshot lineage is now stored in `snapshot_records` via `parent_snapshot_id` (self-referential, deferred FK), `chain_depth` (0 = base/full, N = incremental level), and `chain_root_snapshot_id` (fast tree retrieval). A pre-delete trigger (`trg_prevent_snapshot_chain_break`) prevents removing a snapshot that still has live child snapshots.
+- **Snapshot chain policies**: A new `snapshot_chain_policies` table lets admins configure `max_chain_depth` and `auto_rebase` behavior per (project, volume) pair via `GET /api/projects/{project_id}/chain-policies` and `PUT /api/projects/{project_id}/chain-policies/{volume_id}`.
+- **Snapshot chain API**: New routes under `/api/snapshots/{snapshot_id}/chain` (full lineage tree) and `/api/volumes/{volume_id}/chains` (chain summary with statistics).
+- **Snapshot Chain Explorer UI**: New admin panel under Snapshots → Chain Explorer for searching volumes, viewing expandable chain trees with depth/status badges, and editing per-volume chain policies.
+
+### Changed
+- Scheduler worker health score computation now reads configured weights from `system_settings` and applies them; tenants with `health_score_disabled = true` are skipped entirely.
+- `snapshot_records` table gains three new nullable columns (`parent_snapshot_id`, `chain_depth`, `chain_root_snapshot_id`) and two new indexes; a self-referential deferred FK constraint is added.
+
+### Migration
+- Apply `db/migrate_v2_3_0_health_score_config.sql` to add `health_score_disabled` to `projects` and seed weight settings.
+- Apply `db/migrate_v2_3_0_db_roles.sql` to provision per-worker database roles.
+- Apply `db/migrate_v2_3_0_snapshot_chains.sql` to add chain columns, indexes, trigger, and `snapshot_chain_policies` table.
+- Alternatively run `alembic upgrade head` from the repo root (requires `DB_*` env vars).
+
+---
+
 ## [2.2.1] - 2026-05-20
 
 ### Fixed

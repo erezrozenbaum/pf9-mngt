@@ -6,6 +6,7 @@ import { LandingDashboard } from "./components/LandingDashboard";
 import { GlobalHealthBar } from "./components/GlobalHealthBar";
 import UserManagement from "./components/UserManagement";
 import SnapshotPolicyManager from "./components/SnapshotPolicyManager";
+import SnapshotChainExplorer from "./components/SnapshotChainExplorer";
 import SnapshotAuditTrail from "./components/SnapshotAuditTrail";
 import SnapshotMonitor from "./components/SnapshotMonitor";
 import SnapshotComplianceReport from "./components/SnapshotComplianceReport";
@@ -6085,6 +6086,11 @@ const App: React.FC = () => {
           {/* Snapshot Policy Management Section */}
           {activeTab === "snapshot-policies" && (
             <SnapshotPolicyManager />
+          )}
+
+          {/* Snapshot Chain Explorer */}
+          {activeTab === "snapshot-chains" && (
+            <SnapshotChainExplorer />
           )}
 
           {/* Snapshot Audit Trail Section */}

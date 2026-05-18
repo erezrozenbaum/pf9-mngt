@@ -1051,6 +1051,48 @@ function DetailContent({
   const [incidentLoading, setIncidentLoading] = useState(false);
   const [incidentRef, setIncidentRef] = useState<string | null>(null);
 
+  // Health score breakdown + history (sparkline)
+  const [hsDetail, setHsDetail] = useState<{
+    score: number; grade: string; computed_at: string;
+    components: { snapshot_compliance: number; quota_headroom: number; drift: number; sla_tier: number; tickets: number };
+  } | null>(null);
+  const [hsHistory, setHsHistory] = useState<{ computed_at: string; score: number }[]>([]);
+  const [hsDisabled, setHsDisabled] = useState(false);
+  const [hsToggling, setHsToggling] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadHealthScore() {
+      try {
+        const data = await apiFetch<typeof hsDetail>(`/api/tenants/${t.project_id}/health-score`);
+        if (!cancelled) setHsDetail(data);
+      } catch { /* health score may not exist yet */ }
+      try {
+        const hist = await apiFetch<{ computed_at: string; score: number }[]>(
+          `/api/tenants/${t.project_id}/health-score/history?limit=30`
+        );
+        if (!cancelled) setHsHistory(Array.isArray(hist) ? hist : []);
+      } catch { /* optional */ }
+    }
+    loadHealthScore();
+    return () => { cancelled = true; };
+  }, [t.project_id]);
+
+  async function toggleHealthScore() {
+    setHsToggling(true);
+    try {
+      await apiFetch(`/api/tenants/${t.project_id}/health-score/toggle`, {
+        method: "PUT",
+        body: JSON.stringify({ disabled: !hsDisabled }),
+      });
+      setHsDisabled(!hsDisabled);
+    } catch (e: any) {
+      alert("Toggle failed: " + (e.message || "Unknown error"));
+    } finally {
+      setHsToggling(false);
+    }
+  }
+
   // SLA state
   const [slaSubTab, setSlaSubTab] = useState<"commitment" | "history">("commitment");
   const [slaCommitment, setSlaCommitment] = useState<SlaCommitment | null>(null);
@@ -1234,6 +1276,83 @@ function DetailContent({
           <p style={{ fontSize: "0.75rem", opacity: 0.7 }}>{t.project_id}</p>
         </div>
       </div>
+
+      {/* ── Health Score Breakdown Card ── */}
+      {hsDetail && (
+        <div className="th-detail-section">
+          <h4>🏥 Health Score Breakdown
+            <span style={{ fontSize: "0.72rem", fontWeight: 400, color: "#94a3b8", marginLeft: 8 }}>
+              Grade: <strong>{hsDetail.grade}</strong> &nbsp;·&nbsp; Computed: {new Date(hsDetail.computed_at).toLocaleDateString()}
+            </span>
+          </h4>
+          {/* Component bars */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+            {([
+              { key: "snapshot_compliance", label: "Snapshot Compliance", max: 25, color: "#22c55e" },
+              { key: "quota_headroom",      label: "Quota Headroom",      max: 20, color: "#3b82f6" },
+              { key: "drift",               label: "Drift",               max: 20, color: "#a78bfa" },
+              { key: "sla_tier",            label: "SLA Tier",            max: 20, color: "#f59e0b" },
+              { key: "tickets",             label: "Open Tickets",        max: 15, color: "#ef4444" },
+            ] as { key: keyof typeof hsDetail.components; label: string; max: number; color: string }[]).map(({ key, label, max, color }) => {
+              const val = hsDetail.components[key];
+              const pctFill = max > 0 ? (val / max) * 100 : 0;
+              return (
+                <div key={key}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", marginBottom: 2 }}>
+                    <span>{label}</span>
+                    <span style={{ color: "#94a3b8" }}>{val} / {max}</span>
+                  </div>
+                  <div style={{ background: "#1e293b", borderRadius: 4, height: 8, overflow: "hidden" }}>
+                    <div style={{ width: `${pctFill}%`, background: color, height: "100%", borderRadius: 4, transition: "width 0.4s ease" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {/* Sparkline — last 30 days */}
+          {hsHistory.length >= 2 && (() => {
+            const pts = [...hsHistory].reverse(); // oldest first
+            const W = 240, H = 40, PAD = 4;
+            const scores = pts.map((p) => p.score);
+            const minS = Math.min(...scores), maxS = Math.max(...scores);
+            const range = maxS - minS || 1;
+            const toX = (i: number) => PAD + (i / (pts.length - 1)) * (W - PAD * 2);
+            const toY = (s: number) => PAD + (1 - (s - minS) / range) * (H - PAD * 2);
+            const pathD = pts.map((p, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(p.score).toFixed(1)}`).join(" ");
+            const trend = scores[scores.length - 1] - scores[0];
+            const lineColor = trend > 5 ? "#22c55e" : trend < -5 ? "#ef4444" : "#94a3b8";
+            const latestX = toX(pts.length - 1), latestY = toY(scores[scores.length - 1]);
+            return (
+              <div style={{ marginTop: 4 }}>
+                <div style={{ fontSize: "0.75rem", color: "#64748b", marginBottom: 4 }}>
+                  Score trend — last {pts.length} readings
+                  <span style={{ marginLeft: 8, color: lineColor }}>
+                    {trend > 0 ? `▲ +${trend}` : trend < 0 ? `▼ ${trend}` : "◆ stable"}
+                  </span>
+                </div>
+                <svg width={W} height={H} style={{ overflow: "visible" }}>
+                  <path d={pathD} fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinejoin="round" />
+                  <circle cx={latestX} cy={latestY} r="3" fill={lineColor} />
+                  <text x={latestX + 5} y={latestY + 4} fontSize="9" fill={lineColor}>{scores[scores.length - 1]}</text>
+                </svg>
+              </div>
+            );
+          })()}
+          {/* Disable toggle (admin only — API enforces) */}
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+            <label style={{ fontSize: "0.78rem", color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={hsDisabled}
+                onChange={toggleHealthScore}
+                disabled={hsToggling}
+              />
+              Disable health scoring for this tenant
+            </label>
+            {hsToggling && <span style={{ fontSize: "0.72rem", color: "#64748b" }}>Saving…</span>}
+          </div>
+        </div>
+      )}
 
       {/* T3.2 UI — Report incident for low-health tenant */}
       {t.health_score < 60 && (

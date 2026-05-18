@@ -10,6 +10,8 @@ paramiko==5.0.0  # CVE-2026-44405: SHA-1 in rsakey.py fixed in 5.0.0 (commit a44
 aiofiles==24.1.0
 slowapi==0.1.9
 redis>=5.0.0,<6.0.0
+alembic>=1.13.0,<2.0.0
+tenacity>=8.3.0,<9.0.0
 
 # Authentication and Authorization dependencies
 python-ldap>=3.4.5,<4.0.0

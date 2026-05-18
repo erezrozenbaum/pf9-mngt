@@ -27,15 +27,29 @@ secret_helper_stub = types.ModuleType("secret_helper")
 secret_helper_stub.read_secret = lambda name, env_var=None, default="": "test-password"
 sys.modules.setdefault("secret_helper", secret_helper_stub)
 
-# Stub cache
+# Stub cache — force-assign to override any partial stub from another test module
+# (some tests register a cache stub without _get_client; setdefault would keep that).
+_real_cache = sys.modules.get("cache")  # save whatever was there
 cache_stub = types.ModuleType("cache")
 cache_stub.cached = lambda ttl=60, key_prefix="": (lambda fn: fn)
-sys.modules.setdefault("cache", cache_stub)
+cache_stub._get_client = lambda: None  # stub for circuit breaker Redis client
+sys.modules["cache"] = cache_stub  # force override so pf9_control can import it
 
 # Stub requests so Pf9Client.__init__ doesn't need the real package
 requests_stub = types.ModuleType("requests")
 requests_stub.Session = MagicMock
+# also stub requests.exceptions so pf9_control's except clauses resolve
+_req_exc = types.ModuleType("requests.exceptions")
+class _ConnError(OSError): pass
+class _Timeout(OSError): pass
+_req_exc.ConnectionError = _ConnError
+_req_exc.Timeout = _Timeout
+requests_stub.exceptions = _req_exc
 sys.modules.setdefault("requests", requests_stub)
+sys.modules.setdefault("requests.exceptions", _req_exc)
+
+# Force-remove pf9_control so it's re-imported with the stubs above
+sys.modules.pop("pf9_control", None)
 
 # Stub fastapi (HTTPException only)
 fastapi_stub = types.ModuleType("fastapi")
@@ -72,6 +86,14 @@ from cluster_registry import (     # noqa: E402
     merge_flat,
     merge_aggregate,
 )
+
+# Restore cache module so tests that run AFTER this file see the real cache.
+# pf9_control is now loaded with the stub (bound at import time), which is fine
+# for these unit tests. But subsequent test modules should get the real cache.
+if _real_cache is not None:
+    sys.modules["cache"] = _real_cache
+else:
+    sys.modules.pop("cache", None)
 
 
 # ---------------------------------------------------------------------------

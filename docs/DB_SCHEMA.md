@@ -1419,7 +1419,81 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v2.2.0** (May 19, 2026)
+Current schema version: **v2.3.0** (May 2026)
+
+## Health Score Configuration (v2.3.0)
+
+### projects table — new column
+
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| `health_score_disabled` | `BOOLEAN NOT NULL` | `false` | When `true`, the health score scheduler skips this project |
+
+### system_settings — new rows
+
+| key | default | description |
+|-----|---------|-------------|
+| `health_score.weight.snapshot_compliance` | `25` | Percentage weight for snapshot compliance component |
+| `health_score.weight.quota_headroom` | `20` | Percentage weight for quota headroom component |
+| `health_score.weight.drift` | `20` | Percentage weight for configuration drift component |
+| `health_score.weight.sla_tier` | `20` | Percentage weight for SLA tier component |
+| `health_score.weight.tickets` | `15` | Percentage weight for open tickets component |
+
+Weights must sum to 100. Configurable via `PUT /api/tenants/health-score/weights`.
+
+---
+
+## Per-Worker Database Roles (v2.3.0)
+
+Least-privilege PostgreSQL roles for service isolation. All roles are `NOLOGIN` and inherit from `pf9_service_base`.
+
+| Role | Tables (GRANT) |
+|------|---------------|
+| `pf9_service_base` | Base role — `CONNECT` on DB, `USAGE` on schema |
+| `pf9_snapshot_svc` | SELECT/INSERT/UPDATE on `snapshot_records`, `snapshot_runs`, `snapshot_policy_sets`, `snapshot_assignments`, `snapshot_exclusions`, `projects`, `servers`, `volumes` |
+| `pf9_scheduler_svc` | SELECT on `projects`, `servers`, `volumes`, `drift_events`, `sla_commitments`, `support_tickets`; SELECT/INSERT/UPDATE on `tenant_health_scores`, `metering_quotas`, `operational_insights`, `system_settings` |
+| `pf9_notification_svc` | SELECT on `projects`, `tenant_health_scores`, `servers`; SELECT/INSERT/UPDATE on `notification_log`, `notification_preferences`, `notification_channels`, `tenant_notification_prefs` |
+| `pf9_metering_svc` | SELECT on `projects`, `servers`, `hypervisors`, `volumes`; SELECT/INSERT/UPDATE on `metering_quotas`, `metering_resources`, `metering_config`, `metering_efficiency`, `metering_api_usage` |
+| `pf9_intelligence_svc` | SELECT on metrics/insights tables; SELECT/INSERT/UPDATE/DELETE on `operational_insights` |
+| `pf9_backup_svc` | SELECT on `projects`, `servers`; SELECT/INSERT/UPDATE on `backup_config`, `backup_history` |
+| `pf9_ldap_svc` | SELECT on `user_roles`; SELECT/INSERT/UPDATE/DELETE on `users` |
+
+To enable: assign a password with `ALTER ROLE pf9_snapshot_svc LOGIN PASSWORD '...'` and set `SNAPSHOT_DB_USER` / `SNAPSHOT_DB_PASSWORD` environment variables.
+
+---
+
+## Snapshot Chain Tracking (v2.3.0)
+
+### snapshot_records — new columns
+
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| `parent_snapshot_id` | `TEXT` | `NULL` | OpenStack snapshot UUID of the parent (base/ancestor snapshot) |
+| `chain_depth` | `INTEGER NOT NULL` | `0` | `0` = base/full snapshot; `1+` = incremental depth |
+| `chain_root_snapshot_id` | `TEXT` | `NULL` | `snapshot_id` of the chain root for fast chain-wide queries |
+
+New indexes: `idx_snapshot_records_parent (parent_snapshot_id)`, `idx_snapshot_records_chain_root (chain_root_snapshot_id)`.
+
+### snapshot_chain_policies
+
+```sql
+CREATE TABLE snapshot_chain_policies (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    volume_id       TEXT NOT NULL,
+    max_chain_depth INTEGER NOT NULL DEFAULT 5,   -- max incrementals before a new base
+    auto_rebase     BOOLEAN NOT NULL DEFAULT true, -- create new base when chain is too deep
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, volume_id)
+);
+```
+
+### prevent_snapshot_chain_break trigger
+
+A `BEFORE DELETE` trigger on `snapshot_records` raises an error if a snapshot being deleted still has child snapshots referencing it via `parent_snapshot_id`. This prevents orphaned chain segments.
+
+---
 
 ## Copilot Agentic Execution Log (v2.2.0)
 
