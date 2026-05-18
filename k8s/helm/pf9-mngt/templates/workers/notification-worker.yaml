@@ -76,6 +76,8 @@ spec:
               value: {{ .Values.workers.notificationWorker.digestHourUTC | quote }}
             - name: NOTIFICATION_LOOKBACK_SECONDS
               value: {{ .Values.workers.notificationWorker.lookbackSeconds | quote }}
+            - name: NOTIFICATION_MAX_RETRY_ATTEMPTS
+              value: {{ .Values.workers.notificationWorker.maxRetryAttempts | quote }}
             - name: HEALTH_ALERT_THRESHOLD
               value: {{ .Values.workers.notificationWorker.healthAlertThreshold | quote }}
             - name: LOG_FILE

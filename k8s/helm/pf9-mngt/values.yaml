@@ -468,6 +468,7 @@ workers:
     digestHourUTC: "8"
     lookbackSeconds: "300"
     healthAlertThreshold: "50"
+    maxRetryAttempts: "3"
     resources:
       limits:
         cpu: "500m"

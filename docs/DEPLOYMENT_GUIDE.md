@@ -665,6 +665,7 @@ NOTIFICATION_POLL_INTERVAL_SECONDS=120    # How often to check for new events
 NOTIFICATION_DIGEST_ENABLED=true          # Enable daily digest emails
 NOTIFICATION_DIGEST_HOUR_UTC=8            # Hour (UTC) to send daily digest
 NOTIFICATION_LOOKBACK_SECONDS=300         # How far back to look for events each poll
+NOTIFICATION_MAX_RETRY_ATTEMPTS=3         # Retry attempts before dead-lettering (DLQ)
 HEALTH_ALERT_THRESHOLD=50                 # Tenant health score below this triggers alert
 ```
 

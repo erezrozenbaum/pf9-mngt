@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.4.0] - 2026-05-18
+
+### Added
+- **Notification dead-letter queue (DLQ)**: Failed email sends are no longer silently dropped. A new `notification_retry_queue` table holds failed notifications and retries them automatically with exponential back-off (5 min → 15 min → 60 min). After `NOTIFICATION_MAX_RETRY_ATTEMPTS` (default 3) exhausted attempts the notification is moved to `delivery_status = 'dead_lettered'` in `notification_log`. `SELECT … FOR UPDATE SKIP LOCKED` ensures concurrent worker restarts never double-deliver. A new admin endpoint `GET /notifications/admin/retry-queue` exposes queue depth, items due, and dead-lettered totals.
+
+---
+
 ## [2.3.4] - 2026-05-18
 
 ### Fixed

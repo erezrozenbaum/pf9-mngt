@@ -2441,6 +2441,63 @@ Response:
 }
 ```
 
+### Get Dead-Letter Retry Queue
+**GET** `/notifications/admin/retry-queue`  
+*Requires: `notifications:admin`*
+
+Returns the current state of the notification dead-letter queue — items awaiting retry and items that have been dead-lettered after exhausting all attempts.
+
+Response:
+```json
+{
+  "pending_count": 2,
+  "due_now_count": 1,
+  "total_in_queue": 2,
+  "next_retry_at": "2026-05-15T09:05:00Z",
+  "dead_lettered_total": 1,
+  "items": [
+    {
+      "id": 42,
+      "username": "jsmith",
+      "email": "jsmith@example.com",
+      "event_type": "snapshot_failure",
+      "dedup_key": "snapshot_failure:snap-abc123",
+      "subject": "Snapshot failed for volume vol-xyz",
+      "attempt_count": 1,
+      "max_attempts": 3,
+      "next_retry_at": "2026-05-15T09:05:00Z",
+      "last_error": "SMTP connection refused",
+      "created_at": "2026-05-15T09:00:00Z"
+    }
+  ]
+}
+```
+
+**Notes**:
+- `due_now_count`: items whose `next_retry_at` is in the past (ready to process)
+- `dead_lettered_total`: items removed from queue after exceeding `max_attempts`; visible in `notification_log` with `status = 'dead_lettered'`
+- Max 50 items returned in `items` list
+- Worker processes the queue automatically every poll cycle (`NOTIFICATION_POLL_INTERVAL_SECONDS`)
+
+Response:
+```json
+{
+  "total_sent": 156,
+  "total_failed": 3,
+  "total_pending": 0,
+  "total_preferences": 12,
+  "active_users": 4,
+  "last_sent_at": "2026-02-16T12:00:00Z",
+  "events_by_type": {
+    "drift_critical": 45,
+    "drift_warning": 67,
+    "snapshot_failure": 12,
+    "compliance_violation": 29,
+    "health_score_drop": 3
+  }
+}
+```
+
 ---
 
 ## Metering Endpoints

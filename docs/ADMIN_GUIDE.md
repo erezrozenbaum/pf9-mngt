@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.3.4  
+**Version**: 2.4.0  
 **Last Updated**: May 18, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.4.0 — Notification Dead-Letter Queue
+
+- **Notification retry with DLQ** — Failed email sends are now retried automatically instead of being silently dropped. A `notification_retry_queue` table holds failed notifications and retries them on each poll cycle with exponential back-off (5 min after attempt 1, 15 min after attempt 2, 60 min after attempt 3). After `NOTIFICATION_MAX_RETRY_ATTEMPTS` exhausted attempts the notification is moved to `delivery_status = 'dead_lettered'` in `notification_log`. `SELECT … FOR UPDATE SKIP LOCKED` prevents double-delivery if the worker restarts mid-cycle.
+- **DLQ visibility endpoint** — `GET /notifications/admin/retry-queue` (admin permission) returns a summary of pending retries, items due now, total dead-lettered count, and the full queue contents (up to 50 rows).
+- **New env var** — `NOTIFICATION_MAX_RETRY_ATTEMPTS` (default `3`) controls how many send attempts are made before a notification is dead-lettered.
 
 ### v2.3.4 — Runbook Billing Gate Credential Decrypt Fix
 

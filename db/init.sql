@@ -4858,7 +4858,38 @@ CREATE INDEX IF NOT EXISTS idx_tnp_event   ON tenant_notification_prefs (event_t
 GRANT SELECT, INSERT, UPDATE, DELETE ON tenant_notification_prefs TO tenant_portal_role;
 
 -- =====================================================================
--- COPILOT AGENTIC EXECUTION LOG (v2.2.0)
+-- NOTIFICATION DEAD-LETTER QUEUE (v2.4.0)
+-- Retry queue for failed email sends with exponential back-off.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS notification_retry_queue (
+    id              BIGSERIAL   PRIMARY KEY,
+    username        TEXT        NOT NULL,
+    email           TEXT        NOT NULL,
+    event_type      TEXT        NOT NULL,
+    event_id        TEXT,
+    dedup_key       TEXT        NOT NULL,
+    subject         TEXT        NOT NULL,
+    template_name   TEXT        NOT NULL,
+    event_json      JSONB       NOT NULL,
+    attempt_count   INT         NOT NULL DEFAULT 0,
+    max_attempts    INT         NOT NULL DEFAULT 3,
+    next_retry_at   TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '5 minutes',
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (dedup_key, username)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_retry_due
+    ON notification_retry_queue (next_retry_at)
+    WHERE attempt_count < max_attempts;
+
+CREATE INDEX IF NOT EXISTS idx_notification_retry_username
+    ON notification_retry_queue (username);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON notification_retry_queue TO pf9_notification_svc;
+GRANT USAGE, SELECT ON SEQUENCE notification_retry_queue_id_seq TO pf9_notification_svc;
+
 -- Audit trail for runbooks triggered via Copilot.
 -- =====================================================================
 

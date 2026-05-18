@@ -85,6 +85,7 @@
 - **SMTP Flexibility**: Authenticated and unauthenticated relay support, optional TLS
 - **HTML Templates**: Professional Jinja2 email templates for each event type
 - **Notification History**: Full delivery log with status tracking and retry information
+- **Dead-Letter Queue (DLQ)**: Failed email sends are automatically retried with exponential back-off (5 min → 15 min → 60 min). After exhausting all attempts (`NOTIFICATION_MAX_RETRY_ATTEMPTS`, default 3), items are marked `dead_lettered` in the notification log. Ops team can inspect the queue via `GET /notifications/admin/retry-queue` (v2.4.0)
 
 ### 💰 Metering & Chargeback *(v1.94.5+ Comprehensive System)*
 - **Multi-Currency Support**: Full ILS pricing with currency conversion and localized formatting

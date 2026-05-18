@@ -96,6 +96,10 @@ DIGEST_HOUR_UTC = int(os.getenv("NOTIFICATION_DIGEST_HOUR_UTC", "8"))
 # How far back to look for new events on each poll (seconds)
 LOOKBACK_SECONDS = int(os.getenv("NOTIFICATION_LOOKBACK_SECONDS", "300"))
 
+# Dead-Letter Queue (DLQ) configuration
+DLQ_MAX_ATTEMPTS = int(os.getenv("NOTIFICATION_MAX_RETRY_ATTEMPTS", "3"))
+_RETRY_BACKOFF_MINUTES: List[int] = [5, 15, 60]   # delay per attempt index
+
 # ---------------------------------------------------------------------------
 # SMTP config — DB overrides env vars (same pattern as api/smtp_helper.py)
 # ---------------------------------------------------------------------------
@@ -217,6 +221,15 @@ def ensure_tables(conn):
                 logger.info("Notification tables created from migration SQL")
             else:
                 logger.warning(f"Migration file not found: {migration_path}")
+
+        # v2.4.0: DLQ retry queue — idempotent, safe to run on every startup
+        dlq_path = os.path.join(
+            os.path.dirname(__file__), "..", "db", "migrate_v2_4_0_notification_dlq.sql"
+        )
+        if os.path.exists(dlq_path):
+            with open(dlq_path) as f:
+                cur.execute(f.read())
+            conn.commit()
 
 # ---------------------------------------------------------------------------
 # Dedup helper
@@ -622,9 +635,12 @@ def dispatch_event(conn, event: Dict):
                 success = send_email(user["email"], subject, html_body, conn=conn)
                 status = "sent" if success else "failed"
                 log_notification(conn, user, event, dkey, subject, status)
+                if not success:
+                    enqueue_retry(conn, user, event, dkey, subject, template_name)
             except Exception as e:
                 logger.error(f"Error dispatching to {user['username']}: {e}")
                 log_notification(conn, user, event, dkey, subject, "failed", str(e))
+                enqueue_retry(conn, user, event, dkey, subject, template_name)
 
 
 def log_notification(conn, user: Dict, event: Dict, dkey: str, subject: str,
@@ -642,6 +658,176 @@ def log_notification(conn, user: Dict, event: Dict, dkey: str, subject: str,
             datetime.utcnow() if status == "sent" else None,
         ))
     conn.commit()
+
+
+def enqueue_retry(conn, user: Dict, event: Dict, dkey: str,
+                  subject: str, template_name: str) -> None:
+    """Add a failed notification to the DLQ for later retry.
+
+    Uses INSERT … ON CONFLICT DO NOTHING so a second failure on the same
+    (dedup_key, username) pair never resets the attempt counter.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO notification_retry_queue
+                    (username, email, event_type, event_id, dedup_key, subject,
+                     template_name, event_json, attempt_count, max_attempts,
+                     next_retry_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, 0, %s,
+                        now() + interval '5 minutes')
+                ON CONFLICT (dedup_key, username) DO NOTHING
+            """, (
+                user["username"], user["email"], event["event_type"],
+                event.get("event_id", ""), dkey, subject, template_name,
+                json.dumps(event), DLQ_MAX_ATTEMPTS,
+            ))
+        conn.commit()
+        logger.info("DLQ: enqueued retry for %s: %s", user["username"], subject)
+    except Exception as exc:
+        logger.error("DLQ: failed to enqueue retry for %s: %s", user["username"], exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def process_retry_queue(conn) -> None:
+    """Process due retry items from the DLQ.
+
+    Uses SELECT … FOR UPDATE SKIP LOCKED so concurrent worker restarts
+    never double-deliver the same item.
+
+    Outcome per item:
+    - Success       → notification_log updated to 'sent', row deleted
+    - Failure < max → attempt_count incremented, next_retry_at pushed out
+    - Failure = max → notification_log updated to 'dead_lettered', row deleted
+    """
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, username, email, event_type, event_id, dedup_key,
+                       subject, template_name, event_json,
+                       attempt_count, max_attempts
+                FROM   notification_retry_queue
+                WHERE  next_retry_at <= now()
+                  AND  attempt_count < max_attempts
+                ORDER  BY next_retry_at
+                LIMIT  50
+                FOR UPDATE SKIP LOCKED
+            """)
+            rows = cur.fetchall()
+    except Exception as exc:
+        logger.error("DLQ: failed to fetch retry items: %s", exc)
+        return
+
+    if not rows:
+        return
+
+    logger.info("DLQ: processing %d due retry item(s)", len(rows))
+
+    for row in rows:
+        attempt = row["attempt_count"] + 1
+        event = (
+            row["event_json"]
+            if isinstance(row["event_json"], dict)
+            else json.loads(row["event_json"])
+        )
+        user = {"username": row["username"], "email": row["email"]}
+        last_error: Optional[str] = None
+        success = False
+
+        try:
+            html_body = render_template(
+                row["template_name"],
+                {
+                    "event": event,
+                    "user": user,
+                    "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+                },
+            )
+            success = send_email(row["email"], row["subject"], html_body, conn=conn)
+            if not success:
+                last_error = "send_email returned False"
+        except Exception as exc:
+            last_error = str(exc)
+            logger.error(
+                "DLQ: render/send error for %s (attempt %d/%d): %s",
+                row["username"], attempt, row["max_attempts"], exc,
+            )
+
+        try:
+            if success:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE notification_log
+                        SET    delivery_status = 'sent', sent_at = now(),
+                               error_message   = NULL
+                        WHERE  dedup_key = %s AND username = %s
+                          AND  delivery_status = 'failed'
+                        """,
+                        (row["dedup_key"], row["username"]),
+                    )
+                    cur.execute(
+                        "DELETE FROM notification_retry_queue WHERE id = %s",
+                        (row["id"],),
+                    )
+                conn.commit()
+                logger.info(
+                    "DLQ: retry succeeded for %s: %s (attempt %d/%d)",
+                    row["username"], row["subject"], attempt, row["max_attempts"],
+                )
+
+            elif attempt >= row["max_attempts"]:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE notification_log
+                        SET    delivery_status = 'dead_lettered', error_message = %s
+                        WHERE  dedup_key = %s AND username = %s
+                        """,
+                        (last_error, row["dedup_key"], row["username"]),
+                    )
+                    cur.execute(
+                        "DELETE FROM notification_retry_queue WHERE id = %s",
+                        (row["id"],),
+                    )
+                conn.commit()
+                logger.warning(
+                    "DLQ: dead-lettered after %d/%d attempts — %s: %s",
+                    attempt, row["max_attempts"], row["username"], row["subject"],
+                )
+
+            else:
+                delay_min = _RETRY_BACKOFF_MINUTES[
+                    min(attempt, len(_RETRY_BACKOFF_MINUTES) - 1)
+                ]
+                next_retry = datetime.utcnow() + timedelta(minutes=delay_min)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE notification_retry_queue
+                        SET    attempt_count = %s, last_error = %s,
+                               next_retry_at = %s
+                        WHERE  id = %s
+                        """,
+                        (attempt, last_error, next_retry, row["id"]),
+                    )
+                conn.commit()
+                logger.info(
+                    "DLQ: retry %d/%d failed for %s, next attempt in %d min",
+                    attempt, row["max_attempts"], row["username"], delay_min,
+                )
+
+        except Exception as exc:
+            logger.error(
+                "DLQ: failed to update retry state for id=%d: %s", row["id"], exc
+            )
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
 
 _MAX_DIGEST_EVENTS = 1000  # cap per-user digest bucket to prevent unbounded growth
@@ -1189,6 +1375,16 @@ def poll_cycle(conn):
             f"Poll cycle complete: {total_events} events processed "
             f"({tenant_total} tenant)"
         )
+
+    # Process DLQ retry queue on every cycle
+    try:
+        process_retry_queue(conn)
+    except Exception as e:
+        logger.error(f"Error processing DLQ retry queue: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def main():

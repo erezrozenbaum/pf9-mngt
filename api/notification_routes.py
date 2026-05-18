@@ -91,6 +91,15 @@ def ensure_tables():
                     if os.path.exists(migration_path):
                         with open(migration_path) as f:
                             cur.execute(f.read())
+
+                # v2.4.0: DLQ retry queue — idempotent, safe to run on every startup
+                dlq_path = os.path.join(
+                    os.path.dirname(os.path.dirname(__file__)),
+                    "db", "migrate_v2_4_0_notification_dlq.sql"
+                )
+                if os.path.exists(dlq_path):
+                    with open(dlq_path) as f:
+                        cur.execute(f.read())
     except Exception as e:
         logger.warning("Could not ensure notification tables: %s", e)
 
@@ -367,6 +376,65 @@ async def get_notification_stats():
                 "subscribers": sub_stats,
             }
     except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/admin/retry-queue", dependencies=[Depends(require_permission("notifications", "admin"))])
+async def get_retry_queue_status():
+    """Admin: DLQ retry queue summary — pending retries and dead-lettered items."""
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'notification_retry_queue'
+                    ) AS table_exists
+                """)
+                if not cur.fetchone()["table_exists"]:
+                    return {"available": False}
+
+                cur.execute("""
+                    SELECT
+                        COUNT(*) FILTER (
+                            WHERE attempt_count < max_attempts AND next_retry_at > now()
+                        )                                                          AS pending,
+                        COUNT(*) FILTER (
+                            WHERE attempt_count < max_attempts AND next_retry_at <= now()
+                        )                                                          AS due_now,
+                        COUNT(*)                                                   AS total,
+                        MIN(next_retry_at) FILTER (
+                            WHERE attempt_count < max_attempts
+                        )                                                          AS next_retry_at
+                    FROM notification_retry_queue
+                """)
+                summary = dict(cur.fetchone())
+
+                cur.execute("""
+                    SELECT id, username, email, event_type, subject,
+                           attempt_count, max_attempts, next_retry_at,
+                           last_error, created_at
+                    FROM   notification_retry_queue
+                    ORDER  BY next_retry_at
+                    LIMIT  50
+                """)
+                items = [dict(r) for r in cur.fetchall()]
+
+                cur.execute("""
+                    SELECT COUNT(*) AS dead_lettered
+                    FROM   notification_log
+                    WHERE  delivery_status = 'dead_lettered'
+                """)
+                dead_count = cur.fetchone()["dead_lettered"]
+
+            return {
+                "available": True,
+                "summary": summary,
+                "dead_lettered_total": dead_count,
+                "items": items,
+            }
+    except Exception as e:
+        logger.error("Failed to get DLQ retry queue: %s", e)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

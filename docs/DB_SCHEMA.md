@@ -1453,13 +1453,56 @@ Least-privilege PostgreSQL roles for service isolation. All roles are `NOLOGIN` 
 | `pf9_service_base` | Base role — `CONNECT` on DB, `USAGE` on schema |
 | `pf9_snapshot_svc` | SELECT/INSERT/UPDATE on `snapshot_records`, `snapshot_runs`, `snapshot_policy_sets`, `snapshot_assignments`, `snapshot_exclusions`, `projects`, `servers`, `volumes` |
 | `pf9_scheduler_svc` | SELECT on `projects`, `servers`, `volumes`, `drift_events`, `sla_commitments`, `support_tickets`; SELECT/INSERT/UPDATE on `tenant_health_scores`, `metering_quotas`, `operational_insights`, `system_settings` |
-| `pf9_notification_svc` | SELECT on `projects`, `tenant_health_scores`, `servers`; SELECT/INSERT/UPDATE on `notification_log`, `notification_preferences`, `notification_channels`, `tenant_notification_prefs` |
+| `pf9_notification_svc` | SELECT on `projects`, `tenant_health_scores`, `servers`; SELECT/INSERT/UPDATE on `notification_log`, `notification_preferences`, `notification_channels`, `tenant_notification_prefs`; SELECT/INSERT/UPDATE/DELETE on `notification_retry_queue` |
 | `pf9_metering_svc` | SELECT on `projects`, `servers`, `hypervisors`, `volumes`; SELECT/INSERT/UPDATE on `metering_quotas`, `metering_resources`, `metering_config`, `metering_efficiency`, `metering_api_usage` |
 | `pf9_intelligence_svc` | SELECT on metrics/insights tables; SELECT/INSERT/UPDATE/DELETE on `operational_insights` |
 | `pf9_backup_svc` | SELECT on `projects`, `servers`; SELECT/INSERT/UPDATE on `backup_config`, `backup_history` |
 | `pf9_ldap_svc` | SELECT on `user_roles`; SELECT/INSERT/UPDATE/DELETE on `users` |
 
 To enable: assign a password with `ALTER ROLE pf9_snapshot_svc LOGIN PASSWORD '...'` and set `SNAPSHOT_DB_USER` / `SNAPSHOT_DB_PASSWORD` environment variables.
+
+---
+
+## Notification Dead-Letter Queue (v2.4.0)
+
+### notification_retry_queue
+Persists failed notification sends for automatic retry with exponential back-off (5 min → 15 min → 60 min). Items that exhaust `max_attempts` are marked `dead_lettered` in `notification_log` and removed from the queue.
+
+```sql
+CREATE TABLE IF NOT EXISTS notification_retry_queue (
+    id              BIGSERIAL   PRIMARY KEY,
+    username        TEXT        NOT NULL,
+    email           TEXT        NOT NULL,
+    event_type      TEXT        NOT NULL,
+    event_id        TEXT,
+    dedup_key       TEXT        NOT NULL,
+    subject         TEXT        NOT NULL,
+    template_name   TEXT        NOT NULL,
+    event_json      JSONB       NOT NULL,
+    attempt_count   INT         NOT NULL DEFAULT 0,
+    max_attempts    INT         NOT NULL DEFAULT 3,
+    next_retry_at   TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '5 minutes',
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (dedup_key, username)
+);
+CREATE INDEX IF NOT EXISTS idx_notification_retry_due
+    ON notification_retry_queue (next_retry_at)
+    WHERE attempt_count < max_attempts;
+CREATE INDEX IF NOT EXISTS idx_notification_retry_username
+    ON notification_retry_queue (username);
+```
+
+**Key columns**:
+| Column | Notes |
+|--------|-------|
+| `dedup_key` | Prevents duplicate entries per user per event; format: `{event_type}:{event_id}` |
+| `attempt_count` | Incremented after each failed retry |
+| `max_attempts` | Defaults to env `NOTIFICATION_MAX_RETRY_ATTEMPTS` (3); stored per row for future flexibility |
+| `next_retry_at` | Advances on each failure: +5m → +15m → +60m (back-off). Worker polls `WHERE next_retry_at <= now() AND attempt_count < max_attempts` |
+| `last_error` | SMTP/template exception message from the last failed attempt |
+
+**Access**: `pf9_notification_svc` has SELECT, INSERT, UPDATE, DELETE on this table.
 
 ---
 
