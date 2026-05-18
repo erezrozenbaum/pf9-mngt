@@ -68,8 +68,7 @@ cn: System Administrator
 sn: Administrator
 givenName: System
 mail: admin@$LDAP_DOMAIN
-# shellcheck disable=SC1083
-userPassword: {SSHA}$(slappasswd -s "$DEFAULT_ADMIN_PASSWORD" -h {SSHA})
+userPassword: {SSHA}$(slappasswd -s "$DEFAULT_ADMIN_PASSWORD" -h '{SSHA}')
 uidNumber: 1001
 gidNumber: 1001
 homeDirectory: /home/$DEFAULT_ADMIN_USER
