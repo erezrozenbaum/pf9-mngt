@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.4] - 2026-05-18
+
+### Fixed
+- **Runbook billing gate decryption key**: `runbook_routes.py` was deriving the Fernet key from `JWT_SECRET` to decrypt `auth_credential` on the billing gate integration. This is the wrong key — credentials are encrypted by `integration_routes.py` using the dedicated `integration_key` secret. The inline `_dec()` helper has been removed and replaced with `crypto_helper.fernet_decrypt()` using the correct `integration_key` / `INTEGRATION_KEY` secret, making runbook billing-gate callbacks decrypt credentials correctly for the first time.
+
+### Changed
+- **QBR report auth**: The QBR PDF download fetch call in `TenantHealthView.tsx` was passing `Authorization: Bearer <empty>` (reading a `localStorage["token"]` key that is never written, because the JWT lives in an httpOnly cookie). The stale header has been removed; the httpOnly cookie is now sent via `credentials: "include"`, consistent with all other API calls in the UI.
+
+---
+
 ## [2.3.3] - 2026-05-18
 
 ### Security

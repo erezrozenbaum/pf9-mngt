@@ -21,6 +21,7 @@ from psycopg2.extras import RealDictCursor
 
 from db_pool import get_connection
 from auth import require_permission, get_current_user
+from crypto_helper import fernet_decrypt as _fernet_decrypt
 
 logger = logging.getLogger("pf9_runbooks")
 
@@ -183,22 +184,11 @@ def _call_billing_gate(
 
     integration = dict(integration)
 
-    # Decrypt credential using the same Fernet helper as integration_routes
-    def _dec(ct: str) -> str:
-        if not ct:
-            return ""
-        try:
-            import base64, hashlib
-            from cryptography.fernet import Fernet
-            secret = os.environ.get("JWT_SECRET", "") or os.environ.get("JWT_SECRET_KEY", "")
-            if not secret:
-                return ct
-            key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
-            return Fernet(key).decrypt(ct.encode()).decode()
-        except Exception:
-            return ct
-
-    credential = _dec(integration.get("auth_credential") or "")
+    # Decrypt credential using the same key as integration_routes (integration_key secret)
+    raw_cred = integration.get("auth_credential") or ""
+    credential = _fernet_decrypt(raw_cred, secret_name="integration_key",
+                                 env_var="INTEGRATION_KEY",
+                                 context="runbook billing gate") if raw_cred else ""
     headers = {"Content-Type": "application/json"}
     auth_type = integration.get("auth_type", "bearer")
     header_name = integration.get("auth_header_name", "Authorization")

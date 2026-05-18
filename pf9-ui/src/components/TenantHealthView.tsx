@@ -1223,8 +1223,8 @@ function DetailContent({
                 try {
                   const resp = await fetch(`/api/intelligence/qbr/generate/${t.project_id}`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json",
-                      "Authorization": `Bearer ${localStorage.getItem("token") || ""}` },
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       tenant_id: t.project_id,
                       from_date: qbrFromDate,

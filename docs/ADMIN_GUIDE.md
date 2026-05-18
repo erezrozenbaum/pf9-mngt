@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.3.3  
+**Version**: 2.3.4  
 **Last Updated**: May 18, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.3.4 — Runbook Billing Gate Credential Decrypt Fix
+
+- **Runbook billing gate decryption corrected** — The runbook billing gate webhook was silently failing to decrypt `auth_credential` because it was deriving the Fernet key from `JWT_SECRET` instead of the dedicated `integration_key` secret used by `integration_routes.py` when credentials are stored. Affected runbooks would send webhook requests with no credential header. Fixed by replacing the inline helper with `crypto_helper.fernet_decrypt()` using the correct `integration_key` / `INTEGRATION_KEY` secret.
+- **QBR PDF download auth** — The QBR download button in the Tenant Health view was sending a stale `Authorization: Bearer` header from a `localStorage` key that is no longer written (JWT is in an httpOnly cookie). Removed the dead header; the request now sends the cookie via `credentials: include`, matching every other API call in the UI.
 
 ### v2.3.3 — External Integration SSRF Guard
 
