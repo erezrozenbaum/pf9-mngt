@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.4.0  
+**Version**: 2.5.0  
 **Last Updated**: May 18, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.5.0 — Circuit Breaker Observability
+
+- **Circuit breaker state in region sync-status** — `GET /admin/control-planes/{cp_id}/regions/{region_id}/sync-status` now returns a `circuit_breaker` object with three fields: `state` (`closed` / `open` / `half_open`), `failure_count` (consecutive failures since last success), and `open_for_seconds_remaining` (seconds until the next probe; `null` when closed). Backed by the existing Redis-backed `RegionCircuitBreaker`; falls back to an in-process counter when Redis is unavailable.
 
 ### v2.4.0 — Notification Dead-Letter Queue
 

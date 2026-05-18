@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.0] - 2026-05-18
+
+### Added
+- **Circuit breaker state in region sync-status**: `GET /admin/control-planes/{cp_id}/regions/{region_id}/sync-status` now includes a `circuit_breaker` field in its response. The field reports the current state (`closed`, `open`, or `half_open`), the consecutive failure count, and — when the circuit is open — how many seconds remain before the next probe attempt. Backed by the existing Redis-backed `RegionCircuitBreaker` with local in-process fallback when Redis is unavailable.
+
+---
+
 ## [2.4.0] - 2026-05-18
 
 ### Added

@@ -53,7 +53,7 @@ from pydantic import BaseModel, Field, field_validator
 from auth import require_authentication, User, log_auth_event
 from cluster_registry import get_registry
 from db_pool import get_connection
-from pf9_control import Pf9Client
+from pf9_control import Pf9Client, _get_circuit_breaker
 from request_helpers import get_request_ip
 
 logger = logging.getLogger("pf9.cluster_routes")
@@ -952,6 +952,7 @@ async def get_region_sync_status(
         "last_sync_status": row.get("last_sync_status"),
         "last_sync_vm_count": row.get("last_sync_vm_count"),
         "health_checked_at": row.get("health_checked_at").isoformat() if row.get("health_checked_at") else None,
+        "circuit_breaker": _get_circuit_breaker(region_id).get_status(),
         "sync_history": history,
     }
 

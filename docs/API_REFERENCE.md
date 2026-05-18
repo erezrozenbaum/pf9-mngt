@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.3.1 — Patch: CI test reliability fix (no API changes).
+> **Version**: v2.5.0 — Circuit breaker state surfaced in region sync-status endpoint.
+> Previous: v2.4.0 — Notification DLQ (`GET /notifications/admin/retry-queue`).
 > Previous: v2.3.0 — Health score weight configuration (`GET/PUT /api/tenants/health-score/weights`), health score toggle per project (`PUT /api/tenants/{project_id}/health-score/toggle`), snapshot chain explorer (`GET /api/snapshots/{id}/chain`, `GET /api/volumes/{id}/chains`, `GET/PUT /api/projects/{id}/chain-policies`).
 > Previous: v2.2.0 — Copilot agentic execution: new `POST /api/copilot/execute-intent` and `GET /api/copilot/agentic-status` endpoints; `ask` response extended with action fields.
 > Previous: v2.1.1 — Hotfix: removed non-existent `volume_name` column from snapshot tenant event collector; added `db/migrate_v2_1_0_tenant_notifications.sql` migration file
@@ -5882,3 +5883,54 @@ Response: `{"require_for_roles": ["admin", "superadmin"], "bypass_enabled": fals
 *Requires: `superadmin` role*
 
 Request: `{"require_for_roles": ["admin", "superadmin"], "bypass_enabled": false}`. `require_for_roles` must be a subset of `["admin", "superadmin", "viewer", "operator"]`.
+
+---
+
+## Admin: Cluster Control Plane & Region Management (v2.3.0+)
+
+> **RBAC**: All endpoints require `superadmin` role.  
+> **Base path**: `/admin/control-planes`
+
+### Get Region Sync Status & Circuit Breaker State (v2.4.0)
+
+**GET** `/admin/control-planes/{cp_id}/regions/{region_id}/sync-status`
+
+Returns the last sync result and operational health for a region, including the live circuit breaker state for the outbound Platform9 API connection.
+
+Response:
+```json
+{
+  "region_id": "corp-pf9:us-east-1",
+  "health_status": "healthy",
+  "last_sync_at": "2026-05-18T10:00:00Z",
+  "last_sync_status": "success",
+  "last_sync_vm_count": 142,
+  "health_checked_at": "2026-05-18T10:01:30Z",
+  "circuit_breaker": {
+    "state": "closed",
+    "failure_count": 0,
+    "open_for_seconds_remaining": null
+  },
+  "sync_history": [
+    {
+      "started_at": "2026-05-18T10:00:00Z",
+      "finished_at": "2026-05-18T10:00:12Z",
+      "status": "success",
+      "sync_type": "full",
+      "resource_count": 142,
+      "error_count": 0,
+      "duration_ms": 12340
+    }
+  ]
+}
+```
+
+**`circuit_breaker` field**:
+
+| Field | Description |
+|-------|-------------|
+| `state` | `closed` (normal), `open` (calls fast-failing), or `half_open` (single probe in-flight) |
+| `failure_count` | Consecutive failures recorded since last success |
+| `open_for_seconds_remaining` | Seconds until the next probe attempt; `null` when state is not `open` |
+
+Circuit state is backed by Redis (shared across all API worker processes) with automatic in-process fallback when Redis is unavailable.

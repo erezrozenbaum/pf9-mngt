@@ -125,6 +125,9 @@ class _Pf9Client:
     def authenticate(self):
         pass
 pf9_control_stub.Pf9Client = _Pf9Client
+_mock_cb = MagicMock()
+_mock_cb.get_status.return_value = {"state": "closed", "failure_count": 0, "open_for_seconds_remaining": None}
+pf9_control_stub._get_circuit_breaker = MagicMock(return_value=_mock_cb)
 sys.modules.setdefault("pf9_control", pf9_control_stub)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))

@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-2.4.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-2.5.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -284,6 +284,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v2.5.0** — Circuit breaker state surfaced in region sync-status endpoint (`circuit_breaker.state`, `failure_count`, `open_for_seconds_remaining`); live observability for outbound Platform9 API connection health (May 2026)
 - **v2.4.0** — Notification dead-letter queue: failed email sends are now retried with exponential back-off (5 → 15 → 60 min) instead of being silently dropped; notifications exhausting all retries are marked `dead_lettered`. New `GET /notifications/admin/retry-queue` endpoint provides queue visibility (May 2026)
 - **v2.3.4** — Bug fix: runbook billing-gate credentials were silently failing to decrypt (wrong Fernet key); fixed to use `integration_key` secret via `crypto_helper`. QBR download auth updated from stale localStorage header to httpOnly cookie (May 2026)
 - **v2.3.3** — SSRF guard added to external integrations `base_url` validation: private/loopback/link-local raw-IP targets are now rejected at the Pydantic model layer on create and update (May 2026)

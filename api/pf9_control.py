@@ -97,6 +97,28 @@ class RegionCircuitBreaker:
         if fails >= self.FAILURE_THRESHOLD:
             self._open_circuit()
 
+    def get_status(self) -> dict:
+        """Return a snapshot of circuit breaker state for observability endpoints."""
+        state = self._get_state()
+        failures = self._get_failures()
+        remaining: Optional[int] = None
+        if state == self._STATE_OPEN:
+            rc = _get_redis()
+            if rc is not None:
+                try:
+                    v = rc.get(self._key_until)
+                    if v:
+                        remaining = max(0, int(float(v) - time.time()))
+                except Exception:
+                    pass
+            else:
+                remaining = max(0, int(self._local_until - time.monotonic()))
+        return {
+            "state": state,
+            "failure_count": failures,
+            "open_for_seconds_remaining": remaining,
+        }
+
     # ── Redis helpers (with local fallback) ───────────────────────────────
 
     def _get_state(self) -> str:

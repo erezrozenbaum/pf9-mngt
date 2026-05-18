@@ -210,6 +210,7 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **Per-region health tracking**: `health_status` per region (`healthy` / `degraded` / `unreachable` / `auth_failed`), sync metrics, and last-sync timestamp
 - **Per-region timeout**: each region call enforces a hard `asyncio.wait_for` deadline (`REGION_REQUEST_TIMEOUT_SEC`, default 30 s) — an unreachable region cannot stall all others
 - **SSRF protection**: each control plane has `allow_private_network` (default `false`) — blocks RFC-1918 and loopback outbound connections; configurable per-CP by superadmin for on-premises clusters
+- **Circuit breaker state visibility** *(v2.5.0)*: `GET /admin/control-planes/{cp_id}/regions/{region_id}/sync-status` includes a `circuit_breaker` field exposing live state (`closed` / `open` / `half_open`), consecutive failure count, and seconds remaining until next probe attempt
 
 > 📖 See the dedicated **[Multi-Region & Multi-Cluster Guide](docs/MULTICLUSTER_GUIDE.md)** for a step-by-step operator walkthrough.
 
