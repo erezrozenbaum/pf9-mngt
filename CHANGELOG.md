@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.1] - 2026-05-18
+
+### Fixed
+- **Integration test flaky failure on CI**: `test_T01_branding_via_proxy` (tenant portal branding reachability) now also catches `httpx.ReadError` (errno 104 — connection reset by peer) in addition to `ConnectError` and `RemoteProtocolError`. The test is intended to skip when the Vite dev server is not running in CI; a TCP connection-reset from nginx (Vite upstream not available) previously surfaced as `ReadError` rather than `ConnectError`, causing the test to fail instead of skip on some CI runners.
+
+---
+
 ## [2.3.0] - 2026-05-18
 
 ### Added

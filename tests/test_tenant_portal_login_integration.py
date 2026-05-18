@@ -78,7 +78,7 @@ class TestBrandingReachability:
         """
         try:
             r = _branding(PROXY_URL)
-        except (httpx.ConnectError, httpx.RemoteProtocolError):
+        except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError):
             pytest.skip(
                 f"PROXY_URL {PROXY_URL} is not reachable — Vite dev server not running "
                 f"(expected in CI; run locally with 'npm run dev' to test proxy routing)"

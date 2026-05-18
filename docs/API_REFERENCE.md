@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.3.0 — Health score weight configuration (`GET/PUT /api/tenants/health-score/weights`), health score toggle per project (`PUT /api/tenants/{project_id}/health-score/toggle`), snapshot chain explorer (`GET /api/snapshots/{id}/chain`, `GET /api/volumes/{id}/chains`, `GET/PUT /api/projects/{id}/chain-policies`).
+> **Version**: v2.3.1 — Patch: CI test reliability fix (no API changes).
+> Previous: v2.3.0 — Health score weight configuration (`GET/PUT /api/tenants/health-score/weights`), health score toggle per project (`PUT /api/tenants/{project_id}/health-score/toggle`), snapshot chain explorer (`GET /api/snapshots/{id}/chain`, `GET /api/volumes/{id}/chains`, `GET/PUT /api/projects/{id}/chain-policies`).
 > Previous: v2.2.0 — Copilot agentic execution: new `POST /api/copilot/execute-intent` and `GET /api/copilot/agentic-status` endpoints; `ask` response extended with action fields.
 > Previous: v2.1.1 — Hotfix: removed non-existent `volume_name` column from snapshot tenant event collector; added `db/migrate_v2_1_0_tenant_notifications.sql` migration file
 > Previous: v2.1.0 — Tenant-facing notification subscriptions (9 event types, email + webhook, SSRF protected); admin-configurable MFA enrollment enforcement; MFA token fail-closed security improvement

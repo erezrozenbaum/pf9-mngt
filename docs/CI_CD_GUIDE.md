@@ -130,6 +130,13 @@ Only runs after Jobs 1–7 all pass. Spins up the complete stack on the GitHub A
 8. On any failure: dumps `docker compose logs` for all services
 9. `docker compose down -v` in an `always()` cleanup step
 
+**Integration test skip behaviour** — some tests auto-skip when parts of the stack are unreachable:
+
+| Test | Skipped when |
+|------|--------------|
+| `TestBrandingReachability::test_T01_branding_via_proxy` | `PROXY_URL` (Vite dev server, port 8082) is not reachable — expected in CI where the Vite dev server is not started. The test catches `httpx.ConnectError`, `httpx.RemoteProtocolError`, and `httpx.ReadError` (errno 104 connection-reset-by-peer from nginx when the upstream Vite process is absent). |
+| `TestBrandingReachability::test_T02_branding_direct_to_backend` | `DIRECT_URL` (tenant portal backend, port 8010) is not reachable. |
+
 **CI admin authentication** — no LDAP seeding is needed. `auth.py` checks `DEFAULT_ADMIN_USER`
 / `DEFAULT_ADMIN_PASSWORD` via `hmac.compare_digest` before performing any LDAP lookup.
 `initialize_default_admin()` in `api/main.py` inserts the role into the database at startup.

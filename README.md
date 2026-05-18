@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-2.3.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -302,6 +302,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 - **v1.95.12** — Security hardening: removed hardcoded JWT fallback keys, anonymized infra IPs in docs, untracked bandit scan results (May 2026)
 - **v1.95.11** — Fix API OOMKill (2 Gi memory), SG rule management in Resources panel, deps panel light-mode contrast, quota input overflow (May 2026)
 - **v1.95.10** — Chargeback tab restored (label fix), tenant portal shows VM hours in row + lifecycle changes panel (May 2026)
+- **v2.3.1** — Patch: fix flaky CI integration test (`test_T01_branding_via_proxy`) to skip instead of fail when Vite dev server is not running (May 2026)
 - **v2.3.0** — Configurable health score weights and per-tenant disable toggle; Alembic migration framework; region circuit breaker for OpenStack API calls; per-worker database roles; snapshot chain tracking (parent linkage, depth, pre-delete guard, chain policy editor) (May 2026)
 - **v2.2.0** — Copilot agentic execution: "Run it" button after Copilot answers lets operators trigger the matching runbook directly from the chat. Per-user hourly quota, platform-wide disable toggle, dry-run mode, risk-level badges, and full audit trail (May 2026)
 - **v2.1.1** — Hotfix: remove non-existent `volume_name` column from snapshot event collector; add missing DB migration file for `tenant_notification_prefs` and `notification_log.notification_target` (May 2026)
