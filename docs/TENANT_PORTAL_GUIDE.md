@@ -331,24 +331,25 @@ The audit log is available in the Admin UI → Tenant Portal → **Audit Log** s
 
 ---
 
-## What Tenants See — The 10 Screens *(v1.91.0)*
+## What Tenants See — The 10 Screens *(v2.2.1)*
 
 | Screen | Description |
 |--------|-------------|
-| **Health Overview** *(default)* | Three circular dials: Efficiency score (resource utilisation quality), Stability score (open insight severity), Capacity Runway (days until first quota exhaustion). Sourced from `GET /tenant/client-health` → admin API. |
+| **Health Overview** *(default)* | Three circular dials: Efficiency score (resource utilisation quality), Stability score (open insight severity), Capacity Runway (days until first quota exhaustion based on linear trend of metering data; shows "—" with sublabel "insufficient data" when fewer than two metering data points are available). Sourced from `GET /tenant/client-health` → admin API. |
 | **Dashboard** | Overview cards: VM count, running VMs, storage usage, snapshot compliance %, active restore jobs |
-| **Infrastructure** | VM list with status, spec, volumes; volume list with attachment status |
-| **Snapshot Coverage** | 30-day calendar showing which VMs had snapshots each day; compliance % per VM |
+| **Infrastructure** | VM list with status, spec, volumes, and a **Coverage %** column that reflects the percentage of actual snapshot runs (OK + ERROR) that succeeded in the last 30 days — consistent with the Snapshot Coverage tab |
+| **Snapshot Coverage** | 30-day calendar showing which VMs had snapshots each day; compliance % per VM based on successful vs. total actual runs |
 | **Monitoring** | Per-VM metrics (CPU, RAM), 7-day and 30-day availability % |
 | **Restore Center** | 3-step wizard: select snapshot → review plan → confirm restore. Job list with live progress. All restores are side-by-side (non-destructive). **Observer accounts can view but cannot execute restores.** |
 | **Runbooks** | Read-only catalogue of runbooks you have published to the tenant. **Observer accounts can view but cannot execute runbooks.** |
 | **Reports** | Exportable resource and compliance reports |
+| **Notification Settings** | Per-user subscriptions to 9 event types (snapshot completed/failed, restore completed/failed, quota at 80%/95%, VM provisioned/failed, billing invoice ready) via email or outbound webhook. Requires `tenant_portal_role` DB access (granted in v2.2.1). |
 | **New VM 🚀** | Self-service VM provisioning form (name, image, flavour, network, cloud-init). **Observer accounts cannot access this screen.** |
 | **Activity Log** | Filterable table of the tenant's own portal actions with timestamps, resource references, and response status |
 
 ---
 
-## Observer Role (Read-Only Access) *(v1.91.0)*
+## Observer Role (Read-Only Access) *(v2.2.1)*
 
 The `portal_role` field on each access grant controls whether a user is a **manager** (full access, the default) or an **observer** (read-only).
 

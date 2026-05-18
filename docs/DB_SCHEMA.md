@@ -1472,7 +1472,10 @@ CREATE TABLE IF NOT EXISTS tenant_notification_prefs (
 CREATE INDEX IF NOT EXISTS idx_tnp_project ON tenant_notification_prefs(project_id);
 CREATE INDEX IF NOT EXISTS idx_tnp_user    ON tenant_notification_prefs(keystone_user_id);
 CREATE INDEX IF NOT EXISTS idx_tnp_event   ON tenant_notification_prefs(event_type);
+-- v2.2.1: GRANT SELECT, INSERT, UPDATE, DELETE ON tenant_notification_prefs TO tenant_portal_role;
 ```
+
+**Access**: `tenant_portal_role` has SELECT, INSERT, UPDATE, DELETE on this table (grant added in v2.2.1 migration).
 
 ### notification_log — new column (v2.1.0)
 

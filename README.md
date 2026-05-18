@@ -32,11 +32,11 @@
 
 • **🏗️ 18-container microservices** — designed for production deployment  
 • **📈 670+ commits, actively evolving** — established codebase  
-• **✅ 583 passing tests** — comprehensive test coverage ([see tests/](tests/))  
+• **✅ 593 passing tests** — comprehensive test coverage ([see tests/](tests/))  
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -179,7 +179,7 @@ helm install pf9-mngt pf9-mngt/pf9-mngt \
 - **Migration planning workbench** — from RVTools ingestion through PCD auto-provisioning
 
 **Tech Stack:** React 19.2+ / TypeScript / FastAPI / PostgreSQL 16 / Redis / Docker / Kubernetes  
-**Deployment Ready:** 583 tests, security scanning, observability, Kubernetes deployment  
+**Deployment Ready:** 593 tests, security scanning, observability, Kubernetes deployment  
 *Built to solve operational gaps identified during Platform9 evaluation.*
 
 ---
@@ -225,8 +225,8 @@ helm install pf9-mngt pf9-mngt/pf9-mngt \
 | **Demo Mode** | ✅ Fully available | Complete experience, no Platform9 required |
 | **Platform9 Integration** | ✅ Supported | Works via Platform9 APIs, tested against v6.0+ |
 | **Kubernetes Deployment** | ✅ Helm/ArgoCD ready | Production-ready manifests, observability included |
-| **Test Coverage** | ✅ 583 passing tests | API, integration, and UI tests ([see tests/](tests/)) |
-| **Production Usage** | ✅ Production-ready core | 583 tests, Kubernetes deployment, enterprise monitoring |
+| **Test Coverage** | ✅ 593 passing tests | API, integration, and UI tests ([see tests/](tests/)) |
+| **Production Usage** | ✅ Production-ready core | 593 tests, Kubernetes deployment, enterprise monitoring |
 | **Documentation** | ✅ Complete | 20+ guides covering deployment through operations |
 
 *Production-ready architecture; currently used in evaluation and laboratory environments.*
@@ -258,7 +258,7 @@ No — it's a complementary operational layer. Platform9 handles provisioning, p
 Yes — Demo Mode provides full functionality with sample data.
 
 **Q: Is this production-ready?**  
-Designed for production deployment — 583 tests ([see tests/](tests/)), Kubernetes deployment, security scanning, observability.
+Designed for production deployment — 593 tests ([see tests/](tests/)), Kubernetes deployment, security scanning, observability.
 
 **Q: Minimum requirements?**  
 Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.

@@ -4798,6 +4798,8 @@ CREATE INDEX IF NOT EXISTS idx_tnp_project ON tenant_notification_prefs (project
 CREATE INDEX IF NOT EXISTS idx_tnp_user    ON tenant_notification_prefs (keystone_user_id);
 CREATE INDEX IF NOT EXISTS idx_tnp_event   ON tenant_notification_prefs (event_type);
 
+GRANT SELECT, INSERT, UPDATE, DELETE ON tenant_notification_prefs TO tenant_portal_role;
+
 -- =====================================================================
 -- COPILOT AGENTIC EXECUTION LOG (v2.2.0)
 -- Audit trail for runbooks triggered via Copilot.

@@ -523,7 +523,7 @@ def dismiss_recommendation(
 def _linear_forecast(xs: List[float], ys: List[float]) -> float:
     """Return slope (units per day). Returns 0 if insufficient data."""
     n = len(xs)
-    if n < 3:
+    if n < 2:
         return 0.0
     sx = sum(xs)
     sy = sum(ys)
@@ -1213,7 +1213,7 @@ def setup_intelligence_internal_routes(app) -> None:  # noqa: ANN001
             for r in q_rows:
                 projects_rows[r["project_id"]].append(r)
             for _pid, prows in projects_rows.items():
-                if len(prows) < 3:
+                if len(prows) < 2:
                     continue
                 xs = list(range(len(prows)))
                 for res_key, used_col, quota_col in _QUOTA_RESOURCES:

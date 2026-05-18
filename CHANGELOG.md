@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.1] - 2026-05-20
+
+### Fixed
+- **Notification Settings HTTP 500**: The `tenant_portal_role` database user lacked SELECT/INSERT/UPDATE/DELETE privileges on the `tenant_notification_prefs` table (the table was created after the GRANT block in `db/init.sql`). Every request to `GET/PUT /tenant/notifications/preferences` and webhook-test routes failed with a PostgreSQL `insufficient_privilege` error surfaced as HTTP 500 `internal_error`. Added the missing GRANT in `db/init.sql` and provided `db/migrate_v2_2_1_notification_grant.sql` to apply the fix to existing deployments.
+- **VM list Coverage column showing 3–4% while Snapshot Coverage tab shows COVERED**: The `compliance_pct` subquery in `/tenant/vms` was dividing successful snapshots by *all* `snapshot_records` rows (including records with statuses such as `pending` or `no_snapshot`), yielding a misleadingly low percentage. The denominator now counts only rows with status `OK` or `ERROR` (case-insensitive), making the VM list Coverage column consistent with the Snapshot Coverage tab.
+- **Capacity Runway dial showing "—" with "usage stable" sublabel when no trend data is available**: The linear-regression routine required a minimum of three metering data points; with fewer points it returned a zero slope and suppressed the runway calculation entirely, so tenants with two data points saw no score. The threshold is now two data points. Additionally, the sublabel displayed when no runway can be computed changed from the misleading "usage stable" to "insufficient data" so users understand why the dial is empty.
+
+---
+
 ## [2.2.0] - 2026-05-19
 
 ### Added

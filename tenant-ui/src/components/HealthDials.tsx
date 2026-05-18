@@ -115,7 +115,7 @@ export function HealthDials({ health }: Props) {
     : Math.min(100, (health.capacity_runway_days / 90) * 100); // 90 days = 100%
 
   const runwaySub = health.capacity_runway_days == null
-    ? (health.quota_configured === false ? "no quota configured" : "usage stable")
+    ? (health.quota_configured === false ? "no quota configured" : "insufficient data")
     : `${health.capacity_runway_days}d until ${health.capacity_runway_resource ?? "limit"}`;
 
   const stabSub = health.open_critical || health.open_high || health.open_medium

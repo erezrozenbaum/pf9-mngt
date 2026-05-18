@@ -339,7 +339,7 @@ The Tenant Health view shows every tenant ranked by composite health score. The 
 |-----------|-----------------|
 | **Efficiency** | Resource utilisation vs. waste — how well the tenant uses what they have |
 | **Stability** | Incident frequency, drift rate, SLA compliance trend |
-| **Capacity Runway** | Days until projected quota breach across all resource types |
+| **Capacity Runway** | Days until projected quota breach across all resource types (requires ≥ 2 metering data points; shows "insufficient data" when not enough trend data is available) |
 
 The three-dial display in the tenant portal (see below) reflects these same three dimensions in a client-friendly format.
 

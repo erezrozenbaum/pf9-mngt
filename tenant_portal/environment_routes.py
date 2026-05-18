@@ -138,8 +138,8 @@ async def list_vms(ctx: TenantContext = Depends(get_tenant_context)):
                        ) AS last_snapshot_at,
                        (
                            SELECT ROUND(
-                               COUNT(*) FILTER (WHERE sr2.status = 'OK') * 100.0
-                               / NULLIF(COUNT(*), 0),
+                               COUNT(*) FILTER (WHERE UPPER(sr2.status) = 'OK') * 100.0
+                               / NULLIF(COUNT(*) FILTER (WHERE UPPER(sr2.status) IN ('OK', 'ERROR')), 0),
                                1
                            )
                            FROM snapshot_records sr2
