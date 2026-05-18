@@ -315,6 +315,30 @@ def _compute_backup_success_pct(conn, project_id: str, month_start: datetime.dat
         return None
 
 
+def _compute_migrations_completed(conn, month_start: datetime.date,
+                                   month_end: datetime.date) -> int:
+    """Count migration waves completed globally during the month.
+
+    Since migration projects are not scoped per-tenant, this returns an
+    MSP-wide count that is stored on every tenant's monthly SLA record as
+    informational context.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) AS completed
+                FROM migration_waves
+                WHERE status = 'completed'
+                  AND completed_at >= %s
+                  AND completed_at <  %s
+            """, (month_start, month_end))
+            row = cur.fetchone()
+        return int(row[0]) if row and row[0] else 0
+    except Exception as exc:
+        log.debug("migrations_completed query failed: %s", exc)
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Breach detection
 # ---------------------------------------------------------------------------
@@ -435,6 +459,7 @@ def _process_tenant_month(conn, project_id: str, project_name: str,
         "mttr_avg_hours":    _compute_mttr(conn, project_id, month_start, month_end),
         "backup_success_pct": _compute_backup_success_pct(conn, project_id, month_start, month_end),
     }
+    migrations_completed = _compute_migrations_completed(conn, month_start, month_end)
 
     breach_fields, at_risk_fields = _detect_breaches(
         kpis, commitment, days_in_month, today, month_start
@@ -448,10 +473,11 @@ def _process_tenant_month(conn, project_id: str, project_name: str,
                     (tenant_id, month, region_id,
                      uptime_actual_pct, rto_worst_hours, rpo_worst_hours,
                      mtta_avg_hours, mttr_avg_hours, backup_success_pct,
+                     migrations_completed,
                      breach_fields, at_risk_fields, computed_at)
                 VALUES
                     (%s, %s, '',
-                     %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                     %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (tenant_id, month, region_id)
                 DO UPDATE SET
                     uptime_actual_pct = EXCLUDED.uptime_actual_pct,
@@ -460,6 +486,7 @@ def _process_tenant_month(conn, project_id: str, project_name: str,
                     mtta_avg_hours    = EXCLUDED.mtta_avg_hours,
                     mttr_avg_hours    = EXCLUDED.mttr_avg_hours,
                     backup_success_pct= EXCLUDED.backup_success_pct,
+                    migrations_completed = EXCLUDED.migrations_completed,
                     breach_fields     = EXCLUDED.breach_fields,
                     at_risk_fields    = EXCLUDED.at_risk_fields,
                     computed_at       = NOW()
@@ -471,6 +498,7 @@ def _process_tenant_month(conn, project_id: str, project_name: str,
                 kpis["mtta_avg_hours"],
                 kpis["mttr_avg_hours"],
                 kpis["backup_success_pct"],
+                migrations_completed,
                 breach_fields,
                 at_risk_fields,
             ))

@@ -63,6 +63,9 @@ VALID_EVENT_TYPES = [
     "wave_approval_requested",
     "wave_approval_granted",
     "wave_approval_rejected",
+    # Migration execution events
+    "wave_completed",
+    "migration_plan_completed",
 ]
 
 VALID_SEVERITIES = ["info", "warning", "critical"]

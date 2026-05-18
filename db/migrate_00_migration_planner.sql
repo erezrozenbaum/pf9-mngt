@@ -443,6 +443,8 @@ CREATE TABLE IF NOT EXISTS migration_waves (
     maintenance_window_start TIMESTAMPTZ,
     maintenance_window_end   TIMESTAMPTZ,
     bottleneck_info JSONB     DEFAULT '{}',
+    started_at      TIMESTAMPTZ,                             -- set when first wave_started webhook received
+    completed_at    TIMESTAMPTZ,                             -- set when wave_completed webhook received
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (project_id, wave_number)

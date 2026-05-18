@@ -966,6 +966,7 @@ CREATE TABLE sla_compliance_monthly (
     mtta_hours          NUMERIC(8,2),
     mttr_hours          NUMERIC(8,2),
     backup_success_pct  NUMERIC(6,3),
+    migrations_completed INTEGER NOT NULL DEFAULT 0, -- (v2.3.2) waves completed within this month
     breached_fields     TEXT[],                  -- e.g. ARRAY['uptime_pct','rto_worst_hours']
     at_risk_fields      TEXT[],
     computed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),

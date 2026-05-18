@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.2] - 2026-05-26
+
+### Added
+- **Migration wave timestamps**: Each migration wave now records `started_at` and `completed_at` timestamps when the corresponding webhook events are received. The migration progress API returns these timestamps so the UI can display an execution timeline.
+- **Wave execution timeline UI**: The migration progress panel now shows a sortable table view of all waves with Started, Completed, and Duration columns instead of plain status badges.
+- **Migration-in-progress operational insight**: Starting any migration wave automatically creates a `migration_pending` operational insight for the project. The insight is automatically resolved when all waves in the project complete, keeping the intelligence feed accurate without manual intervention.
+- **Wave completion notifications**: Email and webhook notification subscribers now receive alerts when a migration wave completes (`wave_completed` event type) and when an entire migration plan finishes (`migration_plan_completed` event type). A dedicated green-themed email template is included.
+- **Migrations completed in SLA compliance history**: The `sla_compliance_monthly` table gains a `migrations_completed` column. The SLA worker populates it with the count of waves completed in each calendar month. The SLA Compliance Report PDF includes the new column in the month-over-month history table.
+- **QBR migration activity section**: The Quarterly Business Review PDF now includes a Migration Activity section showing migration plans completed, waves completed, and VMs migrated during the report period.
+- **DB migration `v2_3_2`**: `db/migrate_v2_3_2_wave_timeline.sql` adds `started_at` and `completed_at` to `migration_waves` and `migrations_completed` to `sla_compliance_monthly`. Apply via `alembic upgrade head` or run the SQL directly.
+
+### Migration
+- Apply `db/migrate_v2_3_2_wave_timeline.sql` (or run `alembic upgrade head`) to add the new columns.
+
+---
+
 ## [2.3.1] - 2026-05-18
 
 ### Fixed

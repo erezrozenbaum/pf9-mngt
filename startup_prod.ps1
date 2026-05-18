@@ -189,6 +189,27 @@ try {
     exit 1
 }
 
+# ── Step 3c: Run database migrations ──────────────────────────────────────
+Write-Host "3c. Running database migrations (alembic upgrade head)..." -ForegroundColor Yellow
+# Wait up to 30 s for the DB to accept connections before migrating
+$dbReady = $false
+for ($i = 0; $i -lt 15; $i++) {
+    $pgReady = docker exec pf9_db pg_isready -U pf9 -q 2>$null
+    if ($LASTEXITCODE -eq 0) { $dbReady = $true; break }
+    Start-Sleep 2
+}
+if (-not $dbReady) {
+    Write-Host "  ⚠ DB not ready after 30 s — skipping migration (manual run: docker exec pf9_api alembic -c db/alembic.ini upgrade head)" -ForegroundColor Yellow
+} else {
+    docker exec pf9_api alembic -c db/alembic.ini upgrade head
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  ✓ Migrations applied" -ForegroundColor Green
+    } else {
+        Write-Host "  ✗ Migration failed — check logs with: docker logs pf9_api" -ForegroundColor Red
+        exit 1
+    }
+}
+
 # ── Step 5: Wait for services ─────────────────────────────────────────────
 Write-Host "4. Waiting for services to be ready..." -ForegroundColor Yellow
 # Poll API health endpoint instead of a fixed sleep — prints a dot every 2 s

@@ -1879,7 +1879,7 @@ Core migration tables (all created by `db/migrate_00_migration_planner.sql` and 
 | `migration_flavor_staging` | Draft PCD flavors to create; `source_shape`, `target_flavor_name`, `skip`, `confirmed` |
 | `migration_image_requirements` | Required OS images; `glance_image_id`, `confirmed` |
 | `migration_tenant_users` | Per-tenant user definitions; `user_type`, `username`, `role`, `is_existing_user`, `temp_password` |
-| `migration_waves` | Wave definitions; lifecycle status, approval status, cohort FK |
+| `migration_waves` | Wave definitions; lifecycle status (`planned`→`executing`→`complete`), approval status, cohort FK; `started_at`/`completed_at` timestamps set by webhook events (v2.3.2) |
 | `migration_wave_vms` | VM assignments to waves; `migration_order`, `wave_vm_status` |
 | `migration_wave_preflights` | Pre-flight check results per wave |
 | `migration_prep_tasks` | PCD provisioning task log; `task_type`, `status`, `resource_id`, `rollback_data` |

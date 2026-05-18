@@ -838,7 +838,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_billing_v1957.sql";         Desc="Billing grant fix v1.95.7: GRANT SELECT on domains and metering_snapshots to tenant_portal_role"},
     @{File="db\migrate_v1_95_21.sql";              Desc="Provisioning retry v1.95.21: request_payload JSONB column on provisioning_jobs"},
     @{File="db\migrate_v1_99_5_sla_uptime_precision.sql"; Desc="SLA uptime precision fix v1.99.5: widen uptime_actual_pct DECIMAL(5,3) -> DECIMAL(6,3) to accommodate 100% uptime"},
-    @{File="db\migrate_v2_0_0_vjailbreak_webhook.sql"; Desc="vJailbreak webhook feedback v2.0.0: migration_webhook_events table, webhook_secret on migration_projects, migration_status/failure_reason/migrated_at on migration_vms"}
+    @{File="db\migrate_v2_0_0_vjailbreak_webhook.sql"; Desc="vJailbreak webhook feedback v2.0.0: migration_webhook_events table, webhook_secret on migration_projects, migration_status/failure_reason/migrated_at on migration_vms"},
+    @{File="db\migrate_v2_3_2_wave_timeline.sql";       Desc="Wave timeline v2.3.2: started_at/completed_at on migration_waves; migrations_completed on sla_compliance_monthly"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

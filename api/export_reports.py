@@ -2146,7 +2146,7 @@ def generate_sla_report(
             return "AT RISK"
         return "OK"
 
-    hist_headers = ["Month", "Uptime%", "RTO(h)", "RPO(h)", "MTTA(h)", "MTTR(h)", "Backup%", "Status"]
+    hist_headers = ["Month", "Uptime%", "RTO(h)", "RPO(h)", "MTTA(h)", "MTTR(h)", "Backup%", "Migrations", "Status"]
     hist_data = [hist_headers]
     for r in history:
         hist_data.append([
@@ -2157,11 +2157,12 @@ def generate_sla_report(
             _cell(r.get("mtta_avg_hours")),
             _cell(r.get("mttr_avg_hours")),
             _cell(r.get("backup_success_pct")),
+            str(r.get("migrations_completed", 0)),
             _status_cell(r),
         ])
 
     if len(hist_data) > 1:
-        hist_table = Table(hist_data, colWidths=[2.2*cm]*8)
+        hist_table = Table(hist_data, colWidths=[2*cm, 2*cm, 2*cm, 2*cm, 2*cm, 2*cm, 2*cm, 2*cm, 1.6*cm])
         ts = TableStyle([
             ("BACKGROUND",     (0, 0), (-1, 0), _BLUE),
             ("TEXTCOLOR",      (0, 0), (-1, 0), _WHITE),
@@ -2209,7 +2210,7 @@ def generate_qbr_pdf(qbr_data: dict, include_sections: List[str] | None = None) 
     """
     _all_sections = {
         "cover", "executive_summary", "interventions",
-        "health_trend", "open_items", "methodology",
+        "migration_activity", "health_trend", "open_items", "methodology",
     }
     sections = set(include_sections or _all_sections) & _all_sections
 
@@ -2309,7 +2310,39 @@ def generate_qbr_pdf(qbr_data: dict, include_sections: List[str] | None = None) 
         story.append(int_table)
         story.append(Spacer(1, 0.5*cm))
 
-    # ── 4. Health Trend (placeholder — uses SLA commitment data) ────────────
+    # ── 4. Migration Activity ────────────────────────────────────────────────
+    if "migration_activity" in sections:
+        migration_summary = qbr_data.get("migration_summary", {})
+        waves_completed  = migration_summary.get("waves_completed", 0)
+        plans_completed  = migration_summary.get("plans_completed", 0)
+        vms_migrated     = migration_summary.get("vms_migrated", 0)
+        if waves_completed > 0 or plans_completed > 0 or vms_migrated > 0:
+            story.append(Paragraph("Migration Activity", heading2))
+            story.append(Paragraph(
+                f"Migration activity completed during {from_date} — {to_date}.",
+                normal,
+            ))
+            mig_data = [
+                ["Metric", "Value"],
+                ["Migration Plans Completed",  str(plans_completed)],
+                ["Migration Waves Completed",  str(waves_completed)],
+                ["VMs Migrated",               str(vms_migrated)],
+            ]
+            mig_table = Table(mig_data, colWidths=[8*cm, 8*cm])
+            mig_table.setStyle(TableStyle([
+                ("BACKGROUND",     (0, 0), (-1, 0), _BLUE),
+                ("TEXTCOLOR",      (0, 0), (-1, 0), _WHITE),
+                ("FONTNAME",       (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [_LT_GREY, _WHITE]),
+                ("GRID",           (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+                ("FONTSIZE",       (0, 0), (-1, -1), 11),
+                ("ALIGN",          (1, 0), (1, -1), "CENTER"),
+                ("VALIGN",         (0, 0), (-1, -1), "MIDDLE"),
+            ]))
+            story.append(mig_table)
+            story.append(Spacer(1, 0.5*cm))
+
+    # ── 5. Health Trend (placeholder — uses SLA commitment data) ────────────
     if "health_trend" in sections and sla_commit:
         story.append(Paragraph("Infrastructure Health", heading2))
         sla_tier = (sla_commit.get("tier") or "custom").title()
@@ -2321,7 +2354,7 @@ def generate_qbr_pdf(qbr_data: dict, include_sections: List[str] | None = None) 
         ))
         story.append(Spacer(1, 0.3*cm))
 
-    # ── 5. Open Items ────────────────────────────────────────────────────────
+    # ── 6. Open Items ────────────────────────────────────────────────────────
     if "open_items" in sections and open_items:
         story.append(Paragraph("Active Open Items", heading2))
         story.append(Paragraph(
@@ -2356,7 +2389,7 @@ def generate_qbr_pdf(qbr_data: dict, include_sections: List[str] | None = None) 
         story.append(oi_table)
         story.append(Spacer(1, 0.5*cm))
 
-    # ── 6. Methodology ───────────────────────────────────────────────────────
+    # ── 7. Methodology ───────────────────────────────────────────────────────
     if "methodology" in sections:
         story.append(Paragraph("Methodology Note", heading2))
         story.append(Paragraph(

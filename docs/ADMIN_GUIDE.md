@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.3.1  
+**Version**: 2.3.2  
 **Last Updated**: May 18, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,16 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.3.2 — Wave Timeline Timestamps, Completion Notifications, SLA Migration Counts
+
+- **Wave execution timestamps** — `migration_waves` now records `started_at` and `completed_at` (set via vJailbreak webhook events `wave_started` / `wave_completed`). The `GET /api/migration/projects/{id}/progress` endpoint returns these timestamps per wave.
+- **Migration Planner timeline UI** — The wave list in the Migration Planner tab now shows a full timeline table with Start time, Completion time, and calculated Duration instead of plain status badges.
+- **Auto-resolve operational insight** — Sending `wave_started` via webhook creates a `migration_pending` operational insight for the project. It is automatically resolved when all waves complete.
+- **Wave completion notifications** — The notification worker now sends `wave_completed` and `migration_plan_completed` email events when a wave or full plan finishes.
+- **SLA compliance — migrations completed** — `sla_compliance_monthly.migrations_completed` (INTEGER DEFAULT 0) counts migration waves completed within each calendar month. Populated by the SLA worker; visible in the SLA compliance PDF report.
+- **QBR — migration activity section** — QBR PDFs now include a "Migration Activity" section showing waves completed, plans completed, and VMs migrated during the review period.
+- **DB migration** — `db/migrate_v2_3_2_wave_timeline.sql` applies the schema changes idempotently; run automatically on deploy via `deployment.ps1` or the Helm post-upgrade job.
 
 ### v2.3.0 — Health Score Configuration, Per-Worker DB Roles, Snapshot Chain Explorer
 

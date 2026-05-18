@@ -283,39 +283,16 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 
 ---
 ## 🆕 Recent Highlights
-- **v1.99.0** — Performance: PgBouncer connection pooling for all services (transaction mode, pool_size=20); Features: tenant composite health scoring (0–100) across snapshot compliance, quota headroom, drift, SLA tier, and open tickets — auto-computed every 4h, exposed via REST API, with operational insight generation on low scores (May 2026)
-- **v1.98.0** — Security: Fernet key rotation CLI, billing webhook SSRF guard, append-only audit logs via RLS; Performance: Redis AOF crash-recovery persistence; Features: billing webhook management API; Linux/macOS deployment scripts (May 2026)
-- **v1.97.0** — Security: encrypt Copilot LLM API keys at rest (Fernet/AES); Performance: GIN indexes on inventory JSONB columns; Maintenance: automatic history table archival with configurable retention (May 2026)
-- **v1.96.9** — Multi-bug fix: tenant portal data isolation (security), intelligence event domain resolution, snapshot harvest, auto-ticket creation, entity name display in tenant portal (May 2026)
-- **v1.96.8** — Bugfix: `occurred_at` column name in all Copilot timeline intents + context injector; new `OPERATIONAL_TIMELINE_GUIDE.md`; timeline sections added to `ADMIN_GUIDE.md` and `API_REFERENCE.md` (May 2026)
-- **v1.96.7** — Copilot: 3 new timeline intents (`timeline_what_changed`, `timeline_tenant`, `timeline_recent_hours`), context injection of recent operational events into LLM system prompt, new "Event Timeline" suggestion chip category (May 2026)
-- **v1.96.6** — Operational Event Timeline hotfix: harvester now resolves `domain_id` for all event sources (insights via project membership, provisioning via batch records, auth via user lookup, metering via project name); tenant portal granted `SELECT` on `operational_events`; field name mismatches in the tenant timeline route and UI corrected (May 2026)
-- **v1.96.5** — Operational Event Timeline: tenant portal "Event History" screen with domain-scoped event history, 7-category filter chips, severity filter, and search; new `/tenant/timeline` API endpoints with enforced domain isolation (May 2026)- **v1.96.5** — Operational Event Timeline: contextual navigation hooks — dependency graph nodes, insight rows, and ticket detail panels can now deep-link directly into the Timeline tab pre-filtered to the relevant resource or time window (May 2026)
-- **v1.96.3** — Operational Event Timeline: admin UI with three-mode timeline viewer (tenant/resource/global), category filter chips, severity badges, and expand-to-detail with metadata (May 2026)
-- **v1.96.2** — Operational Event Timeline: intelligence worker harvester ingesting events from 10 source tables with cursor-based idempotent incremental processing and automatic retention pruning (May 2026)
-- **v1.96.1** — Operational Event Timeline: REST API with paginated list, blast-radius correlation view, and stats endpoints; role-based visibility filtering (May 2026)
-- **v1.96.0** — Operational Event Timeline: unified `operational_events` table with full indexing, harvest cursor tracking, Intelligence Views nav item, and RBAC permissions for all roles (May 2026)
-- **v1.95.24** — Fix provisioning logs not refreshed after failed provision: `fetchLogs()` was only called on `status === "completed"`, so failed jobs were invisible in the Provisioning Logs tab until manual navigation (May 2026)
-- **v1.95.23** — Fix provisioning false-failure 500: DB connection held open across all PF9 API calls timed out in K8s, returning 500 even though provisioning succeeded. Each DB write now uses its own short-lived connection (May 2026)
-- **v1.95.21** —
-- **v1.95.13** — Intelligence Views: metering summary, quota vs real usage, resource growth MoM, cost growth MoM — My Portfolio and Portfolio Health dashboards (May 2026)
-- **v1.95.12** — Security hardening: removed hardcoded JWT fallback keys, anonymized infra IPs in docs, untracked bandit scan results (May 2026)
-- **v1.95.11** — Fix API OOMKill (2 Gi memory), SG rule management in Resources panel, deps panel light-mode contrast, quota input overflow (May 2026)
-- **v1.95.10** — Chargeback tab restored (label fix), tenant portal shows VM hours in row + lifecycle changes panel (May 2026)
-- **v2.3.1** — Patch: fix flaky CI integration test (`test_T01_branding_via_proxy`) to skip instead of fail when Vite dev server is not running (May 2026)
-- **v2.3.0** — Configurable health score weights and per-tenant disable toggle; Alembic migration framework; region circuit breaker for OpenStack API calls; per-worker database roles; snapshot chain tracking (parent linkage, depth, pre-delete guard, chain policy editor) (May 2026)
-- **v2.2.0** — Copilot agentic execution: "Run it" button after Copilot answers lets operators trigger the matching runbook directly from the chat. Per-user hourly quota, platform-wide disable toggle, dry-run mode, risk-level badges, and full audit trail (May 2026)
-- **v2.1.1** — Hotfix: remove non-existent `volume_name` column from snapshot event collector; add missing DB migration file for `tenant_notification_prefs` and `notification_log.notification_target` (May 2026)
-- **v2.1.0** — Tenant-facing notification subscriptions (9 event types, email + SSRF-protected webhook); admin-configurable MFA enrollment enforcement (May 2026)
-- **v2.0.7** — Wave pre-flight checks table (migration planner fix) (May 2026)
-- **v1.95.9** — Metering rebrand (Chargeback tab renamed to Chargeback/Usage Summary), per-VM hours running/idle detail, domain filter, Prepaid Credits cleanup (May 2026)
-- **v1.95.8** — Tenant portal storage/network costs fixed, billing status corrected for PAYG, PAYG run hours calculation fixed (May 2026)
-- **v1.95.2** — Billing 500 fixes (async context manager), tenant portal 500, admin UI tenant dropdown (May 2026)
-- **v1.95.0** — Advanced billing & metering system with prepaid accounts and regional pricing (May 2026)
-- **v1.94.11** — Comprehensive chargeback system with multi-currency support (May 2026)
-- **v1.94.10** — Revenue leakage detection and tenant portal enhancements
-- **v1.94.8** — Tenant portal parity with MFA-protected self-service
-- **v1.94.0** — Enterprise dashboard overhaul with Account Manager Portfolio
-- **v1.93.0** — Kubernetes production ready with Helm charts
+
+- **v2.3.2** — Migration wave execution timeline (started/completed timestamps, duration column), wave completion email/webhook notifications, automatic resolution of migration-in-progress operational insights, migrations completed column in SLA compliance history, Migration Activity section in QBR PDFs (May 2026)
+- **v2.3.0** — Configurable health score weights (UI settings panel), per-tenant health score disable toggle, health score breakdown card + trend sparkline; snapshot chain tracking with parent linkage, pre-delete guard trigger, chain policy editor, and Snapshot Chain Explorer UI; per-worker PostgreSQL roles (least-privilege GRANTs); region circuit breaker for OpenStack API calls; Alembic migration framework (May 2026)
+- **v2.2.0** — Copilot agentic execution: "Run it" button lets operators trigger runbooks directly from the Copilot chat, with per-user hourly quota, platform-wide disable toggle, dry-run mode, risk-level badges, and full audit trail (May 2026)
+- **v2.1.0** — Tenant-facing notification subscriptions (9 event types, email + SSRF-protected webhook delivery); admin-configurable MFA enrollment enforcement for admin and superadmin roles (May 2026)
+- **v1.99.0** — PgBouncer connection pooling (transaction mode, pool_size=20) for all services; tenant composite health scoring (0–100) across snapshot compliance, quota headroom, drift, SLA tier, and open tickets — auto-computed every 4h with operational insight generation on low scores (May 2026)
+- **v1.98.0** — Fernet key rotation CLI; billing webhook SSRF guard; append-only audit logs via PostgreSQL RLS; Redis AOF crash-recovery persistence; Linux/macOS deployment scripts (May 2026)
+- **v1.97.0** — Encrypt Copilot LLM API keys at rest (Fernet/AES-128); GIN indexes on inventory JSONB columns; automatic history table archival with configurable retention (May 2026)
+- **v1.96.0** — Operational Event Timeline: unified `operational_events` stream across 10 source tables, blast-radius correlation, Copilot context injection, tenant "Event History" portal screen with domain isolation (May 2026)
+- **v1.95.0** — Advanced billing and metering system with prepaid accounts, regional pricing, multi-currency chargeback, and revenue leakage detection (May 2026)
+- **v1.94.0** — Enterprise dashboards: Account Manager Portfolio (per-tenant SLA, vCPU, leakage alerts), Executive Health (fleet SLA gauge, MTTR), QBR PDF generation per customer (May 2026)
 
 📋 **Full history → [CHANGELOG.md](CHANGELOG.md)**

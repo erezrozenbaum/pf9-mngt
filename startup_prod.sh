@@ -133,6 +133,29 @@ echo "3b. Starting PRODUCTION services..."
 $COMPOSE_CMD up -d
 echo "OK: Production services started"
 
+# Step 3c: Run database migrations
+echo "3c. Running database migrations (alembic upgrade head)..."
+# Wait up to 30 s for the DB to accept connections before migrating
+DB_READY=false
+for _ in $(seq 1 15); do
+    if docker exec pf9_db pg_isready -U pf9 -q 2>/dev/null; then
+        DB_READY=true
+        break
+    fi
+    sleep 2
+done
+if ! $DB_READY; then
+    echo "  WARNING: DB not ready after 30 s — skipping migration (manual run: docker exec pf9_api alembic -c db/alembic.ini upgrade head)"
+else
+    docker exec pf9_api alembic -c db/alembic.ini upgrade head
+    if [ $? -eq 0 ]; then
+        echo "  OK: Migrations applied"
+    else
+        echo "  ERROR: Migration failed — check logs with: docker logs pf9_api"
+        exit 1
+    fi
+fi
+
 # Step 4: Wait for API health
 echo "4. Waiting for services to be ready..."
 ELAPSED=0

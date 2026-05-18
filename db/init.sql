@@ -3933,6 +3933,7 @@ CREATE TABLE IF NOT EXISTS sla_compliance_monthly (
     mtta_avg_hours       DECIMAL(6,2),
     mttr_avg_hours       DECIMAL(6,2),
     backup_success_pct   DECIMAL(5,2),
+    migrations_completed INTEGER      NOT NULL DEFAULT 0,
     breach_fields        TEXT[] NOT NULL DEFAULT '{}',
     at_risk_fields       TEXT[] NOT NULL DEFAULT '{}',
     computed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),

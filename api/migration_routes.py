@@ -10508,21 +10508,75 @@ async def receive_vjailbreak_webhook(
                 cur.execute(
                     """
                     UPDATE migration_waves
-                       SET status = 'executing'
+                       SET status = 'executing',
+                           started_at = COALESCE(started_at, NOW())
                      WHERE project_id = %s AND wave_number = %s AND status != 'completed'
                     """,
                     (project_id, wave_num),
+                )
+                # Ensure a migration_pending insight exists for this project so
+                # it can be auto-resolved when all waves finish.
+                cur.execute(
+                    """
+                    INSERT INTO operational_insights
+                        (type, entity_type, entity_id, severity, status, title,
+                         message, metadata, detected_at, last_seen_at)
+                    VALUES (
+                        'migration_pending', 'migration_project', %s,
+                        'low', 'open',
+                        'Migration in progress',
+                        'A migration plan is currently executing. '
+                        'This insight resolves automatically when all waves complete.',
+                        '{}', NOW(), NOW()
+                    )
+                    ON CONFLICT (type, entity_type, entity_id)
+                        WHERE status IN ('open','acknowledged','snoozed')
+                    DO UPDATE SET last_seen_at = NOW()
+                    """,
+                    (project_id,),
                 )
 
             elif event_type == "wave_completed" and wave_num is not None:
                 cur.execute(
                     """
                     UPDATE migration_waves
-                       SET status = 'completed'
+                       SET status = 'completed',
+                           completed_at = COALESCE(completed_at, NOW())
                      WHERE project_id = %s AND wave_number = %s
                     """,
                     (project_id, wave_num),
                 )
+                # Check whether all waves for this project are now complete.
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM migration_waves
+                     WHERE project_id = %s AND status != 'completed'
+                    """,
+                    (project_id,),
+                )
+                remaining = cur.fetchone()[0]
+                if remaining == 0:
+                    # Mark the project itself as completed.
+                    cur.execute(
+                        """
+                        UPDATE migration_projects
+                           SET status = 'completed', updated_at = NOW()
+                         WHERE project_id = %s AND status NOT IN ('cancelled', 'archived')
+                        """,
+                        (project_id,),
+                    )
+                    # Auto-resolve any open migration_pending insights for this project.
+                    cur.execute(
+                        """
+                        UPDATE operational_insights
+                           SET status = 'resolved', resolved_at = NOW()
+                         WHERE type = 'migration_pending'
+                           AND entity_type = 'migration_project'
+                           AND entity_id = %s
+                           AND status IN ('open', 'acknowledged', 'snoozed')
+                        """,
+                        (project_id,),
+                    )
 
     return {"status": "accepted", "event_type": event_type}
 
@@ -10542,14 +10596,23 @@ def get_migration_progress(project_id: str):
             # Wave summary
             cur.execute(
                 """
-                SELECT wave_number, name, status, vm_count
+                SELECT wave_number, name, status, vm_count,
+                       started_at, completed_at
                 FROM migration_waves
                 WHERE project_id = %s
                 ORDER BY wave_number
                 """,
                 (project_id,),
             )
-            waves = [dict(r) for r in cur.fetchall()]
+            raw_waves = cur.fetchall()
+            waves = []
+            for r in raw_waves:
+                row = dict(r)
+                if row.get("started_at"):
+                    row["started_at"] = row["started_at"].isoformat()
+                if row.get("completed_at"):
+                    row["completed_at"] = row["completed_at"].isoformat()
+                waves.append(row)
 
             # VM status summary
             cur.execute(

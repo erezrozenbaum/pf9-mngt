@@ -120,6 +120,42 @@ npm run lint --workspace=pf9-ui
 
 ---
 
+## 🗄️ Database Schema Changes
+
+All schema changes **must** use Alembic so that upgrades between versions are safe and automated.
+
+### Creating a new revision
+
+```bash
+# From the repo root (requires DB_* env vars or a running stack)
+alembic -c db/alembic.ini revision --autogenerate -m "short_description"
+# OR create a blank revision and fill it in manually:
+alembic -c db/alembic.ini revision -m "short_description"
+```
+
+The generated file lands in `db/alembic/versions/`. Rename it to follow the convention:
+`v<VERSION>_<short_description>.py` (e.g. `v2_4_0_add_invoice_table.py`).
+
+### Rules
+
+1. **Always provide a `downgrade()` function** — even if it is a no-op comment explaining why rollback is unsafe.  Stubs without a body are not acceptable.
+2. **Do not edit `db/init.sql` alone** — any column or table added to `init.sql` must have a matching Alembic revision so existing deployments can upgrade without a full DB wipe.
+3. **Idempotent SQL** — use `IF NOT EXISTS` / `IF EXISTS` guards so revisions survive re-runs.
+4. **Test both directions** before merging:
+   ```bash
+   alembic -c db/alembic.ini upgrade head
+   alembic -c db/alembic.ini downgrade -1
+   alembic -c db/alembic.ini upgrade head
+   ```
+
+### Applying migrations in production
+
+`startup_prod.ps1` (Windows) and `startup_prod.sh` (Linux) automatically run
+`alembic upgrade head` inside the API container after the database is ready.
+No manual `psql` steps are required for routine upgrades.
+
+---
+
 ## 🤝 How to Contribute
 
 ### 1. Fork the Repository

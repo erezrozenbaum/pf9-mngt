@@ -447,20 +447,54 @@ export default function MigrationPlannerTab({ isAdmin: _isAdmin, onViewTenantGra
                 })}
               </div>
 
-              {/* Wave status */}
+              {/* Wave timeline */}
               {progress.waves.length > 0 && (
                 <div>
-                  <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#6b7280", marginBottom: 6 }}>Waves</div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {progress.waves.map((w: any) => {
-                      const wcolor = w.status === "completed" ? "#22c55e" : w.status === "executing" ? "#3b82f6" : w.status === "cancelled" ? "#9ca3af" : "#8b5cf6";
-                      return (
-                        <div key={w.wave_number} style={{ padding: "4px 12px", borderRadius: 6, background: wcolor + "20", color: wcolor, fontSize: "0.82rem", border: `1px solid ${wcolor}40` }}>
-                          Wave {w.wave_number}: {w.status} ({w.vm_count ?? 0} VMs)
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#6b7280", marginBottom: 8 }}>Wave Timeline</div>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
+                    <thead>
+                      <tr style={{ background: "var(--header-bg, #f1f5f9)", textAlign: "left" }}>
+                        <th style={{ padding: "4px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", fontWeight: 600, color: "#374151" }}>Wave</th>
+                        <th style={{ padding: "4px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", fontWeight: 600, color: "#374151" }}>Status</th>
+                        <th style={{ padding: "4px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", fontWeight: 600, color: "#374151" }}>VMs</th>
+                        <th style={{ padding: "4px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", fontWeight: 600, color: "#374151" }}>Started</th>
+                        <th style={{ padding: "4px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", fontWeight: 600, color: "#374151" }}>Completed</th>
+                        <th style={{ padding: "4px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", fontWeight: 600, color: "#374151" }}>Duration</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {progress.waves.map((w: any, idx: number) => {
+                        const wcolor = w.status === "completed" ? "#22c55e" : w.status === "executing" ? "#3b82f6" : w.status === "cancelled" ? "#9ca3af" : "#8b5cf6";
+                        const startedStr = w.started_at ? new Date(w.started_at).toLocaleString() : "—";
+                        const completedStr = w.completed_at ? new Date(w.completed_at).toLocaleString() : "—";
+                        let durationStr = "—";
+                        if (w.started_at && w.completed_at) {
+                          const diffMs = new Date(w.completed_at).getTime() - new Date(w.started_at).getTime();
+                          const diffH = Math.floor(diffMs / 3600000);
+                          const diffM = Math.floor((diffMs % 3600000) / 60000);
+                          durationStr = diffH > 0 ? `${diffH}h ${diffM}m` : `${diffM}m`;
+                        } else if (w.started_at && !w.completed_at) {
+                          durationStr = "In progress…";
+                        }
+                        return (
+                          <tr key={w.wave_number} style={{ background: idx % 2 === 0 ? "transparent" : "var(--row-alt, #f9fafb)" }}>
+                            <td style={{ padding: "5px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", fontWeight: 600 }}>
+                              Wave {w.wave_number}{w.name ? ` — ${w.name}` : ""}
+                            </td>
+                            <td style={{ padding: "5px 10px", borderBottom: "1px solid var(--border, #e5e7eb)" }}>
+                              <span style={{ padding: "2px 8px", borderRadius: 10, background: wcolor + "20", color: wcolor, fontWeight: 600, fontSize: "0.75rem" }}>
+                                {w.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: "5px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", color: "#6b7280" }}>{w.vm_count ?? 0}</td>
+                            <td style={{ padding: "5px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", color: "#374151", fontFamily: "monospace", fontSize: "0.75rem" }}>{startedStr}</td>
+                            <td style={{ padding: "5px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", color: "#374151", fontFamily: "monospace", fontSize: "0.75rem" }}>{completedStr}</td>
+                            <td style={{ padding: "5px 10px", borderBottom: "1px solid var(--border, #e5e7eb)", color: w.status === "executing" ? "#3b82f6" : "#6b7280", fontStyle: w.status === "executing" ? "italic" : "normal" }}>{durationStr}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>

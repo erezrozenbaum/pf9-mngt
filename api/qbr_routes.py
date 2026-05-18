@@ -237,6 +237,46 @@ def _build_qbr_data(
             """, (tenant_id,))
             sla_row = cur.fetchone()
 
+        # Migration activity in the date window (MSP-wide summary)
+        migration_summary: dict = {
+            "waves_completed": 0,
+            "plans_completed": 0,
+            "vms_migrated": 0,
+        }
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Check table existence for environments without migration planner
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'migration_waves'
+                )
+            """)
+            if cur.fetchone()[0]:
+                cur.execute("""
+                    SELECT
+                        COUNT(*) AS waves_completed,
+                        COALESCE(SUM(vm_count), 0) AS vms_migrated
+                    FROM migration_waves
+                    WHERE status = 'completed'
+                      AND completed_at >= %s
+                      AND completed_at <= %s
+                """, (from_date, to_date))
+                mw_row = cur.fetchone()
+                if mw_row:
+                    migration_summary["waves_completed"] = int(mw_row["waves_completed"] or 0)
+                    migration_summary["vms_migrated"] = int(mw_row["vms_migrated"] or 0)
+
+                cur.execute("""
+                    SELECT COUNT(*) AS plans_completed
+                    FROM migration_projects
+                    WHERE status = 'completed'
+                      AND updated_at >= %s
+                      AND updated_at <= %s
+                """, (from_date, to_date))
+                mp_row = cur.fetchone()
+                if mp_row:
+                    migration_summary["plans_completed"] = int(mp_row["plans_completed"] or 0)
+
     # Aggregate: group resolved insights by base type and compute ROI
     groups: dict = {}
     total_hours_saved = 0.0
@@ -294,4 +334,5 @@ def _build_qbr_data(
             for r in open_items
         ],
         "sla_commitment": dict(sla_row) if sla_row else None,
+        "migration_summary": migration_summary,
     }

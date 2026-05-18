@@ -476,6 +476,75 @@ def collect_health_drops(conn, since: datetime) -> List[Dict]:
             })
     return events
 
+
+def collect_wave_completion_events(conn, since: datetime) -> List[Dict]:
+    """Collect wave_completed events received since the last poll cycle."""
+    events = []
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        # Check if migration_webhook_events exists (feature may not be deployed yet)
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'migration_webhook_events'
+            )
+        """)
+        if not cur.fetchone()[0]:
+            return events
+
+        cur.execute("""
+            SELECT mwe.id, mwe.project_id, mwe.received_at,
+                   mwe.wave_id, mwe.payload,
+                   mp.name AS project_name
+            FROM migration_webhook_events mwe
+            LEFT JOIN migration_projects mp USING (project_id)
+            WHERE mwe.event_type = 'wave_completed'
+              AND mwe.received_at >= %s
+            ORDER BY mwe.received_at
+            LIMIT 100
+        """, (since,))
+        rows = cur.fetchall()
+
+        # Check if all waves are done for each project (plan_completed events)
+        for row in rows:
+            pid = row["project_id"]
+            wave_id = row["wave_id"]
+            proj_name = row.get("project_name") or pid
+            ts = row["received_at"]
+            event_id = f"wave_completed_{pid}_{wave_id}_{ts.strftime('%Y%m%d%H%M%S')}"
+            events.append({
+                "event_type": "wave_completed",
+                "event_id": event_id,
+                "resource_id": pid,
+                "resource_name": proj_name,
+                "severity": "info",
+                "wave_number": wave_id,
+                "summary": f"Wave {wave_id} completed for project '{proj_name}'",
+            })
+
+        # Also check if any projects just had ALL waves complete (plan_completed)
+        cur.execute("""
+            SELECT mp.project_id, mp.name
+            FROM migration_projects mp
+            WHERE mp.status = 'completed'
+              AND mp.updated_at >= %s
+            ORDER BY mp.updated_at
+            LIMIT 50
+        """, (since,))
+        for row in cur.fetchall():
+            pid = row["project_id"]
+            proj_name = row.get("name") or pid
+            event_id = f"migration_plan_completed_{pid}_{since.strftime('%Y%m%d')}"
+            events.append({
+                "event_type": "migration_plan_completed",
+                "event_id": event_id,
+                "resource_id": pid,
+                "resource_name": proj_name,
+                "severity": "info",
+                "summary": f"Migration plan '{proj_name}' completed — all waves finished",
+            })
+
+    return events
+
 # ---------------------------------------------------------------------------
 # Notification dispatcher
 # ---------------------------------------------------------------------------
@@ -520,6 +589,8 @@ def dispatch_event(conn, event: Dict):
         "snapshot_failure": "snapshot_failure.html",
         "compliance_violation": "compliance_alert.html",
         "health_score_drop": "health_alert.html",
+        "wave_completed": "migration_wave_completed.html",
+        "migration_plan_completed": "migration_wave_completed.html",
     }
     template_name = template_map.get(event_type, "generic_alert.html")
 
@@ -530,6 +601,8 @@ def dispatch_event(conn, event: Dict):
         "snapshot_failure": f"🔴 Snapshot Failure: {event.get('summary', '')}",
         "compliance_violation": f"⚠️ Compliance: {event.get('summary', '')}",
         "health_score_drop": f"🏥 Health Alert: {event.get('summary', '')}",
+        "wave_completed": f"✅ Migration Wave Completed: {event.get('summary', '')}",
+        "migration_plan_completed": f"🎉 Migration Plan Completed: {event.get('summary', '')}",
     }
     subject = subject_map.get(event_type, f"PF9 Alert: {event.get('summary', '')}")
 
@@ -1071,6 +1144,7 @@ def poll_cycle(conn):
         collect_snapshot_failures,
         collect_compliance_violations,
         collect_health_drops,
+        collect_wave_completion_events,
     ]
 
     total_events = 0
