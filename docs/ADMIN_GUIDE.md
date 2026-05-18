@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.3.2  
+**Version**: 2.3.3  
 **Last Updated**: May 18, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.3.3 — External Integration SSRF Guard
+
+- **SSRF protection on external integrations** — `POST /api/integrations` and `PUT /api/integrations/{name}` now validate `base_url` at input time. URLs whose hostname resolves to a private (RFC-1918), loopback (127.x), link-local (169.254.x), or reserved IP address are rejected with HTTP 422. Raw-IP SSRF attempts are blocked at the Pydantic model layer; hostnames are permitted (DNS is not resolved at validation time, so on-premises webhook targets continue to work). This matches the guard already present in PSA webhook, billing webhook, and LDAP sync routes.
 
 ### v2.3.2 — Wave Timeline Timestamps, Completion Notifications, SLA Migration Counts
 

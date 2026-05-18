@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.3] - 2026-05-18
+
+### Security
+- **SSRF guard on external integrations**: `POST /api/integrations` and `PUT /api/integrations/{name}` now validate `base_url` on input and reject URLs that target private (RFC-1918), loopback (127.x), link-local (169.254.x), or reserved IP addresses. Raw-IP SSRF attempts are blocked at the Pydantic model layer; hostnames are allowed (DNS is not resolved at validation time). This matches the guard already present in PSA, billing, and LDAP sync routes.
+
+---
+
 ## [2.3.2] - 2026-05-26
 
 ### Added

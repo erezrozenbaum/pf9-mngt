@@ -2,7 +2,7 @@
 
 ## 🛡️ Security Status Overview
 
-**Last Updated**: April 2026
+**Last Updated**: May 2026
 **Security Level**: � **HIGH** — Active hardening in place; production-ready with TLS, RBAC, injection mitigations, session revocation, and Docker secrets support.
 
 ### ✅ **Implemented Security Features**
@@ -35,7 +35,8 @@
 26. **httpOnly Cookie Session Tokens**: `POST /auth/login` and `POST /auth/mfa/verify` now set an `access_token` httpOnly cookie (`SameSite=Lax`; `Secure` when behind TLS termination). The cookie is inaccessible to JavaScript, eliminating XSS token theft from `localStorage`. All API calls include `credentials: 'include'` so the browser sends the cookie automatically. Backend accepts cookie first, then Bearer header fallback — existing CI tests and external API consumers are unaffected (v1.83.32). Complete migration in v1.83.33: `localStorage.setItem('auth_token', ...)` removed entirely from `App.tsx`; JWT is never written to JS-readable storage.
 27. **Fernet Key Rotation CLI**: `rotate_fernet_key.py` — a standalone CLI that re-encrypts all Fernet-protected DB columns in a single atomic transaction when a secret key must be rotated. Supports `--dry-run`, `--list-targets`, and writes an audit log entry on commit. Use with `--secret-name` to target a specific key family (v1.98.0).
 28. **Billing Webhook SSRF Guard**: All webhook URLs registered via `POST /api/billing/webhook` are resolved to their IP addresses and validated against an RFC-1918 / loopback / link-local / RFC-6598 blocklist before storage. Any URL resolving to a private or reserved range is rejected with HTTP 422 — preventing server-side request forgery to internal services (v1.98.0).
-29. **Append-Only Audit Log Enforcement**: `auth_audit_log` and `tenant_action_log` are protected by PostgreSQL `BEFORE DELETE` and `BEFORE UPDATE` triggers (`fn_audit_log_append_only`) that raise an exception for any mutation attempt. This enforcement is at the database layer and applies to all roles including superusers (v1.98.0).
+29. **Append-Only Audit Log Enforcement**: `auth_audit_log` and `tenant_action_log` are protected by PostgreSQL `BEFORE DELETE` and `BEFORE UPDATE` triggers (`fn_audit_log_append_only`) that raise an exception for any mutation attempt. This enforcement is at the database layer and applies to all roles including superusers (v1.98.0)
+30. **External Integration SSRF Guard**: `POST /api/integrations` and `PUT /api/integrations/{name}` validate `base_url` at the Pydantic model layer and reject any URL whose hostname is a raw IP address in a private (RFC-1918), loopback, link-local, or reserved range. Prevents an admin account from being used to probe internal services via the integration test endpoint (v2.3.3).
 
 ---
 

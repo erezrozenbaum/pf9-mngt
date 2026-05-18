@@ -17,6 +17,9 @@ Security notes:
   derived from JWT_SECRET) are transparently re-encrypted on the next PUT/write.
 - Credentials are NEVER returned in plaintext; only a masked suffix is shown.
 - SSL verification is on by default and can only be disabled explicitly.
+- SSRF protection: base_url is validated on CREATE and UPDATE to reject private/loopback/
+  link-local IP targets (RFC-1918, 127.x, 169.254.x, fc00::/7).  Hostnames are passed
+  through since DNS is not resolved at validation time.
 """
 
 import os
@@ -29,7 +32,7 @@ from typing import Optional
 
 import requests as _requests
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from psycopg2.extras import RealDictCursor
 
 from db_pool import get_connection
@@ -132,11 +135,35 @@ _VALID_TYPES = {"billing_gate", "crm", "webhook"}
 _VALID_AUTH  = {"bearer", "basic", "api_key"}
 
 
+def _validate_base_url(v: str) -> str:
+    """SSRF guard: block private/loopback/link-local IP targets in base_url."""
+    import ipaddress
+    from urllib.parse import urlparse
+    if not (v.startswith("https://") or v.startswith("http://")):
+        raise ValueError("base_url must start with http:// or https://")
+    _host = urlparse(v).hostname or ""
+    try:
+        _ip = ipaddress.ip_address(_host)
+        if _ip.is_private or _ip.is_loopback or _ip.is_link_local or _ip.is_reserved:
+            raise ValueError(
+                "base_url cannot target private, loopback, or link-local IP addresses"
+            )
+    except ValueError as _exc:
+        if "base_url" in str(_exc):
+            raise
+    return v
+
+
 class IntegrationCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=64, pattern=r'^[a-z0-9_-]+$')
     display_name: str = Field(..., min_length=1, max_length=128)
     integration_type: str = Field(default="webhook")
     base_url: str = Field(..., min_length=1, max_length=2048)
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, v: str) -> str:
+        return _validate_base_url(v)
     auth_type: str = Field(default="bearer")
     auth_credential: Optional[str] = None
     auth_header_name: str = Field(default="Authorization", max_length=128)
@@ -163,6 +190,13 @@ class IntegrationUpdate(BaseModel):
     enabled: Optional[bool] = None
     timeout_seconds: Optional[int] = Field(default=None, ge=1, le=120)
     verify_ssl: Optional[bool] = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        return _validate_base_url(v)
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +356,7 @@ async def update_integration(
             set_clause = ", ".join(f"{k} = %s" for k in updates)
             values = list(updates.values()) + [name]
             cur.execute(
-                f"UPDATE external_integrations SET {set_clause} WHERE name = %s RETURNING *",
+                f"UPDATE external_integrations SET {set_clause} WHERE name = %s RETURNING *",  # nosec B608 — set_clause built from hardcoded column names only
                 values,
             )
             row = cur.fetchone()
@@ -370,7 +404,7 @@ async def test_integration(
     test_status = "error"
     test_detail = ""
     try:
-        resp = _requests.post(
+        resp = _requests.post(  # nosec B113 — timeout= is present on the following line
             row["base_url"],
             json=test_payload,
             headers=headers,

@@ -36,7 +36,7 @@
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-2.3.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-2.3.3-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -284,6 +284,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v2.3.3** — SSRF guard added to external integrations `base_url` validation: private/loopback/link-local raw-IP targets are now rejected at the Pydantic model layer on create and update (May 2026)
 - **v2.3.2** — Migration wave execution timeline (started/completed timestamps, duration column), wave completion email/webhook notifications, automatic resolution of migration-in-progress operational insights, migrations completed column in SLA compliance history, Migration Activity section in QBR PDFs (May 2026)
 - **v2.3.0** — Configurable health score weights (UI settings panel), per-tenant health score disable toggle, health score breakdown card + trend sparkline; snapshot chain tracking with parent linkage, pre-delete guard trigger, chain policy editor, and Snapshot Chain Explorer UI; per-worker PostgreSQL roles (least-privilege GRANTs); region circuit breaker for OpenStack API calls; Alembic migration framework (May 2026)
 - **v2.2.0** — Copilot agentic execution: "Run it" button lets operators trigger runbooks directly from the Copilot chat, with per-user hourly quota, platform-wide disable toggle, dry-run mode, risk-level badges, and full audit trail (May 2026)

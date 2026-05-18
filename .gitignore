@@ -105,6 +105,7 @@ bandit_results.json
 bandit_out.json
 bandit_new.json
 bandit_targeted.json
+bandit_report*.json
 parse_bandit.py
 
 
