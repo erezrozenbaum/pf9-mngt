@@ -2501,6 +2501,53 @@ Response:
 
 ---
 
+## Right-Sizing Endpoints
+
+All right-sizing endpoints require `rightsizing:read` permission (admin/superadmin). Status updates require `rightsizing:write`.
+
+### Right-Sizing Summary
+**GET** `/api/rightsizing/summary`  
+*Requires: `rightsizing:read`*
+
+Returns aggregated counts and total estimated savings.
+
+**Query params**: `region` (optional)
+
+**Response**:
+```json
+{
+  "total_open": 12,
+  "idle_count": 4,
+  "over_provisioned_count": 8,
+  "total_savings_usd": 340.50,
+  "currency": "USD"
+}
+```
+
+### Right-Sizing Recommendations
+**GET** `/api/rightsizing/recommendations`  
+*Requires: `rightsizing:read`*
+
+Returns a filterable list of recommendations.
+
+**Query params**: `region`, `classification` (idle|over_provisioned|right_sized|under_provisioned), `status` (open|snoozed|dismissed|actioned; default open+snoozed), `project`, `limit` (max 1000), `offset`
+
+### Update Recommendation Status
+**PATCH** `/api/rightsizing/recommendations/{id}`  
+*Requires: `rightsizing:write`*
+
+**Body**:
+```json
+{
+  "status": "snoozed",
+  "snooze_until": "2026-06-01T00:00:00Z"
+}
+```
+
+`status` must be one of `snoozed`, `dismissed`, or `actioned`.
+
+---
+
 ## Metering Endpoints
 
 All metering endpoints require `metering:read` permission (admin/superadmin). Config update requires `metering:write` (superadmin only).

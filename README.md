@@ -77,7 +77,7 @@ Everything in pf9-mngt is built around four operational concerns:
 | 🔍 **Visibility** | Cross-tenant, multi-region inventory with drift detection, dependency graph, and historical tracking — metadata owned by you, not the platform |
 | 🔄 **Recovery** | Snapshot automation and full VM restore orchestration — two modes, dry-run validation, SLA compliance, not natively addressed in OpenStack |
 | ⚙️ **Operations** | Ticketing, 25 built-in runbooks, metering, chargeback, standardized governance workflows, and tenant self-service portal |
-| 🧠 **Intelligence** | AI Ops Copilot (plain-language queries against live infrastructure), Operational Intelligence Feed (capacity, waste, risk and anomaly engines), SLA compliance tracking, QBR PDF generator, Account Manager Portfolio and Executive Health dashboards, revenue leakage detection |
+| 🧠 **Intelligence** | AI Ops Copilot (plain-language queries against live infrastructure), Operational Intelligence Feed (capacity, waste, risk and anomaly engines), **Workload Right-Sizing** (idle + over-provisioned VM detection with flavor recommendations and savings estimates), SLA compliance tracking, QBR PDF generator, Account Manager Portfolio and Executive Health dashboards, revenue leakage detection |
 
 > Everything else in the system — LDAP, multi-region, Kubernetes, export reports — supports one of these four pillars.
 
@@ -93,6 +93,7 @@ Everything in pf9-mngt is built around four operational concerns:
 | Migration planning in spreadsheets — guesswork | End-to-end planner: RVTools → risk scoring → wave planning → PCD provisioning |
 | Separate ticketing tool + separate runbook wiki + separate billing exports | Built-in: tickets, 25 runbooks, metering, chargeback — one system |
 | Tenants call you for every status check — your team is the bottleneck | Tenant self-service portal: customers view their own VMs, snapshots, restores — scoped, isolated, MFA-protected |
+| Idle and over-provisioned VMs burning budget silently | Workload Right-Sizing: automated idle/over-provisioned VM detection, flavor recommendations, monthly savings estimates — surfaced for both admins and tenants |
 
 **Unified operational platform.**
 
@@ -107,6 +108,7 @@ Most platforms solve provisioning. pf9-mngt solves **what happens after deployme
 - **Account Manager Portfolio dashboard** — per-tenant SLA status, vCPU usage, leakage alerts
 - **Executive Health dashboard** — fleet SLA gauge, MTTR, revenue leakage detection
 - **Revenue leakage detection** — identify underutilized resources and optimization opportunities
+- **Workload Right-Sizing** (v2.6.0) — automatically classify idle and over-provisioned VMs, recommend smaller flavors, and quantify estimated monthly savings; surfaces in both admin UI and tenant self-service portal with Snooze/Dismiss lifecycle management
 
 Built from real-world operational scenarios observed during Platform9 evaluation.
 
@@ -284,6 +286,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v2.6.0** — Workload Right-Sizing & Cost Waste Detection: automated classification of idle and over-provisioned VMs, flavor recommendations, monthly savings estimates, and Snooze/Dismiss lifecycle; surfaced in both the admin UI (new Right-Sizing tab) and tenant portal (new Cost Optimisation screen) (May 2026)
 - **v2.5.0** — Circuit breaker state surfaced in region sync-status endpoint (`circuit_breaker.state`, `failure_count`, `open_for_seconds_remaining`); live observability for outbound Platform9 API connection health (May 2026)
 - **v2.4.0** — Notification dead-letter queue: failed email sends are now retried with exponential back-off (5 → 15 → 60 min) instead of being silently dropped; notifications exhausting all retries are marked `dead_lettered`. New `GET /notifications/admin/retry-queue` endpoint provides queue visibility (May 2026)
 - **v2.3.4** — Bug fix: runbook billing-gate credentials were silently failing to decrypt (wrong Fernet key); fixed to use `integration_key` secret via `crypto_helper`. QBR download auth updated from stale localStorage header to httpOnly cookie (May 2026)

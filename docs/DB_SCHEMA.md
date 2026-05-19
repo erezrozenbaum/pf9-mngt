@@ -1506,6 +1506,57 @@ CREATE INDEX IF NOT EXISTS idx_notification_retry_username
 
 ---
 
+## Right-Sizing Recommendations (v2.6.0)
+
+### rightsizing_recommendations
+
+Stores engine-computed right-sizing recommendations. One active recommendation per VM enforced via a unique partial index on `(vm_id) WHERE status IN ('open','snoozed')`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGSERIAL PK | |
+| `vm_id` | TEXT NOT NULL | OpenStack server UUID |
+| `vm_name` | TEXT | |
+| `project_id` | TEXT | |
+| `project_name` | TEXT | |
+| `region_id` | TEXT | |
+| `domain` | TEXT | |
+| `classification` | TEXT NOT NULL | `idle` \| `over_provisioned` \| `right_sized` \| `under_provisioned` |
+| `current_flavor` | TEXT | Flavor name at analysis time |
+| `current_vcpus` | INTEGER | |
+| `current_ram_mb` | INTEGER | |
+| `recommended_flavor` | TEXT | NULL if already right-sized or custom |
+| `recommended_vcpus` | INTEGER | |
+| `recommended_ram_mb` | INTEGER | |
+| `cpu_p95_7d` | NUMERIC(6,2) | CPU utilisation 95th percentile over last 7 days |
+| `ram_p95_7d` | NUMERIC(6,2) | RAM utilisation 95th percentile over last 7 days |
+| `cpu_avg_7d` | NUMERIC(6,2) | CPU average over last 7 days |
+| `ram_avg_7d` | NUMERIC(6,2) | RAM average over last 7 days |
+| `cpu_p95_30d` | NUMERIC(6,2) | CPU 95th percentile over 30-day window |
+| `ram_p95_30d` | NUMERIC(6,2) | RAM 95th percentile over 30-day window |
+| `analysis_period_days` | INTEGER | Default 7 |
+| `estimated_monthly_savings_usd` | NUMERIC(10,2) | Estimated monthly saving from right-sizing |
+| `currency` | TEXT | Default `USD` |
+| `status` | TEXT | `open` \| `snoozed` \| `dismissed` \| `actioned` |
+| `snooze_until` | TIMESTAMPTZ | NULL unless snoozed |
+| `actioned_at` | TIMESTAMPTZ | |
+| `actioned_by` | TEXT | Username who actioned |
+| `computed_at` | TIMESTAMPTZ | When the recommendation was generated |
+| `updated_at` | TIMESTAMPTZ | Last status change |
+
+**Constraints**: `rsr_valid_classification` CHECK, `rsr_valid_status` CHECK.
+
+**Indexes**:
+- `idx_rsr_vm_active` — UNIQUE on `(vm_id) WHERE status IN ('open','snoozed')` — one active recommendation per VM
+- `idx_rsr_project` — `(project_id, computed_at DESC)`
+- `idx_rsr_region` — `(region_id, computed_at DESC)`
+- `idx_rsr_classification` — `(classification, status)`
+- `idx_rsr_computed_at` — `(computed_at DESC)`
+
+**Access**: `pf9_api` has SELECT, INSERT, UPDATE. `tenant_portal_role` has SELECT (project-scoped via application-level JOIN with `servers`).
+
+---
+
 ## Snapshot Chain Tracking (v2.3.0)
 
 ### snapshot_records — new columns

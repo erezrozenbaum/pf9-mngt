@@ -27,6 +27,7 @@ from metrics_routes import router as metrics_router
 from restore_routes import router as restore_router
 from notification_routes import router as notification_router
 from timeline_routes import router as timeline_router
+from rightsizing_routes import router as rightsizing_router
 from db_pool import init_pool
 from rate_limiter import limiter
 from redis_client import get_redis
@@ -165,3 +166,4 @@ app.include_router(metrics_router)
 app.include_router(notification_router)
 app.include_router(restore_router)
 app.include_router(timeline_router)
+app.include_router(rightsizing_router)

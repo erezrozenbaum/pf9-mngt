@@ -834,6 +834,16 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v2.6.0 — Workload Right-Sizing & Cost Waste Detection
+
+- **Automated VM classification** — The intelligence worker analyses `metering_resources` data over a 30-day window and classifies each VM as `idle` (CPU avg ≤5%, RAM avg ≤10%), `over_provisioned` (CPU p95 ≤30%, RAM p95 ≤40%), `under_provisioned` (CPU p95 ≥85% or RAM p95 ≥85%), or `right_sized`.
+- **Flavor recommendations & savings estimates** — For idle and over-provisioned VMs the engine identifies the smallest viable OpenStack flavor and estimates monthly USD savings using the configured cost model (from `metering_config`) or per-flavor pricing from `metering_pricing`.
+- **Admin Right-Sizing tab** — A new "💡 Right-Sizing" tab in the admin navigation shows summary cards (open count, idle VMs, over-provisioned, total estimated savings), a filterable/sortable table with classification badges, current vs. recommended flavor columns, CPU/RAM p95 figures, and Snooze/Dismiss actions.
+- **Tenant Cost Optimisation screen** — Tenants see their own project's recommendations in a card layout with utilisation metrics, flavor change arrows, savings figures, and Snooze/Dismiss buttons.
+- **Recommendation lifecycle** — `open → snoozed → dismissed → actioned`. The engine automatically resolves stale recommendations when a VM is right-sized or deleted.
+- **RBAC** — `rightsizing:read` (view; admin + superadmin), `rightsizing:write` (snooze/dismiss/action; admin + superadmin).
+- **API endpoints**: `GET /api/rightsizing/summary`, `GET /api/rightsizing/recommendations`, `PATCH /api/rightsizing/recommendations/{id}`. Tenant equivalents under `/tenant/rightsizing/`.
+
 ### v2.5.0 — Circuit Breaker Observability
 
 - **Circuit breaker state in region sync-status** — `GET /admin/control-planes/{cp_id}/regions/{region_id}/sync-status` now returns a `circuit_breaker` object with three fields: `state` (`closed` / `open` / `half_open`), `failure_count` (consecutive failures since last success), and `open_for_seconds_remaining` (seconds until the next probe; `null` when closed). Backed by the existing Redis-backed `RegionCircuitBreaker`; falls back to an in-process counter when Redis is unavailable.

@@ -1318,3 +1318,58 @@ export async function apiProvisionVm(body: ProvisionVmRequest): Promise<{ create
   });
 }
 
+// ---------------------------------------------------------------------------
+// Right-Sizing & Cost Optimisation  (v2.6.0)
+// ---------------------------------------------------------------------------
+
+export interface RightsizingSummary {
+  total_open: number;
+  idle_count: number;
+  over_provisioned_count: number;
+  total_estimated_savings_usd: number;
+  currency: string;
+}
+
+export interface RightsizingRecommendation {
+  id: number;
+  vm_id: string;
+  vm_name: string | null;
+  project_name: string | null;
+  region_id: string | null;
+  classification: string;
+  current_flavor: string | null;
+  current_vcpus: number | null;
+  current_ram_mb: number | null;
+  recommended_flavor: string | null;
+  recommended_vcpus: number | null;
+  recommended_ram_mb: number | null;
+  cpu_p95_7d: number | null;
+  ram_p95_7d: number | null;
+  estimated_monthly_savings_usd: number | null;
+  currency: string;
+  status: string;
+  computed_at: string;
+}
+
+export async function apiRightsizingSummary(): Promise<RightsizingSummary> {
+  return tenantFetch<RightsizingSummary>("/tenant/rightsizing/summary");
+}
+
+export async function apiRightsizingRecommendations(
+  status?: string,
+): Promise<RightsizingRecommendation[]> {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  return tenantFetch<RightsizingRecommendation[]>(`/tenant/rightsizing/recommendations${q}`);
+}
+
+export async function apiRightsizingUpdate(
+  id: number,
+  newStatus: "snoozed" | "dismissed",
+): Promise<void> {
+  await tenantFetch(`/tenant/rightsizing/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: newStatus }),
+  });
+}
+

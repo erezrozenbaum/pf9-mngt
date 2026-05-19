@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.0] - 2026-05-19
+
+### Added
+- **Workload Right-Sizing & Cost Waste Detection**: Automated detection of idle and over-provisioned VMs with actionable right-sizing recommendations.
+  - **Intelligence Engine** (`intelligence_worker/engines/rightsizing.py`): Analyses `metering_resources` data over a 30-day window. Classifies each VM as `idle` (CPU avg ≤5%, RAM avg ≤10%), `over_provisioned` (CPU p95 ≤30%, RAM p95 ≤40%), `under_provisioned` (CPU p95 ≥85% or RAM p95 ≥85%), or `right_sized`. For idle and over-provisioned VMs it recommends a smaller OpenStack flavor and estimates monthly USD savings using the configured cost model or per-flavor pricing from `metering_pricing`.
+  - **Database** (`db/migrate_v2_6_0_rightsizing.sql`): New `rightsizing_recommendations` table with full lifecycle tracking (`open → snoozed → dismissed → actioned`). Unique partial index ensures one active recommendation per VM. RBAC permissions: admin → `rightsizing:read` + `rightsizing:write`, superadmin → same.
+  - **Admin API** (`/api/rightsizing/`): `GET /api/rightsizing/summary` (aggregated counts + total savings), `GET /api/rightsizing/recommendations` (filterable list by region, classification, status, project), `PATCH /api/rightsizing/recommendations/{id}` (snooze / dismiss / action). Requires `rightsizing:read` / `rightsizing:write` RBAC permission.
+  - **Tenant Portal API** (`/tenant/rightsizing/`): Same endpoints scoped to the tenant's own project IDs via a JOIN with the `servers` table. Tenants may only snooze or dismiss (not action).
+  - **Admin UI** (`pf9-ui`): New "💡 Right-Sizing" tab in the admin navigation. Shows summary cards (open count, idle VMs, over-provisioned, estimated savings), filterable table with classification badges, current vs. recommended flavor columns, utilisation percentages, and Snooze/Dismiss actions.
+  - **Tenant Portal UI** (`tenant-ui`): New "Cost Optimisation" screen. Card-based VM list with coloured classification borders, utilisation p95 values, flavor change arrows, savings estimates, and Snooze/Dismiss buttons. Toggle to show dismissed items.
+
+---
+
 ## [2.5.0] - 2026-05-18
 
 ### Added

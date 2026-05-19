@@ -1,6 +1,6 @@
-# Features Reference — Technical Deep Dive (v1.95)
+# Features Reference — Technical Deep Dive (v2.6)
 
-> **v1.95.23 NEW**: Provisioning virtual-network service-account scope fix (Neutron 400/403); `create_network()` unwrap fix; provisioning retry (stored `request_payload` + retry endpoint + UI)
+> **v2.6.0 NEW**: Workload Right-Sizing & Cost Waste Detection — idle/over-provisioned VM classification, flavor recommendations, estimated monthly savings, admin + tenant UI surfaces
 > **v1.95**: Advanced billing & metering system with enterprise tenant management
 > Complete technical reference for all pf9-mngt features.
 > For a high-level overview and quick start see [README.md](../README.md).

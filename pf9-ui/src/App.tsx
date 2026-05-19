@@ -36,6 +36,7 @@ import ClusterManagement from "./components/ClusterManagement";
 import TenantPortalTab from "./components/TenantPortalTab";
 import RunbooksTab from "./components/RunbooksTab";
 import InsightsTab from "./components/InsightsTab";
+import RightsizingTab from "./components/RightsizingTab";
 import OperationalTimelineTab from "./components/OperationalTimelineTab";
 import AccountManagerDashboard from "./components/AccountManagerDashboard";
 import ExecutiveDashboard from "./components/ExecutiveDashboard";
@@ -420,7 +421,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "operational_timeline" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal" | "account_manager_dashboard" | "executive_dashboard" | "snapshot-chains";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "operational_timeline" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal" | "account_manager_dashboard" | "executive_dashboard" | "snapshot-chains" | "rightsizing";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -472,6 +473,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "reports",              label: "📊 Reports",             adminOnly: true, actionStyle: true },
   { id: "resource_management",  label: "🔧 Resources",           adminOnly: true, actionStyle: true },
   { id: "runbooks",              label: "📋 Runbooks",            adminOnly: false, actionStyle: true },
+  { id: "rightsizing",           label: "💡 Right-Sizing",        adminOnly: true,  actionStyle: true },
   { id: "insights",              label: "🔍 Insights",            adminOnly: false, actionStyle: true },
   { id: "operational_timeline",  label: "⏱ Timeline",            adminOnly: false, actionStyle: false },
   { id: "docs",                  label: "📚 Docs",               adminOnly: false, actionStyle: false },
@@ -3241,6 +3243,7 @@ const App: React.FC = () => {
     "search",
     "resource_management",
     "runbooks",
+    "rightsizing",
     "insights",
     "docs",
     "system_metadata",
@@ -3514,6 +3517,8 @@ const App: React.FC = () => {
             ? "Ops Assistant · full-text search · similarity · smart report suggestions"
             : activeTab === "runbooks"
             ? "Policy-as-code operational runbooks · select and trigger with dry-run"
+            : activeTab === "rightsizing"
+            ? "Workload right-sizing · idle VM detection · over-provisioned VMs · cost savings"
             : activeTab === "insights"
             ? "Operational Intelligence · insights feed · risk & capacity · SLA compliance"
             : activeTab === "docs"
@@ -6484,6 +6489,11 @@ const App: React.FC = () => {
           {/* Runbooks */}
           {activeTab === "runbooks" && (
             <RunbooksTab userRole={authUser?.role || ""} />
+          )}
+
+          {/* Right-Sizing & Cost Waste */}
+          {activeTab === "rightsizing" && (
+            <RightsizingTab regionFilter={selectedRegion || undefined} />
           )}
 
           {/* Insights Feed + SLA */}

@@ -16,6 +16,7 @@ import { BillingAwareChargeback } from "../screens/BillingAwareChargeback";
 import { Provision } from "../screens/Provision";
 import { TenantTimeline } from "../screens/TenantTimeline";
 import { Notifications } from "../screens/Notifications";
+import { CostOptimization } from "../screens/CostOptimization";
 
 interface Props {
   branding: Branding;
@@ -39,6 +40,7 @@ const NAV_ITEMS: Array<{ id: Screen; label: string; icon: string }> = [
   { id: "timeline",       label: "Event History",        icon: "⏱" },
   { id: "activity",       label: "Activity Log",         icon: "📋" },
   { id: "notifications",  label: "Notifications",         icon: "🔔" },
+  { id: "cost_optimization", label: "Cost Optimisation", icon: "💡" },
 ];
 
 const SCREEN_TITLES: Record<Screen, string> = {
@@ -55,6 +57,7 @@ const SCREEN_TITLES: Record<Screen, string> = {
   timeline:       "Event History",
   activity:       "Activity Log",
   notifications:  "Notification Settings",
+  cost_optimization: "Cost Optimisation",
 };
 
 export function Shell({ branding, me, screen, onNavigate, onLogout }: Props) {
@@ -88,6 +91,7 @@ export function Shell({ branding, me, screen, onNavigate, onLogout }: Props) {
       case "timeline":       return <TenantTimeline key={refreshTick} />;
       case "activity":       return <ActivityLog    key={refreshTick} />;
       case "notifications":  return <Notifications  key={refreshTick} />;
+      case "cost_optimization": return <CostOptimization key={refreshTick} />;
     }
   };
 

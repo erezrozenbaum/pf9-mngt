@@ -526,7 +526,11 @@ Every infrastructure resource follows a **dual-table pattern**:
 | `metering_efficiency` | Per-VM efficiency scores with classification (excellent/good/fair/poor/idle) |
 | `metering_quotas` | Per-tenant quota usage tracking |
 
-#### Navigation, Branding & Provisioning
+#### Right-Sizing (1 table — v2.6.0)
+
+| Table | Purpose |
+|---|---|
+| `rightsizing_recommendations` | One active recommendation per VM (`idle`\|`over_provisioned`\|`right_sized`\|`under_provisioned`); tracks current + recommended flavor, CPU/RAM p95 stats, estimated monthly savings, lifecycle status (`open`\|`snoozed`\|`dismissed`\|`actioned`) |
 
 | Table | Purpose |
 |---|---|
@@ -595,6 +599,12 @@ Every infrastructure resource follows a **dual-table pattern**:
 | Table | Purpose |
 |---|---|
 | `dashboard_health_snapshots` | One row per calendar day — `total_vms`, `running_vms`, `total_hosts`, `critical_count`. Written by `pf9_scheduler_worker` (UPSERT), read by `GET /dashboard/health-trend` for dashboard sparkline charts. |
+
+### Key Tables Added in v2.6.0
+
+| Table | Purpose |
+|---|---|
+| `rightsizing_recommendations` | Engine-computed right-sizing recommendations. Unique partial index on `(vm_id) WHERE status IN ('open','snoozed')` — one active record per VM. Indexes on project, region, classification, and `computed_at DESC`. `pf9_api` has SELECT/INSERT/UPDATE; `tenant_portal_role` has SELECT. |
 
 ---
 

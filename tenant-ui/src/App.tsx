@@ -18,7 +18,8 @@ export type Screen =
   | "provision"
   | "activity"
   | "timeline"
-  | "notifications";
+  | "notifications"
+  | "cost_optimization";
 
 export default function App() {
   const auth = useAuth();
