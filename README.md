@@ -286,6 +286,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v2.6.2** — Bug fix: tenant portal Cost Optimisation screen returned 500 (`inject_rls_vars` called with connection instead of cursor); Right-Sizing nav item now seeded into navigation DB on fresh deploy (May 2026)
 - **v2.6.1** — Bug fix: `RightsizingEngine` loader methods (`_load_cost_model`, `_load_flavors`, `_load_flavor_pricing`) now rollback the shared DB connection on exception, preventing a transaction abort cascade that caused `_compute_vm_stats` to silently return no data (May 2026)
 - **v2.6.0** — Workload Right-Sizing & Cost Waste Detection: automated classification of idle and over-provisioned VMs, flavor recommendations, monthly savings estimates, and Snooze/Dismiss lifecycle; surfaced in both the admin UI (new Right-Sizing tab) and tenant portal (new Cost Optimisation screen) (May 2026)
 - **v2.5.0** — Circuit breaker state surfaced in region sync-status endpoint (`circuit_breaker.state`, `failure_count`, `open_for_seconds_remaining`); live observability for outbound Platform9 API connection health (May 2026)

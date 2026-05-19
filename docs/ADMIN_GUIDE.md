@@ -834,6 +834,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v2.6.2 — Tenant Portal & Navigation Bug Fixes
+
+- **Tenant portal Cost Optimisation 500 fixed** — `GET /tenant/rightsizing/summary`, `GET /tenant/rightsizing/recommendations`, and `PATCH /tenant/rightsizing/{rec_id}` all called `inject_rls_vars(conn, ...)` passing the raw psycopg2 connection. Every other route in the tenant portal passes a cursor; psycopg2 connections have no `.execute()` method. All three handlers now open the cursor first and pass `cur` to `inject_rls_vars`.
+- **Right-Sizing tab visible in navigation** — The `rightsizing` nav item was absent from the `nav_items` DB table (seeded separately from other nav items). Added to `db/init.sql` under the Intelligence Views group. Migration `db/migrate_v2_6_1_nav_currency.sql` provided for live environments.
+
 ### v2.6.1 — RightsizingEngine Bug Fix
 
 - **Transaction abort cascade fixed** — `_load_cost_model()`, `_load_flavors()`, and `_load_flavor_pricing()` now call `rollback()` on the shared DB connection when they catch an exception. Previously, a silent DB error in any loader (e.g. `metering_pricing` table absent in a fresh environment) left the connection in an aborted state, causing `_compute_vm_stats()` to fail with `current transaction is aborted` and return no data. No schema or API changes.

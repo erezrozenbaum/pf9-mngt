@@ -82,8 +82,8 @@ async def get_tenant_rightsizing_summary(
         )
 
     with get_tenant_connection() as conn:
-        inject_rls_vars(conn, tenant_ctx)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, tenant_ctx)
             cur.execute("""
                 SELECT
                     COUNT(*) FILTER (WHERE r.status IN ('open','snoozed'))             AS total_open,
@@ -141,8 +141,8 @@ async def list_tenant_recommendations(
     params.extend([limit, offset])
 
     with get_tenant_connection() as conn:
-        inject_rls_vars(conn, tenant_ctx)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, tenant_ctx)
             cur.execute(f"""
                 SELECT r.*
                 FROM rightsizing_recommendations r
@@ -202,8 +202,8 @@ async def update_tenant_recommendation(
             raise HTTPException(status_code=400, detail="Invalid snooze_until datetime format")
 
     with get_tenant_connection() as conn:
-        inject_rls_vars(conn, tenant_ctx)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, tenant_ctx)
             # Verify ownership: recommendation must belong to this tenant's VMs
             cur.execute("""
                 SELECT r.id

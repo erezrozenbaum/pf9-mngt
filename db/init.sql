@@ -2951,11 +2951,13 @@ INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort
 ON CONFLICT (key) DO NOTHING;
 
 -- Intelligence Views group (Phase 6 — persona dashboards)
-INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order) VALUES
+INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order, is_action) VALUES
     ((SELECT id FROM nav_groups WHERE key='intelligence_views'),
-     'account_manager_dashboard', 'My Portfolio',    '📋', '/account_manager_dashboard', 'sla', 1),
+     'account_manager_dashboard', 'My Portfolio',    '📋', '/account_manager_dashboard', 'sla',         1, false),
     ((SELECT id FROM nav_groups WHERE key='intelligence_views'),
-     'executive_dashboard',       'Portfolio Health', '📊', '/executive_dashboard',       'sla', 2)
+     'executive_dashboard',       'Portfolio Health', '📊', '/executive_dashboard',       'sla',         2, false),
+    ((SELECT id FROM nav_groups WHERE key='intelligence_views'),
+     'rightsizing',               'Right-Sizing',     '💡', '/rightsizing',               'rightsizing', 20, true)
 ON CONFLICT (key) DO NOTHING;
 
 -- Mark action/config items (displayed with accent color in nav)

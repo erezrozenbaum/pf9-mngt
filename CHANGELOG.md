@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.2] - 2026-05-19
+
+### Fixed
+- **Tenant portal Cost Optimisation — 500 error**: `inject_rls_vars()` was called with the psycopg2 `connection` object instead of a `cursor` in all three tenant rightsizing endpoints (`GET /tenant/rightsizing/summary`, `GET /tenant/rightsizing/recommendations`, `PATCH /tenant/rightsizing/{rec_id}`). Psycopg2 connections do not have an `.execute()` method; every other route in the tenant portal passes a cursor — now fixed consistently.
+- **Right-Sizing missing from navigation**: The `rightsizing` nav item was not seeded into the `nav_items` table, so the admin "💡 Right-Sizing" tab never appeared in the grouped navigation. Added to `db/init.sql` (Intelligence Views group) and provided `db/migrate_v2_6_1_nav_currency.sql` for live environments.
+- **Cost Optimisation currency displayed as USD instead of configured currency**: The `metering_config.cost_currency` default is now respected; `db/migrate_v2_6_1_nav_currency.sql` does not change the currency (environment-specific setting — update `metering_config` via the Metering settings page).
+
+---
+
 ## [2.6.1] - 2026-05-19
 
 ### Fixed
