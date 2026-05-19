@@ -626,6 +626,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-}
     depends_on:
       - pgbouncer
       - pf9_monitoring

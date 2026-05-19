@@ -834,6 +834,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v2.6.3 — Metering Worker Auth Fix (Rightsizing data)
+
+- **Right-Sizing / Cost Optimisation showed zero data**: The metering worker API fallback (`/monitoring/vm-metrics`) required a user JWT that the worker didn't have, returning 401. It then fell through to a DB-direct path that explicitly sets `cpu_usage_percent = NULL`, leaving all recent `metering_resources` rows with no usage data. `RightsizingEngine._compute_vm_stats()` filters `WHERE cpu_usage_percent IS NOT NULL AND rows_7d >= 4` — zero rows qualified. The Insights (Waste) engine was unaffected because it reads `metering_efficiency`, populated from older rows with valid data.
+  - Fixed by switching the metering worker fallback to `GET /internal/monitoring/vm-metrics` with `X-Internal-Secret` header — the internal endpoint is authenticated by shared secret, returns Prometheus cache merged with DB flavor data (real CPU/RAM percentages).
+  - `INTERNAL_SERVICE_SECRET` env var added to the metering worker k8s Deployment and `docker-compose.yml`.
+
 ### v2.6.2 — Tenant Portal & Navigation Bug Fixes
 
 - **Tenant portal Cost Optimisation 500 fixed** — `GET /tenant/rightsizing/summary`, `GET /tenant/rightsizing/recommendations`, and `PATCH /tenant/rightsizing/{rec_id}` all called `inject_rls_vars(conn, ...)` passing the raw psycopg2 connection. Every other route in the tenant portal passes a cursor; psycopg2 connections have no `.execute()` method. All three handlers now open the cursor first and pass `cur` to `inject_rls_vars`.

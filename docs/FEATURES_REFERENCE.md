@@ -1,5 +1,6 @@
 # Features Reference — Technical Deep Dive (v2.6)
 
+> **v2.6.3 FIX**: Metering worker API fallback unauthenticated (401) → `cpu_usage_percent = NULL` in all recent `metering_resources` rows → RightsizingEngine found 0 qualifying VMs; fixed by using `/internal/monitoring/vm-metrics` with `X-Internal-Secret`
 > **v2.6.2 FIX**: Tenant portal Cost Optimisation 500 error (`inject_rls_vars` connection/cursor bug); Right-Sizing nav item seeded into DB navigation
 > **v2.6.1 FIX**: RightsizingEngine — rollback shared DB connection on loader exceptions to prevent transaction abort cascade
 > **v2.6.0 NEW**: Workload Right-Sizing & Cost Waste Detection — idle/over-provisioned VM classification, flavor recommendations, estimated monthly savings, admin + tenant UI surfaces

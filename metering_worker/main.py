@@ -88,6 +88,7 @@ DB_USER = os.getenv("DB_USER", "pf9")
 DB_PASS = _read_secret("db_password", env_var="DB_PASS") or os.getenv("POSTGRES_PASSWORD", "")
 MONITORING_URL = os.getenv("MONITORING_URL", "http://pf9_monitoring:8001")
 API_URL = os.getenv("API_URL", "http://pf9_api:8000")
+INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
 POLL_INTERVAL = int(os.getenv("METERING_POLL_INTERVAL", "60"))  # seconds
 
 # ---------------------------------------------------------------------------
@@ -297,10 +298,15 @@ def collect_resource_metrics(conn, region_id: str) -> int:
         log.warning("Could not fetch VM metrics from monitoring service: %s", exc)
 
     if not vms:
-        # Fallback: DB-backed API endpoint (/monitoring/vm-metrics) — always populated
-        # from the inventory tables regardless of prometheus exporter availability.
+        # Fallback: DB-backed internal API endpoint — returns Prometheus cache merged with
+        # DB inventory (flavor, project, domain).  Uses X-Internal-Secret so no user JWT needed.
         try:
-            fb_resp = requests.get(f"{API_URL}/monitoring/vm-metrics", timeout=30)
+            _headers = {"X-Internal-Secret": INTERNAL_SERVICE_SECRET} if INTERNAL_SERVICE_SECRET else {}
+            fb_resp = requests.get(
+                f"{API_URL}/internal/monitoring/vm-metrics",
+                headers=_headers,
+                timeout=30,
+            )
             fb_resp.raise_for_status()
             fb_data = fb_resp.json()
             vms = fb_data.get("data", [])

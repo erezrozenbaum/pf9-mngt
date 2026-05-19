@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.3] - 2026-05-19
+
+### Fixed
+- **Rightsizing & Cost Optimisation show no data despite idle VMs detected in Insights**: The metering worker's API fallback for VM metrics was calling `GET /monitoring/vm-metrics` without authentication, receiving 401, then falling through to a DB-direct path that intentionally sets `cpu_usage_percent = NULL`. All recent `metering_resources` rows were therefore NULL for CPU/RAM usage, so `RightsizingEngine._compute_vm_stats()` found no qualifying VMs (requires `rows_7d >= 4` with non-NULL metrics). Fixed by switching the fallback to the authenticated internal endpoint `GET /internal/monitoring/vm-metrics` using the `X-Internal-Secret` header. The metering worker k8s Deployment and `docker-compose.yml` now supply `INTERNAL_SERVICE_SECRET` so the header is populated.
+
+---
+
 ## [2.6.2] - 2026-05-19
 
 ### Fixed

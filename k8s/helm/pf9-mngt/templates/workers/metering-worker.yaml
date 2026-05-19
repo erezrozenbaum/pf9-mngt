@@ -63,6 +63,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.redisSecret }}
                   key: redis-password
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.internalServiceSecret }}
+                  key: secret
+                  optional: true
           livenessProbe:
             exec:
               command: ["python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 300 else 1)"]
