@@ -7,7 +7,7 @@
  *
  * v2.6.0
  */
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "../lib/api";
 
 // ---------------------------------------------------------------------------

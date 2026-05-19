@@ -6493,7 +6493,7 @@ const App: React.FC = () => {
 
           {/* Right-Sizing & Cost Waste */}
           {activeTab === "rightsizing" && (
-            <RightsizingTab regionFilter={selectedRegion || undefined} />
+            <RightsizingTab />
           )}
 
           {/* Insights Feed + SLA */}
