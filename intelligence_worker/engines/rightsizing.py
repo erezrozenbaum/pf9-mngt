@@ -72,6 +72,10 @@ class RightsizingEngine(BaseEngine):
                     }
         except Exception as exc:
             log.warning("cost_model load failed: %s", exc)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
         return {"vcpu_hour": 0.0, "gb_ram_hour": 0.0, "currency": "USD"}
 
     def _load_flavors(self) -> List[Dict[str, Any]]:
@@ -87,6 +91,10 @@ class RightsizingEngine(BaseEngine):
                 return [dict(r) for r in cur.fetchall()]
         except Exception as exc:
             log.warning("flavors load failed: %s", exc)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
         return []
 
     def _load_flavor_pricing(self) -> Dict[str, float]:
@@ -100,6 +108,10 @@ class RightsizingEngine(BaseEngine):
                         pricing[row["flavor_name"]] = float(row["price_per_hour"])
         except Exception:
             pass  # metering_pricing may not exist in older environments
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
         return pricing
 
     def _compute_vm_stats(self) -> List[Dict[str, Any]]:

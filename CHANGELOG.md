@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.1] - 2026-05-19
+
+### Fixed
+- **RightsizingEngine transaction abort cascade**: `_load_cost_model()`, `_load_flavors()`, and `_load_flavor_pricing()` exception handlers did not call `rollback()` on the shared psycopg2 connection. A DB error in any loader (e.g. `metering_pricing` table absent) left the connection in an aborted transaction state, causing all subsequent `_compute_vm_stats()` queries to fail with `current transaction is aborted`. Each `except` clause now calls `self.conn.rollback()` before returning the empty/default value, ensuring the connection is clean for subsequent queries.
+
+---
+
 ## [2.6.0] - 2026-05-19
 
 ### Added

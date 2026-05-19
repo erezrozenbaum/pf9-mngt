@@ -834,6 +834,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v2.6.1 — RightsizingEngine Bug Fix
+
+- **Transaction abort cascade fixed** — `_load_cost_model()`, `_load_flavors()`, and `_load_flavor_pricing()` now call `rollback()` on the shared DB connection when they catch an exception. Previously, a silent DB error in any loader (e.g. `metering_pricing` table absent in a fresh environment) left the connection in an aborted state, causing `_compute_vm_stats()` to fail with `current transaction is aborted` and return no data. No schema or API changes.
+
 ### v2.6.0 — Workload Right-Sizing & Cost Waste Detection
 
 - **Automated VM classification** — The intelligence worker analyses `metering_resources` data over a 30-day window and classifies each VM as `idle` (CPU avg ≤5%, RAM avg ≤10%), `over_provisioned` (CPU p95 ≤30%, RAM p95 ≤40%), `under_provisioned` (CPU p95 ≥85% or RAM p95 ≥85%), or `right_sized`.

@@ -1,5 +1,6 @@
 # Features Reference — Technical Deep Dive (v2.6)
 
+> **v2.6.1 FIX**: RightsizingEngine — rollback shared DB connection on loader exceptions to prevent transaction abort cascade
 > **v2.6.0 NEW**: Workload Right-Sizing & Cost Waste Detection — idle/over-provisioned VM classification, flavor recommendations, estimated monthly savings, admin + tenant UI surfaces
 > **v1.95**: Advanced billing & metering system with enterprise tenant management
 > Complete technical reference for all pf9-mngt features.
