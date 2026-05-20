@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.5] - 2026-05-20
+
+### Added
+- **Auto-create support ticket on tenant resize request** (`api/ticket_routes.py`, `api/main.py`, `tenant_portal/rightsizing_routes.py`): When a tenant clicks "Request Resize", the tenant portal now calls the new internal `/internal/tickets/auto` endpoint, which creates a `support_tickets` row routed to the configured department (default: `Tier3 Support`) and optionally sends a dept notification email using the `rightsizing_request` email template.
+- **`/internal/tickets/auto` endpoint** (`api/main.py`): New internal-only POST endpoint (authenticated via `X-Internal-Secret` header) that wraps `_auto_ticket()` for cross-service ticket creation. Accepts full ticket metadata including `customer_name`, `customer_email`, `dept_notify_template`, and `dept_notify_context`.
+- **`_auto_ticket()` dept email notification** (`api/ticket_routes.py`): Extended with `customer_name`, `customer_email`, `dept_notify_template`, and `dept_notify_context` parameters. After ticket creation, if the department has a `notification_email` and a valid template exists, a rendered HTML notification email is sent to the department address.
+- **`departments.notification_email` column** (`db/migrate_v2_6_5_rightsizing_tickets.sql`, `db/init.sql`): New optional column on the `departments` table; set via direct DB update or future admin UI. Controls where dept notification emails are sent.
+- **`rightsizing_request` email template** (`db/migrate_v2_6_5_rightsizing_tickets.sql`, `db/init.sql`): New `ticket_email_templates` row. Sent to the ops/support department when a tenant submits a resize request. Includes full VM context: current and recommended flavor, CPU/RAM p95 percentiles, estimated monthly savings, tenant contact, and a 5-step action checklist.
+- **`RIGHTSIZING_TICKET_DEPT` env var** (`tenant_portal/rightsizing_routes.py`): Configures which department receives rightsizing tickets (default `Tier3 Support`); override per deployment.
+
+### Changed
+- **`POST /tenant/rightsizing/{id}/request-change`**: No longer sends a standalone SMTP email to `tenant_portal_branding.support_email`. Instead calls `/internal/tickets/auto` to create a tracked, deduplication-aware support ticket. Returns `{"message": "...", "ticket_ref": "TKT-YYYY-NNNNN"}`.
+- **`_auto_ticket()` deduplication**: Unchanged — if a tenant clicks "Request Resize" twice on the same recommendation, the second call returns the existing open ticket (`auto_source='tenant_rightsizing_request'`, `auto_source_id=str(rec_id)`).
+
+### Security
+- **B608 false positive suppressed** in `api/ticket_routes.py` SLA breach updater (`# nosec B608`): The `update_parts` list is built exclusively from hardcoded column=value strings; no user input is ever interpolated.
+
+---
+
 ## [2.6.4] - 2026-05-20
 
 ### Added

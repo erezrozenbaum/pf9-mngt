@@ -407,6 +407,58 @@ In the Admin UI click **→ Manager** on the user row, or call the same `PUT /ap
 
 ---
 
+## Cost Optimisation — Right-Sizing (v2.6.0+)
+
+Tenants see a **Cost Optimisation** screen that surfaces right-sizing recommendations for their own VMs.
+
+### What tenants see
+- Classification badge: `Idle` (CPU avg ≤5%, RAM avg ≤10%) or `Over-provisioned` (CPU p95 ≤30%, RAM p95 ≤40%)
+- Current flavor → recommended flavor
+- CPU and RAM p95 utilisation percentages
+- Estimated monthly cost (current and recommended) in the configured currency
+- Estimated monthly savings
+
+### Available actions
+| Action | Who | Effect |
+|--------|-----|--------|
+| **Snooze** | manager, observer | Sets `status = snoozed`, hidden until `snooze_until` |
+| **Dismiss** | manager, observer | Sets `status = dismissed`, permanently hidden (toggleable) |
+| **Request Resize** *(v2.6.5)* | manager only | See below |
+
+### Request Resize flow (v2.6.5)
+
+When a tenant clicks **Request Resize**:
+
+1. `POST /tenant/rightsizing/{rec_id}/request-change` is called.
+2. The recommendation is marked `actioned` and an audit log entry is written.
+3. The tenant portal calls `POST /internal/tickets/auto` on the admin API to create a `support_tickets` row.
+4. The ticket is routed to the department configured by `RIGHTSIZING_TICKET_DEPT` (default: `Tier3 Support`).
+5. If that department has a `notification_email` set and SMTP is enabled, the `rightsizing_request` HTML email template is rendered and sent to the ops team.
+6. A success banner shows the ticket reference: *"Resize request submitted. Ticket TKT-2026-00042 created."*
+
+**Deduplication**: If a tenant clicks "Request Resize" twice on the same VM, the second call returns the existing open ticket — no duplicate ticket is created.
+
+**Configure ops team email**:
+```sql
+UPDATE departments SET notification_email = 'ops-team@example.com' WHERE name = 'Tier3 Support';
+```
+
+**Change which department receives rightsizing tickets** (env var on tenant portal deployment):
+```
+RIGHTSIZING_TICKET_DEPT=Tier2 Support
+```
+
+### API endpoints (tenant portal)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/tenant/rightsizing/summary` | Aggregated counts + total savings for the tenant's VMs |
+| GET | `/tenant/rightsizing/recommendations` | List of recommendations (filterable by status) |
+| PATCH | `/tenant/rightsizing/{id}` | Snooze or dismiss a recommendation |
+| POST | `/tenant/rightsizing/{id}/request-change` | Request a resize — creates support ticket |
+
+---
+
 ## Making Runbooks Visible to Tenants
 
 Runbooks are opt-in per tenant. To make a runbook visible to a specific tenant's projects:

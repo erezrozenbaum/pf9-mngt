@@ -8,12 +8,15 @@ Endpoints:
   GET /tenant/rightsizing/summary         — aggregated savings summary
   GET /tenant/rightsizing/recommendations — list of recommendations (own VMs)
   PATCH /tenant/rightsizing/{rec_id}      — dismiss or snooze a recommendation
+  POST /tenant/rightsizing/{rec_id}/request-change — request MSP to action resize
 """
 
 import logging
+import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
@@ -28,6 +31,12 @@ logger = logging.getLogger("tenant_portal.rightsizing")
 router = APIRouter(tags=["rightsizing"])
 
 _HOURS_PER_MONTH = 730.0
+
+# Internal API (same cluster) — used to create support tickets
+_INTERNAL_API_URL      = os.getenv("INTERNAL_API_URL", "http://pf9_api:8000")
+_INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+# Department to route rightsizing tickets to (configurable)
+_RIGHTSIZING_DEPT      = os.getenv("RIGHTSIZING_TICKET_DEPT", "Tier3 Support")
 
 
 def _load_flavor_prices(conn) -> Dict[str, float]:
@@ -283,8 +292,9 @@ async def request_rightsizing_change(
 ):
     """
     Tenant requests the MSP to action a rightsizing recommendation.
-    Sends an email to the configured support address and marks the
-    recommendation as actioned.
+    - Marks the recommendation as actioned in the DB.
+    - Opens a support ticket in the admin portal (via internal API).
+    - The assigned department receives an email notification with full details.
     """
     if not tenant_ctx.project_ids:
         raise HTTPException(status_code=403, detail="No project access")
@@ -299,6 +309,7 @@ async def request_rightsizing_change(
                        r.current_flavor, r.recommended_flavor,
                        r.current_vcpus, r.current_ram_mb,
                        r.recommended_vcpus, r.recommended_ram_mb,
+                       r.cpu_p95_7d, r.ram_p95_7d,
                        r.estimated_monthly_savings_usd, r.currency, r.status
                 FROM rightsizing_recommendations r
                 JOIN servers s ON s.id = r.vm_id
@@ -312,15 +323,6 @@ async def request_rightsizing_change(
                 )
             if rec["status"] == "actioned":
                 return {"message": "Recommendation already actioned"}
-
-            # Load support email from branding
-            cur.execute(
-                "SELECT support_email, company_name FROM tenant_portal_branding WHERE control_plane_id = %s LIMIT 1",
-                (tenant_ctx.control_plane_id,)
-            )
-            branding = cur.fetchone() or {}
-            support_email = branding.get("support_email")
-            company_name = branding.get("company_name") or "Cloud Portal"
 
             # Mark as actioned
             cur.execute("""
@@ -342,70 +344,102 @@ async def request_rightsizing_change(
         details={"recommendation_id": rec_id, "vm_name": rec.get("vm_name")},
     )
 
-    if not support_email:
-        # No support email configured — still succeed (request is logged)
-        return {"message": "Request logged. No support email configured."}
+    # ── Open a support ticket in the admin portal ─────────────────────────
+    ticket_ref: Optional[str] = None
+    vm_label    = rec["vm_name"] or rec["vm_id"]
+    cur_flavor  = rec["current_flavor"] or "—"
+    rec_flavor  = rec["recommended_flavor"] or "—"
+    savings     = rec["estimated_monthly_savings_usd"]
+    currency    = rec["currency"] or "USD"
+    savings_str = f"{currency} {float(savings):.0f}/mo" if savings else "unknown"
 
-    # Build email
-    vm_label = rec["vm_name"] or rec["vm_id"]
-    cur_flavor = rec["current_flavor"] or "—"
-    rec_flavor = rec["recommended_flavor"] or "—"
-    savings = rec["estimated_monthly_savings_usd"]
-    currency = rec["currency"] or "USD"
-    savings_str = (
-        f"{currency} {float(savings):.0f}/mo" if savings else "unknown"
+    priority = "high" if (savings and float(savings) >= 100) else "normal"
+
+    ticket_title = (
+        f"Right-Sizing Request: {vm_label} "
+        f"({cur_flavor} → {rec_flavor})"
+    )
+    ticket_description = (
+        f"Tenant {tenant_ctx.username!r} requested a right-sizing change via the portal.\n\n"
+        f"VM: {vm_label}\n"
+        f"Project: {rec.get('project_name') or '—'}\n"
+        f"Region: {rec.get('region_id') or 'default'}\n"
+        f"Current Flavor: {cur_flavor}"
+        + (f" ({rec['current_vcpus']} vCPU / {int(rec['current_ram_mb'] or 0)//1024} GB RAM)"
+           if rec.get("current_vcpus") else "") + "\n"
+        f"Recommended Flavor: {rec_flavor}"
+        + (f" ({rec['recommended_vcpus']} vCPU / {int(rec['recommended_ram_mb'] or 0)//1024} GB RAM)"
+           if rec.get("recommended_vcpus") else "") + "\n"
+        f"CPU p95 (7d): {rec.get('cpu_p95_7d') or '—'}%  |  "
+        f"RAM p95 (7d): {rec.get('ram_p95_7d') or '—'}%\n"
+        f"Estimated Monthly Saving: {savings_str}"
     )
 
-    subject = f"[{company_name}] Resize Request: {vm_label} ({rec.get('project_name') or 'unknown project'})"
-    body_html = f"""
-<p>A tenant has submitted a right-sizing change request via <strong>{company_name}</strong> Cloud Portal.</p>
-<table cellpadding="6" cellspacing="0" border="0" style="font-family:sans-serif;font-size:14px">
-  <tr><td style="color:#6b7280">VM</td><td><strong>{vm_label}</strong></td></tr>
-  <tr><td style="color:#6b7280">Project</td><td>{rec.get("project_name") or "—"}</td></tr>
-  <tr><td style="color:#6b7280">Region</td><td>{rec.get("region_id") or "default"}</td></tr>
-  <tr><td style="color:#6b7280">Current Flavor</td><td>{cur_flavor}
-    {f"({rec['current_vcpus']} vCPU / {int(rec['current_ram_mb'] or 0)//1024} GB RAM)" if rec.get("current_vcpus") else ""}</td></tr>
-  <tr><td style="color:#6b7280">Recommended Flavor</td><td style="color:#16a34a"><strong>{rec_flavor}</strong>
-    {f"({rec['recommended_vcpus']} vCPU / {int(rec['recommended_ram_mb'] or 0)//1024} GB RAM)" if rec.get("recommended_vcpus") else ""}</td></tr>
-  <tr><td style="color:#6b7280">Est. Monthly Saving</td><td style="color:#16a34a;font-weight:bold">{savings_str}</td></tr>
-</table>
-<p style="margin-top:1.2em">Please review and action this request at your earliest convenience.</p>
-"""
+    # Template context for the department notification email
+    dept_ctx: Dict = {
+        "ticket_ref":          "",  # filled in by _auto_ticket via _render_template
+        "vm_name":             vm_label,
+        "project_name":        rec.get("project_name") or "—",
+        "region":              rec.get("region_id") or "default",
+        "current_flavor":      cur_flavor,
+        "current_vcpus":       str(rec.get("current_vcpus") or "—"),
+        "current_ram_gb":      str(int(rec.get("current_ram_mb") or 0) // 1024) if rec.get("current_ram_mb") else "—",
+        "recommended_flavor":  rec_flavor,
+        "recommended_vcpus":   str(rec.get("recommended_vcpus") or "—"),
+        "recommended_ram_gb":  str(int(rec.get("recommended_ram_mb") or 0) // 1024) if rec.get("recommended_ram_mb") else "—",
+        "cpu_p95":             str(round(float(rec["cpu_p95_7d"]), 1)) if rec.get("cpu_p95_7d") else "—",
+        "ram_p95":             str(round(float(rec["ram_p95_7d"]), 1)) if rec.get("ram_p95_7d") else "—",
+        "savings":             savings_str,
+        "tenant_name":         tenant_ctx.username,
+        "tenant_email":        tenant_ctx.username,
+        "priority":            priority,
+        "app_version":         os.getenv("APP_VERSION", "2.6.5"),
+    }
 
-    try:
-        import sys
-        import importlib
-        _smtp = importlib.import_module("smtp_helper") if "smtp_helper" in sys.modules else None
-        if not _smtp:
-            try:
-                _smtp = importlib.import_module("smtp_helper")
-            except ImportError:
-                _smtp = None
-        if _smtp:
-            _smtp.send_email(support_email, subject, body_html)
-        else:
-            import os
-            import smtplib
-            from email.mime.text import MIMEText
-            from email.mime.multipart import MIMEMultipart
-            smtp_host = os.getenv("SMTP_HOST", "")
-            smtp_port = int(os.getenv("SMTP_PORT", "587"))
-            smtp_user = os.getenv("SMTP_USER", "")
-            smtp_pass = os.getenv("SMTP_PASSWORD", "")
-            smtp_from = os.getenv("SMTP_FROM", smtp_user)
-            if smtp_host:
-                msg = MIMEMultipart("alternative")
-                msg["Subject"] = subject
-                msg["From"] = smtp_from
-                msg["To"] = support_email
-                msg.attach(MIMEText(body_html, "html"))
-                with smtplib.SMTP(smtp_host, smtp_port) as server:
-                    server.starttls()
-                    if smtp_user and smtp_pass:
-                        server.login(smtp_user, smtp_pass)
-                    server.sendmail(smtp_from, [support_email], msg.as_string())
-    except Exception as exc:
-        logger.error("Failed to send resize request email to %s: %s", support_email, exc)
-        # Request is already actioned/logged — don't fail the whole response
+    if _INTERNAL_SERVICE_SECRET:
+        try:
+            payload = {
+                "title":         ticket_title,
+                "description":   ticket_description,
+                "ticket_type":   "auto_change_request",
+                "priority":      priority,
+                "to_dept_name":  _RIGHTSIZING_DEPT,
+                "auto_source":   "tenant_rightsizing_request",
+                "auto_source_id": str(rec_id),
+                "resource_type": "rightsizing_recommendation",
+                "resource_id":   str(rec_id),
+                "resource_name": vm_label,
+                "project_id":    tenant_ctx.project_ids[0] if tenant_ctx.project_ids else None,
+                "project_name":  rec.get("project_name"),
+                "customer_name": tenant_ctx.username,
+                "customer_email": tenant_ctx.username,
+                "dept_notify_template": "rightsizing_request",
+                "dept_notify_context": dept_ctx,
+            }
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(
+                    f"{_INTERNAL_API_URL}/internal/tickets/auto",
+                    json=payload,
+                    headers={"X-Internal-Secret": _INTERNAL_SERVICE_SECRET},
+                )
+                resp.raise_for_status()
+                ticket_ref = resp.json().get("ticket_ref")
+            logger.info(
+                "rightsizing_request: ticket %s created for rec %s by %s",
+                ticket_ref, rec_id, tenant_ctx.username,
+            )
+        except Exception as exc:
+            # Ticket creation is best-effort — the recommendation is already actioned
+            logger.error(
+                "rightsizing_request: failed to create ticket for rec %s: %s", rec_id, exc
+            )
+    else:
+        logger.warning(
+            "rightsizing_request: INTERNAL_SERVICE_SECRET not set — ticket not created for rec %s",
+            rec_id,
+        )
 
-    return {"message": "Change request submitted successfully"}
+    msg = "Change request submitted successfully."
+    if ticket_ref:
+        msg += f" Ticket {ticket_ref} opened."
+    return {"message": msg, "ticket_ref": ticket_ref}

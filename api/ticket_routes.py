@@ -448,12 +448,20 @@ def _auto_ticket(
     project_name:  Optional[str] = None,
     auto_blocked:  bool = False,
     add_comment_if_existing: bool = False,
+    # Optional: store customer info on the ticket and notify dept by email
+    customer_name: Optional[str] = None,
+    customer_email: Optional[str] = None,
+    dept_notify_template: Optional[str] = None,  # email template name
+    dept_notify_context: Optional[dict] = None,  # extra vars for template
 ) -> dict:
     """
     Create an auto-ticket directly via DB (no HTTP round-trip).
     Idempotent: if an open ticket for (auto_source, auto_source_id) already exists,
     optionally adds a re-detection comment and returns existing ticket info.
     Returns {ticket_id, ticket_ref, created: bool}, or {} on error.
+
+    If dept_notify_template is provided, sends an email to the department's
+    notification_email address using that template after ticket creation.
     """
     try:
         with get_connection() as conn:
@@ -478,13 +486,17 @@ def _auto_ticket(
                         )
                     return {"ticket_id": existing["id"], "ticket_ref": existing["ticket_ref"], "created": False}
 
-                # Resolve dept name → ID
-                cur.execute("SELECT id FROM departments WHERE name = %s LIMIT 1", (to_dept_name,))
+                # Resolve dept name → ID + notification_email
+                cur.execute(
+                    "SELECT id, notification_email FROM departments WHERE name = %s LIMIT 1",
+                    (to_dept_name,),
+                )
                 dept_row = cur.fetchone()
                 if not dept_row:
                     logger.warning("_auto_ticket: dept '%s' not found", to_dept_name)
                     return {}
                 to_dept_id = dept_row["id"]
+                dept_email = dept_row.get("notification_email")
 
                 ref        = _generate_ticket_ref()
                 created_at = _now()
@@ -495,12 +507,14 @@ def _auto_ticket(
                         ticket_ref, title, description, ticket_type, status, priority,
                         to_dept_id, opened_by, auto_source, auto_source_id, auto_blocked,
                         resource_type, resource_id, resource_name, project_id, project_name,
+                        customer_name, customer_email,
                         sla_response_hours, sla_resolve_hours, sla_response_at, sla_resolve_at,
                         created_at, updated_at
                     ) VALUES (
                         %s,%s,%s,%s,'open',%s,
                         %s,'system',%s,%s,%s,
                         %s,%s,%s,%s,%s,
+                        %s,%s,
                         %s,%s,%s,%s,
                         %s,%s
                     ) RETURNING id, ticket_ref
@@ -508,6 +522,7 @@ def _auto_ticket(
                     ref, title, description, ticket_type, priority,
                     to_dept_id, auto_source, auto_source_id, auto_blocked,
                     resource_type, resource_id, resource_name, project_id, project_name,
+                    customer_name, customer_email,
                     sla.get("sla_response_hours"), sla.get("sla_resolve_hours"),
                     sla.get("sla_response_at"),    sla.get("sla_resolve_at"),
                     created_at, created_at,
@@ -520,6 +535,21 @@ def _auto_ticket(
             is_internal=True, comment_type="auto_created",
         )
         logger.info("_auto_ticket: created %s (%s / %s)", row["ticket_ref"], auto_source, auto_source_id)
+
+        # Notify the department by email if they have a notification address and a template
+        if dept_email and dept_notify_template and SMTP_ENABLED:
+            try:
+                ctx = dict(dept_notify_context or {})
+                ctx.setdefault("ticket_ref", ref)
+                ctx.setdefault("title", title)
+                ctx.setdefault("priority", priority)
+                ctx.setdefault("to_dept", to_dept_name)
+                subj, html_body = _render_template(dept_notify_template, ctx)
+                send_email([dept_email], subj, html_body)
+                logger.info("_auto_ticket: dept notification sent to %s for %s", dept_email, ref)
+            except Exception as exc:
+                logger.warning("_auto_ticket: dept email failed for %s: %s", ref, exc)
+
         return {"ticket_id": row["id"], "ticket_ref": row["ticket_ref"], "created": True}
 
     except Exception as exc:
@@ -1818,7 +1848,7 @@ def _handle_sla_breach(row: dict, now: datetime) -> None:
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"UPDATE support_tickets SET {', '.join(update_parts)} WHERE id = %s",
+                    f"UPDATE support_tickets SET {', '.join(update_parts)} WHERE id = %s",  # nosec B608 — update_parts contains only hardcoded column=value fragments, no user input
                     update_vals,
                 )
     except Exception as exc:

@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.5.0  
+**Version**: 2.6.5  
 **Last Updated**: May 18, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.6.5 — Auto-Create Internal Ticket on Tenant Resize Request
+
+- **Auto-ticket on "Request Resize"**: The tenant portal's `POST /tenant/rightsizing/{id}/request-change` endpoint no longer sends a standalone email to a branding-configured address. It now calls the new `/internal/tickets/auto` API endpoint which creates a `support_tickets` row routed to `Tier3 Support` (configurable via `RIGHTSIZING_TICKET_DEPT` env var on the tenant portal deployment).
+- **Dept notification email**: After ticket creation, if the receiving department has a `notification_email` set (new `departments.notification_email` column) and SMTP is enabled, the `rightsizing_request` HTML template is rendered and sent to that address. Template includes: ticket ref, VM name, project, region, current/recommended flavor, CPU p95, RAM p95, estimated savings, tenant contact, and a 5-step action checklist.
+- **Ticket deduplication**: If a tenant clicks "Request Resize" twice on the same recommendation, the second call returns the existing open ticket rather than creating a duplicate (`auto_source='tenant_rightsizing_request'`, `auto_source_id=str(rec_id)` — same dedup logic as all other auto-ticket sources).
+- **Configure notification email**: `UPDATE departments SET notification_email = 'ops-team@example.com' WHERE name = 'Tier3 Support';` — no UI yet, direct DB update required.
+- **Migration**: `db/migrate_v2_6_5_rightsizing_tickets.sql` — adds `departments.notification_email` column and inserts the `rightsizing_request` email template.
 
 ### v2.6.4 — Right-Sizing Billing Impact + Tenant Resize Request CTA
 

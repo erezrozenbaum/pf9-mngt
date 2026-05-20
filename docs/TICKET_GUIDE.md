@@ -1,8 +1,8 @@
 # Support Ticket System — Comprehensive Guide
 
-> **Version:** v1.60.0 (T4 — Analytics & Polish)  
+> **Version:** v2.6.5 (T4 — Analytics, Polish & Cross-Service Ticket Creation)  
 > **System:** pf9-mngt | API prefix: `/api/tickets`  
-> **Introduced:** v1.58.0 (T1), extended in v1.59.0 (T3), v1.60.0 (T4)
+> **Introduced:** v1.58.0 (T1), extended in v1.59.0 (T3), v1.60.0 (T4), v2.6.5 (cross-service auto-ticket)
 
 ---
 
@@ -891,7 +891,7 @@ WHERE  template_name = 'ticket_created';
 
 ### 8.1 Trigger Sources
 
-Five platform hooks automatically create tickets when significant events occur:
+Six platform hooks automatically create tickets when significant events occur:
 
 | Source | `auto_source` | File | Condition |
 |---|---|---|---|
@@ -900,8 +900,9 @@ Five platform hooks automatically create tickets when significant events occur:
 | Delete gate | `delete_impact` | `graph_routes.py` | `POST /api/graph/request-delete` — impact analysis non-empty |
 | Runbook failure | `runbook_failure` | `runbook_routes.py` | Runbook execution raises an unhandled exception |
 | Migration wave | `migration` | `migration_routes.py` | Wave status transitions to `complete` |
+| **Tenant resize request** *(v2.6.5)* | `tenant_rightsizing_request` | `tenant_portal/rightsizing_routes.py` | Tenant clicks "Request Resize" on a right-sizing recommendation |
 
-All five hooks call `_auto_ticket()` internally via a direct in-process function call (no HTTP round-trip).
+The first five hooks call `_auto_ticket()` directly in-process. The tenant resize request hook **calls the `/internal/tickets/auto` HTTP endpoint** (cross-service, `X-Internal-Secret` authenticated) because the tenant portal is a separate service.
 
 ### 8.2 Deduplication Logic
 
@@ -927,23 +928,59 @@ Import and call from any API module:
 ```python
 from ticket_routes import _auto_ticket
 
-ticket = await _auto_ticket(db, {
-    "title":          "Drift detected on vm-prod-01",
-    "description":    "3 config properties diverged from desired state.",
-    "ticket_type":    "auto_incident",
-    "priority":       "critical",
-    "to_dept_id":     4,          # Tier3 Support
-    "auto_source":    "drift",
-    "auto_source_id": str(drift_event.id),
-    "resource_type":  "vm",
-    "resource_id":    vm_id,
-    "resource_name":  vm_name,
-    "auto_blocked":   True,
-    "requires_approval": False
-})
+ticket = _auto_ticket(
+    title="Drift detected on vm-prod-01",
+    description="3 config properties diverged from desired state.",
+    ticket_type="auto_incident",
+    priority="critical",
+    to_dept_name="Tier3 Support",
+    auto_source="drift",
+    auto_source_id=str(drift_event.id),
+    resource_type="vm",
+    resource_id=vm_id,
+    resource_name=vm_name,
+    auto_blocked=True,
+    # Optional: store customer context and notify the department by email
+    customer_name="Acme Corp",
+    customer_email="ops@acme.com",
+    dept_notify_template="rightsizing_request",   # must exist in ticket_email_templates
+    dept_notify_context={"vm_name": vm_name, ...},
+)
 ```
 
-Returns the ticket dict (new or existing). If `auto_blocked=True`, set a flag in your calling code to block the triggering operation until `status` reaches `resolved` or `closed`.
+Returns `{"ticket_id": int, "ticket_ref": str, "created": bool}`. Returns `{}` on error. If `auto_blocked=True`, block the triggering operation until `status` reaches `resolved` or `closed`.
+
+**Department notification email** (v2.6.5): If `dept_notify_template` is provided and the target department has a `notification_email` configured, a rendered HTML email is sent after ticket creation. Set `notification_email` per department:
+
+```sql
+UPDATE departments SET notification_email = 'ops-team@example.com' WHERE name = 'Tier3 Support';
+```
+
+**Cross-service auto-ticket via HTTP** (v2.6.5): Services that cannot import `ticket_routes` directly (e.g. the tenant portal) use the internal HTTP endpoint:
+
+```
+POST /internal/tickets/auto
+X-Internal-Secret: <INTERNAL_SERVICE_SECRET>
+Content-Type: application/json
+
+{
+  "title":                 "Right-Sizing Request — testvm (ProjectA)",
+  "ticket_type":           "auto_change_request",
+  "priority":              "high",
+  "to_dept_name":          "Tier3 Support",
+  "auto_source":           "tenant_rightsizing_request",
+  "auto_source_id":        "42",
+  "resource_type":         "server",
+  "resource_name":         "testvm",
+  "project_name":          "ProjectA",
+  "customer_name":         "Tenant User",
+  "customer_email":        "user@tenant.com",
+  "dept_notify_template":  "rightsizing_request",
+  "dept_notify_context":   { "vm_name": "testvm", ... }
+}
+```
+
+The endpoint returns `{"ticket_id": int, "ticket_ref": str, "created": bool}` and is protected by `rbac_middleware` — any request without the correct `X-Internal-Secret` header receives `403 Forbidden`.
 
 ---
 

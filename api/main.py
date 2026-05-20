@@ -5015,6 +5015,43 @@ async def push_monitoring_cache(request: Request):
     }
 
 
+@app.post("/internal/tickets/auto", include_in_schema=False)
+async def internal_auto_ticket(request: Request):
+    """
+    Internal endpoint — create a support ticket from any service pod.
+    Authentication is enforced by rbac_middleware (X-Internal-Secret header).
+    Accepts the same fields as AutoTicketCreate from ticket_routes.
+    Returns {ticket_id, ticket_ref, created} or {} on error.
+    """
+    from ticket_routes import _auto_ticket
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    if not body.get("to_dept_name"):
+        raise HTTPException(status_code=400, detail="to_dept_name is required")
+    result = _auto_ticket(
+        title=body.get("title", ""),
+        description=body.get("description", ""),
+        ticket_type=body.get("ticket_type", "auto_change_request"),
+        priority=body.get("priority", "high"),
+        to_dept_name=body["to_dept_name"],
+        auto_source=body.get("auto_source", "system"),
+        auto_source_id=body.get("auto_source_id", ""),
+        resource_type=body.get("resource_type"),
+        resource_id=body.get("resource_id"),
+        resource_name=body.get("resource_name"),
+        project_id=body.get("project_id"),
+        project_name=body.get("project_name"),
+        auto_blocked=body.get("auto_blocked", False),
+        customer_name=body.get("customer_name"),
+        customer_email=body.get("customer_email"),
+        dept_notify_template=body.get("dept_notify_template"),
+        dept_notify_context=body.get("dept_notify_context", {}),
+    )
+    return result
+
+
 @app.get("/monitoring/summary")
 def monitoring_summary():
     """Return monitoring summary — prefers live Prometheus cache, falls back to DB."""

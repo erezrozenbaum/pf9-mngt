@@ -1557,7 +1557,47 @@ Stores engine-computed right-sizing recommendations. One active recommendation p
 
 ---
 
-## Snapshot Chain Tracking (v2.3.0)
+## Department Notification Email (v2.6.5)
+
+### departments — new column
+
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| `notification_email` | TEXT | NULL | Optional email address; when set, auto-ticket events send rendered HTML template emails to this address |
+
+Added by `db/migrate_v2_6_5_rightsizing_tickets.sql`. Set per-department:
+
+```sql
+UPDATE departments SET notification_email = 'ops-team@example.com' WHERE name = 'Tier3 Support';
+```
+
+### ticket_email_templates — new row: `rightsizing_request`
+
+Seeded by `db/migrate_v2_6_5_rightsizing_tickets.sql` (`ON CONFLICT DO UPDATE`). Sent to the ops/support department when a tenant submits a resize request via `POST /tenant/rightsizing/{id}/request-change`.
+
+**Template variables** (passed in `dept_notify_context`):
+
+| Variable | Description |
+|---|---|
+| `ticket_ref` | Ticket reference, e.g. `TKT-2026-00042` (injected automatically) |
+| `vm_name` | VM name |
+| `project_name` | OpenStack project |
+| `region` | Region ID |
+| `current_flavor` | Current OpenStack flavor name |
+| `current_vcpus` | Current vCPU count |
+| `current_ram_gb` | Current RAM in GB |
+| `recommended_flavor` | Recommended OpenStack flavor name |
+| `recommended_vcpus` | Recommended vCPU count |
+| `recommended_ram_gb` | Recommended RAM in GB |
+| `cpu_p95` | CPU 95th-percentile utilisation (%) |
+| `ram_p95` | RAM 95th-percentile utilisation (%) |
+| `savings` | Estimated monthly savings |
+| `tenant_name` | Tenant display name |
+| `tenant_email` | Tenant contact email |
+| `priority` | Ticket priority |
+| `app_version` | Application version |
+
+
 
 ### snapshot_records — new columns
 

@@ -8,6 +8,14 @@
 secrets/*
 !secrets/README.md
 
+# Test/debug artifacts (session cookies, live API response dumps)
+cookies*.txt
+*_k8s.txt
+*_k8s.json
+*_live.json
+tenant_login.json
+recs_k8s.json
+
 # Python cache
 __pycache__/
 *.pyc

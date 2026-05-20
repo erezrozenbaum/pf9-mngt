@@ -2562,13 +2562,15 @@ Returns a filterable list of recommendations. Each object now includes billing i
 
 `status` must be one of `snoozed`, `dismissed`, or `actioned`.
 
-### Tenant — Request Resize *(v2.6.4)*
+### Tenant — Request Resize *(v2.6.5)*
 **POST** `/tenant/rightsizing/{id}/request-change`  
 *Requires: tenant JWT, `manager` role*
 
-Marks the recommendation as `actioned`, writes an audit log entry, and (if `support_email` is configured in `tenant_portal_branding`) sends an HTML email to the support address.
+Marks the recommendation as `actioned`, writes an audit log entry, and creates an internal support ticket via `POST /internal/tickets/auto`. The ticket is routed to the department configured via `RIGHTSIZING_TICKET_DEPT` env var (default: `Tier3 Support`). If the department has a `notification_email` configured and the `rightsizing_request` email template exists, an ops team notification email is sent.
 
-**Response**: `{"message": "Request logged. No support email configured."}` or `{"message": "Resize request sent to support."}`
+Ticket deduplication: if a tenant clicks "Request Resize" twice on the same recommendation, the second call returns the existing ticket — no duplicate is created.
+
+**Response**: `{"message": "Resize request submitted. Ticket TKT-2026-00042 created.", "ticket_ref": "TKT-2026-00042"}` — `ticket_ref` is `null` if the internal API is unreachable (the recommendation is still marked `actioned`).
 
 ---
 
@@ -5604,24 +5606,43 @@ Templates use `{{placeholder}}` syntax. Available placeholders: `ref`, `subject`
 
 ---
 
-### Auto-Create Ticket (Internal)
-**POST** `/api/tickets/_auto`  
-*Requires: `tickets:write`*
+### Auto-Create Ticket (Internal) *(v2.6.5)*
+**POST** `/internal/tickets/auto`  
+*Requires: `X-Internal-Secret` header (pre-shared token) — enforced by `rbac_middleware`, not exposed through nginx*
 
-Idempotent endpoint for system-generated tickets (drift events, health alerts, runbook failures). Reserved for Phase T3. Uses `idempotency_key` to prevent duplicates.
+Idempotent, cross-service endpoint for system-generated tickets. If a non-closed ticket with the same `auto_source` + `auto_source_id` already exists, the existing ticket is returned without creating a duplicate.
 
 Request body:
 ```json
 {
-  "subject": "SLA breach detected for tenant acme-prod",
-  "ticket_type": "auto_incident",
-  "priority": "high",
-  "idempotency_key": "drift-vm-abc123-2026-03-11",
-  "to_dept_id": 2
+  "title":                "Right-Sizing Request — testvm (ProjectA)",
+  "description":          "Tenant requested resize from m1.large to m1.small.",
+  "ticket_type":          "auto_change_request",
+  "priority":             "high",
+  "to_dept_name":         "Tier3 Support",
+  "auto_source":          "tenant_rightsizing_request",
+  "auto_source_id":       "42",
+  "resource_type":        "server",
+  "resource_id":          "uuid-here",
+  "resource_name":        "testvm",
+  "project_id":           "proj-uuid",
+  "project_name":         "ProjectA",
+  "auto_blocked":         false,
+  "customer_name":        "Tenant User",
+  "customer_email":       "user@tenant.com",
+  "dept_notify_template": "rightsizing_request",
+  "dept_notify_context":  {
+    "vm_name": "testvm",
+    "project_name": "ProjectA",
+    "current_flavor": "m1.large",
+    "recommended_flavor": "m1.small"
+  }
 }
 ```
 
-Returns existing ticket if `idempotency_key` already exists (200), or creates new ticket (201).
+Required fields: `to_dept_name`. All other fields optional.
+
+Returns `{"ticket_id": int, "ticket_ref": str, "created": bool}` or `{}` on error.
 
 ---
 
