@@ -2,16 +2,17 @@
  * CostOptimization.tsx — Workload Right-Sizing & Cost Waste Detection
  * ====================================================================
  * Tenant-facing view of rightsizing recommendations for their own VMs.
- * Shows idle and over-provisioned VMs with estimated monthly savings.
- * Tenants can snooze or dismiss recommendations.
+ * Shows idle and over-provisioned VMs with before/after billing impact.
+ * Tenants can request a resize, snooze, or dismiss recommendations.
  *
- * v2.6.0
+ * v2.3.0
  */
 import { useEffect, useState, useCallback } from "react";
 import {
   apiRightsizingSummary,
   apiRightsizingRecommendations,
   apiRightsizingUpdate,
+  apiRightsizingRequestChange,
   type RightsizingSummary,
   type RightsizingRecommendation,
 } from "../lib/api";
@@ -35,9 +36,9 @@ function formatRam(mb: number | null): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
 }
 
-function formatSavings(usd: number | null, currency: string): string {
-  if (!usd || usd <= 0) return "";
-  return `${currency} ${usd.toFixed(0)}/mo`;
+function formatCost(amount: number | null, currency: string): string {
+  if (amount === null || amount === undefined) return "—";
+  return `${currency} ${amount.toFixed(0)}/mo`;
 }
 
 function formatPct(v: number | null): string {
@@ -56,6 +57,7 @@ export function CostOptimization() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<number | null>(null);
   const [showDismissed, setShowDismissed] = useState(false);
+  const [requestSent, setRequestSent] = useState<Set<number>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,6 +91,22 @@ export function CostOptimization() {
       );
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "Action failed");
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const handleRequestChange = async (id: number) => {
+    setPending(id);
+    try {
+      await apiRightsizingRequestChange(id);
+      setRequestSent((prev) => new Set(prev).add(id));
+      setRecs((prev) => prev.filter((r) => r.id !== id));
+      setSummary((s) =>
+        s ? { ...s, total_open: Math.max(0, s.total_open - 1) } : s,
+      );
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Failed to submit request");
     } finally {
       setPending(null);
     }
@@ -231,7 +249,7 @@ export function CostOptimization() {
             <div
               key={i}
               className="card skeleton"
-              style={{ height: "90px", borderRadius: "8px", background: "var(--color-surface)" }}
+              style={{ height: "110px", borderRadius: "8px", background: "var(--color-surface)" }}
             />
           ))}
         </div>
@@ -264,8 +282,23 @@ export function CostOptimization() {
         </div>
       ) : (
         <div style={{ display: "grid", gap: "0.75rem" }}>
+          {requestSent.size > 0 && (
+            <div
+              style={{
+                background: "var(--color-success-bg, #dcfce7)",
+                color: "var(--color-success, #16a34a)",
+                padding: "0.75rem 1rem",
+                borderRadius: "6px",
+                fontSize: "0.875rem",
+              }}
+            >
+              Your resize request has been submitted. A member of our team will contact you shortly.
+            </div>
+          )}
           {recs.map((r) => {
-            const savings = formatSavings(r.estimated_monthly_savings_usd, r.currency);
+            const hasCost =
+              r.current_monthly_cost != null && r.recommended_monthly_cost != null;
+            const savings = r.estimated_monthly_savings_usd;
             return (
               <div
                 key={r.id}
@@ -282,13 +315,18 @@ export function CostOptimization() {
                 }}
               >
                 {/* VM info */}
-                <div style={{ flex: "1 1 200px" }}>
+                <div style={{ flex: "1 1 190px" }}>
                   <div style={{ fontWeight: 600, fontSize: "0.95rem", color: "var(--color-text)" }}>
                     {r.vm_name || r.vm_id}
                   </div>
-                  <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", marginTop: "0.1rem" }}>
-                    {r.project_name && <span>{r.project_name} · </span>}
-                    {r.region_id && <span>{r.region_id}</span>}
+                  <div
+                    style={{
+                      fontSize: "0.75rem",
+                      color: "var(--color-text-secondary)",
+                      marginTop: "0.1rem",
+                    }}
+                  >
+                    {[r.project_name, r.region_id].filter(Boolean).join(" · ")}
                   </div>
                   <span
                     style={{
@@ -307,8 +345,15 @@ export function CostOptimization() {
                 </div>
 
                 {/* Utilisation */}
-                <div style={{ flex: "0 0 140px" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", marginBottom: "0.3rem" }}>
+                <div style={{ flex: "0 0 130px" }}>
+                  <div
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-text-secondary)",
+                      marginBottom: "0.3rem",
+                      fontWeight: 500,
+                    }}
+                  >
                     Utilisation (p95 7d)
                   </div>
                   <div style={{ fontSize: "0.85rem" }}>
@@ -320,50 +365,130 @@ export function CostOptimization() {
                 </div>
 
                 {/* Flavor change */}
-                <div style={{ flex: "0 0 220px" }}>
-                  <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", marginBottom: "0.3rem" }}>
+                <div style={{ flex: "0 0 210px" }}>
+                  <div
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-text-secondary)",
+                      marginBottom: "0.3rem",
+                      fontWeight: 500,
+                    }}
+                  >
                     Flavor
                   </div>
-                  <div style={{ fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
-                    <span style={{ color: "var(--color-text-secondary)" }}>
-                      {r.current_flavor || "—"}
-                      {r.current_vcpus != null && (
-                        <span style={{ fontSize: "0.75rem" }}> ({r.current_vcpus}vCPU·{formatRam(r.current_ram_mb)})</span>
-                      )}
-                    </span>
-                    {r.recommended_flavor && (
-                      <>
-                        <span style={{ color: "var(--color-text-secondary)" }}>→</span>
-                        <span style={{ color: "var(--color-success)", fontWeight: 600 }}>
-                          {r.recommended_flavor}
-                          {r.recommended_vcpus != null && (
-                            <span style={{ fontWeight: 400, fontSize: "0.75rem" }}>
-                              {" "}({r.recommended_vcpus}vCPU·{formatRam(r.recommended_ram_mb)})
-                            </span>
-                          )}
-                        </span>
-                      </>
+                  <div style={{ fontSize: "0.85rem", color: "var(--color-text-secondary)" }}>
+                    {r.current_flavor || "—"}
+                    {r.current_vcpus != null && (
+                      <span style={{ fontSize: "0.75rem" }}>
+                        {" "}({r.current_vcpus} vCPU · {formatRam(r.current_ram_mb)})
+                      </span>
                     )}
                   </div>
-                </div>
-
-                {/* Savings */}
-                {savings && (
-                  <div style={{ flex: "0 0 110px", textAlign: "right" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", marginBottom: "0.15rem" }}>
-                      Potential saving
-                    </div>
+                  {r.recommended_flavor && (
                     <div
                       style={{
-                        fontSize: "1.1rem",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.3rem",
+                        marginTop: "0.2rem",
+                      }}
+                    >
+                      <span style={{ fontSize: "0.78rem", color: "var(--color-text-secondary)" }}>
+                        →
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "0.85rem",
+                          color: "var(--color-success)",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {r.recommended_flavor}
+                        {r.recommended_vcpus != null && (
+                          <span style={{ fontWeight: 400, fontSize: "0.75rem" }}>
+                            {" "}({r.recommended_vcpus} vCPU · {formatRam(r.recommended_ram_mb)})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Billing impact */}
+                <div style={{ flex: "0 0 195px" }}>
+                  <div
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-text-secondary)",
+                      marginBottom: "0.3rem",
+                      fontWeight: 500,
+                    }}
+                  >
+                    Monthly Cost Impact
+                  </div>
+                  {hasCost ? (
+                    <>
+                      <div
+                        style={{
+                          fontSize: "0.82rem",
+                          display: "flex",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <span style={{ color: "var(--color-text-secondary)" }}>Current</span>
+                        <span style={{ fontWeight: 600 }}>
+                          {formatCost(r.current_monthly_cost, r.currency)}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "0.82rem",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          marginTop: "0.15rem",
+                        }}
+                      >
+                        <span style={{ color: "var(--color-text-secondary)" }}>
+                          Recommended
+                        </span>
+                        <span style={{ fontWeight: 600, color: "var(--color-success)" }}>
+                          {formatCost(r.recommended_monthly_cost, r.currency)}
+                        </span>
+                      </div>
+                      {savings != null && savings > 0 && (
+                        <div
+                          style={{
+                            marginTop: "0.35rem",
+                            paddingTop: "0.3rem",
+                            borderTop: "1px solid var(--color-border, #e5e7eb)",
+                            fontSize: "0.85rem",
+                            fontWeight: 700,
+                            color: "var(--color-success)",
+                            display: "flex",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          <span>Save</span>
+                          <span>{formatCost(savings, r.currency)}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : savings != null && savings > 0 ? (
+                    <div
+                      style={{
+                        fontSize: "1rem",
                         fontWeight: 700,
                         color: "var(--color-success)",
                       }}
                     >
-                      {savings}
+                      Save {formatCost(savings, r.currency)}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div style={{ fontSize: "0.82rem", color: "var(--color-text-secondary)" }}>
+                      —
+                    </div>
+                  )}
+                </div>
 
                 {/* Actions — only show for open/snoozed */}
                 {r.status !== "dismissed" && (
@@ -374,13 +499,22 @@ export function CostOptimization() {
                       flexDirection: "column",
                       gap: "0.4rem",
                       justifyContent: "center",
+                      marginLeft: "auto",
                     }}
                   >
+                    <button
+                      className="btn btn-sm btn-primary"
+                      disabled={pending === r.id}
+                      onClick={() => handleRequestChange(r.id)}
+                      style={{ fontSize: "0.8rem", minWidth: "110px" }}
+                    >
+                      Request Resize
+                    </button>
                     <button
                       className="btn btn-sm btn-secondary"
                       disabled={pending === r.id}
                       onClick={() => handleAction(r.id, "snoozed")}
-                      style={{ fontSize: "0.8rem", minWidth: "90px" }}
+                      style={{ fontSize: "0.8rem", minWidth: "110px" }}
                     >
                       Snooze
                     </button>
@@ -388,7 +522,11 @@ export function CostOptimization() {
                       className="btn btn-sm btn-ghost"
                       disabled={pending === r.id}
                       onClick={() => handleAction(r.id, "dismissed")}
-                      style={{ fontSize: "0.8rem", minWidth: "90px", color: "var(--color-text-secondary)" }}
+                      style={{
+                        fontSize: "0.8rem",
+                        minWidth: "110px",
+                        color: "var(--color-text-secondary)",
+                      }}
                     >
                       Dismiss
                     </button>

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -23,6 +23,31 @@ from auth import require_permission, get_current_user, User, get_effective_regio
 from db_pool import get_connection
 
 logger = logging.getLogger("pf9.rightsizing")
+
+_HOURS_PER_MONTH = 730.0
+
+
+def _load_flavor_prices(conn) -> Dict[str, float]:
+    """Load per-flavor hourly costs. metering_pricing takes precedence over metering_flavor_pricing."""
+    prices: Dict[str, float] = {}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        try:
+            cur.execute("SELECT flavor_name, cost_per_hour FROM metering_flavor_pricing")
+            for r in cur.fetchall():
+                if r["flavor_name"]:
+                    prices[r["flavor_name"]] = float(r["cost_per_hour"] or 0)
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "SELECT item_name, cost_per_hour FROM metering_pricing WHERE category = 'flavor'"
+            )
+            for r in cur.fetchall():
+                if r["item_name"]:
+                    prices[r["item_name"]] = float(r["cost_per_hour"] or 0)
+        except Exception:
+            pass
+    return prices
 
 router = APIRouter(prefix="/api/rightsizing", tags=["rightsizing"])
 
@@ -50,6 +75,8 @@ class RightsizingRecommendation(BaseModel):
     cpu_avg_7d: Optional[float]
     ram_avg_7d: Optional[float]
     estimated_monthly_savings_usd: Optional[float]
+    current_monthly_cost: Optional[float]
+    recommended_monthly_cost: Optional[float]
     currency: str
     status: str
     computed_at: str
@@ -100,7 +127,7 @@ def get_rightsizing_summary(
                     MAX(currency)                                                      AS currency
                 FROM rightsizing_recommendations
                 WHERE 1=1 {region_clause}
-            """, params)
+            """, params)  # nosec B608 — region_clause is a hardcoded SQL fragment, not user input
             row = cur.fetchone()
             if not row:
                 return RightsizingSummary(
@@ -166,8 +193,15 @@ def list_recommendations(
                 ORDER BY r.estimated_monthly_savings_usd DESC NULLS LAST,
                          r.computed_at DESC
                 LIMIT %s OFFSET %s
-            """, params)
+            """, params)  # nosec B608 — where clause built from whitelisted enum values, not user input
             rows = cur.fetchall()
+        flavor_prices = _load_flavor_prices(conn)
+
+    def _monthly(flavor: Optional[str]) -> Optional[float]:
+        if not flavor:
+            return None
+        p = flavor_prices.get(flavor)
+        return round(p * _HOURS_PER_MONTH, 2) if p else None
 
     return [
         RightsizingRecommendation(
@@ -192,6 +226,8 @@ def list_recommendations(
                 float(r["estimated_monthly_savings_usd"])
                 if r["estimated_monthly_savings_usd"] is not None else None
             ),
+            current_monthly_cost=_monthly(r["current_flavor"]),
+            recommended_monthly_cost=_monthly(r["recommended_flavor"]),
             currency=r["currency"] or "USD",
             status=r["status"],
             computed_at=r["computed_at"].isoformat() if r["computed_at"] else "",
@@ -245,3 +281,25 @@ def update_recommendation_status(
         conn.commit()
 
     return {"message": f"Recommendation {rec_id} updated to {body.status}"}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/rightsizing/projects
+# ---------------------------------------------------------------------------
+
+@router.get("/projects", response_model=List[str])
+def list_rightsizing_projects(
+    user: User = Depends(require_permission("rightsizing", "read")),
+):
+    """Return distinct project names that have open/snoozed recommendations (for filter dropdown)."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT DISTINCT project_name
+                FROM rightsizing_recommendations
+                WHERE project_name IS NOT NULL
+                  AND status IN ('open', 'snoozed')
+                ORDER BY project_name
+            """)
+            rows = cur.fetchall()
+    return [r["project_name"] for r in rows]

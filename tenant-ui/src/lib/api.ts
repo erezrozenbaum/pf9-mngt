@@ -1346,6 +1346,8 @@ export interface RightsizingRecommendation {
   cpu_p95_7d: number | null;
   ram_p95_7d: number | null;
   estimated_monthly_savings_usd: number | null;
+  current_monthly_cost: number | null;
+  recommended_monthly_cost: number | null;
   currency: string;
   status: string;
   computed_at: string;
@@ -1370,6 +1372,12 @@ export async function apiRightsizingUpdate(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status: newStatus }),
+  });
+}
+
+export async function apiRightsizingRequestChange(id: number): Promise<void> {
+  await tenantFetch(`/tenant/rightsizing/${id}/request-change`, {
+    method: "POST",
   });
 }
 

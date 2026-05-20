@@ -2505,6 +2505,14 @@ Response:
 
 All right-sizing endpoints require `rightsizing:read` permission (admin/superadmin). Status updates require `rightsizing:write`.
 
+### Right-Sizing Projects *(v2.6.4)*
+**GET** `/api/rightsizing/projects`  
+*Requires: `rightsizing:read`*
+
+Returns a distinct list of project names that have at least one recommendation.
+
+**Response**: `["ORG1", "ORG2", "service"]`
+
 ### Right-Sizing Summary
 **GET** `/api/rightsizing/summary`  
 *Requires: `rightsizing:read`*
@@ -2520,7 +2528,7 @@ Returns aggregated counts and total estimated savings.
   "idle_count": 4,
   "over_provisioned_count": 8,
   "total_savings_usd": 340.50,
-  "currency": "USD"
+  "currency": "ILS"
 }
 ```
 
@@ -2528,7 +2536,15 @@ Returns aggregated counts and total estimated savings.
 **GET** `/api/rightsizing/recommendations`  
 *Requires: `rightsizing:read`*
 
-Returns a filterable list of recommendations.
+Returns a filterable list of recommendations. Each object now includes billing impact fields (v2.6.4):
+
+```json
+{
+  "current_monthly_cost": 193.89,
+  "recommended_monthly_cost": 153.30,
+  "currency": "ILS"
+}
+```
 
 **Query params**: `region`, `classification` (idle|over_provisioned|right_sized|under_provisioned), `status` (open|snoozed|dismissed|actioned; default open+snoozed), `project`, `limit` (max 1000), `offset`
 
@@ -2545,6 +2561,14 @@ Returns a filterable list of recommendations.
 ```
 
 `status` must be one of `snoozed`, `dismissed`, or `actioned`.
+
+### Tenant — Request Resize *(v2.6.4)*
+**POST** `/tenant/rightsizing/{id}/request-change`  
+*Requires: tenant JWT, `manager` role*
+
+Marks the recommendation as `actioned`, writes an audit log entry, and (if `support_email` is configured in `tenant_portal_branding`) sends an HTML email to the support address.
+
+**Response**: `{"message": "Request logged. No support email configured."}` or `{"message": "Resize request sent to support."}`
 
 ---
 

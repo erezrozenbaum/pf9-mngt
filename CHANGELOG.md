@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.4] - 2026-05-20
+
+### Added
+- **Right-Sizing billing impact** (`api/rightsizing_routes.py`, `tenant_portal/rightsizing_routes.py`): `current_monthly_cost`, `recommended_monthly_cost`, and `currency` fields on every recommendation, computed at runtime from `metering_flavor_pricing` / `metering_pricing`. Displayed in both admin card view and tenant Cost Optimisation screen.
+- **Admin project dropdown filter** (`pf9-ui`): `GET /api/rightsizing/projects` endpoint returns distinct project names; admin Right-Sizing tab now has a project filter dropdown.
+- **Tenant "Request Resize" CTA** (`tenant-ui`, `tenant_portal/rightsizing_routes.py`): Primary action button on each recommendation card posts to `POST /tenant/rightsizing/{id}/request-change`, marks the recommendation `actioned`, logs the audit event, and optionally sends a support email. Success banner displayed after first request.
+
+### Fixed
+- **`tenant_portal_role` missing `UPDATE` grant on `rightsizing_recommendations`**: The `request-change` endpoint updates `status = 'actioned'`; `GRANT SELECT, UPDATE` now added to `db/init.sql`, `db/migrate_v2_6_0_rightsizing.sql`, and `db/migrate_v2_6_4_rightsizing_billing.sql`.
+- **`tenant_portal_role` missing `SELECT` grant on `metering_flavor_pricing`**: Billing cost computation via `_load_flavor_prices()` silently returned empty (costs were always `None`); grant now added to `db/init.sql` and `db/migrate_v2_6_4_rightsizing_billing.sql`.
+- **Bandit B608 false positives suppressed** with `# nosec B608` on f-string SQL fragments where only hardcoded clause templates are interpolated (not user input).
+
+---
+
 ## [2.6.3] - 2026-05-19
 
 ### Fixed

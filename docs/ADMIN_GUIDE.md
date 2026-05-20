@@ -834,6 +834,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v2.6.4 — Right-Sizing Billing Impact + Tenant Resize Request CTA
+
+- **Billing impact on every recommendation**: `current_monthly_cost`, `recommended_monthly_cost`, and `currency` now returned on all recommendation objects (computed at runtime from `metering_flavor_pricing` / `metering_pricing`). Displayed in the admin card view and tenant Cost Optimisation screen.
+- **Admin project filter**: New `GET /api/rightsizing/projects` endpoint; admin Right-Sizing tab now has a project dropdown filter.
+- **Tenant "Request Resize" CTA**: Primary action button on each tenant recommendation card posts `POST /tenant/rightsizing/{id}/request-change`, marks the recommendation `actioned`, logs the audit event, and optionally emails the support address.
+- **DB permission fixes**: `tenant_portal_role` now has `GRANT SELECT, UPDATE ON rightsizing_recommendations` (required for request-change) and `GRANT SELECT ON metering_flavor_pricing` (required for cost computation). Applied to `db/init.sql` and `db/migrate_v2_6_4_rightsizing_billing.sql`.
+
 ### v2.6.3 — Metering Worker Auth Fix (Rightsizing data)
 
 - **Right-Sizing / Cost Optimisation showed zero data**: The metering worker API fallback (`/monitoring/vm-metrics`) required a user JWT that the worker didn't have, returning 401. It then fell through to a DB-direct path that explicitly sets `cpu_usage_percent = NULL`, leaving all recent `metering_resources` rows with no usage data. `RightsizingEngine._compute_vm_stats()` filters `WHERE cpu_usage_percent IS NOT NULL AND rows_7d >= 4` — zero rows qualified. The Insights (Waste) engine was unaffected because it reads `metering_efficiency`, populated from older rows with valid data.

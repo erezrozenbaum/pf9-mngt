@@ -83,9 +83,10 @@ BEGIN
         GRANT USAGE, SELECT ON SEQUENCE rightsizing_recommendations_id_seq TO pf9_api;
     END IF;
 
-    -- Tenant portal role (read-only, own projects only enforced via RLS/filter)
+    -- Tenant portal role — SELECT for listing, UPDATE for request-change (status='actioned')
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tenant_portal_role') THEN
-        GRANT SELECT ON rightsizing_recommendations TO tenant_portal_role;
+        GRANT SELECT, UPDATE ON rightsizing_recommendations TO tenant_portal_role;
+        GRANT SELECT ON metering_flavor_pricing TO tenant_portal_role;
     END IF;
 END $$;
 

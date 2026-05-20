@@ -1553,7 +1553,7 @@ Stores engine-computed right-sizing recommendations. One active recommendation p
 - `idx_rsr_classification` — `(classification, status)`
 - `idx_rsr_computed_at` — `(computed_at DESC)`
 
-**Access**: `pf9_api` has SELECT, INSERT, UPDATE. `tenant_portal_role` has SELECT (project-scoped via application-level JOIN with `servers`).
+**Access**: `pf9_api` has SELECT, INSERT, UPDATE. `tenant_portal_role` has SELECT, UPDATE (SELECT for listing recommendations, UPDATE for `POST /tenant/rightsizing/{id}/request-change` which sets `status='actioned'`; project-scoped via application-level JOIN with `servers`). *(UPDATE grant added in v2.6.4 — `db/migrate_v2_6_4_rightsizing_billing.sql`)*
 
 ---
 
