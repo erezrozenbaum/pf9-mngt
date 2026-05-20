@@ -144,6 +144,8 @@ function RecCard({
   pending: number | null;
   onAction: (id: number, action: "dismissed" | "snoozed") => void;
 }) {
+  const [ticketRef, setTicketRef] = useState<string | null>(null);
+  const [ticketPending, setTicketPending] = useState(false);
   const hasCost = r.current_monthly_cost != null && r.recommended_monthly_cost != null;
   const savings = r.estimated_monthly_savings_usd;
 
@@ -342,6 +344,70 @@ function RecCard({
           marginLeft: "auto",
         }}
       >
+        {ticketRef ? (
+          <div
+            style={{
+              minWidth: "90px",
+              fontSize: "0.75rem",
+              fontWeight: 600,
+              color: "var(--color-success)",
+              textAlign: "center",
+              padding: "0.25rem 0",
+            }}
+          >
+            🎫 {ticketRef}
+          </div>
+        ) : (
+          <button
+            className="btn btn-sm btn-primary"
+            disabled={ticketPending || pending === r.id}
+            onClick={async () => {
+              setTicketPending(true);
+              try {
+                const classLabel = r.classification.replace(/_/g, " ");
+                const flavorChange =
+                  r.recommended_flavor
+                    ? ` Current: ${r.current_flavor || "unknown"}. Recommended: ${r.recommended_flavor}.`
+                    : "";
+                const savings =
+                  r.estimated_monthly_savings_usd != null && r.estimated_monthly_savings_usd > 0
+                    ? ` Estimated savings: ${r.currency} ${r.estimated_monthly_savings_usd.toFixed(0)}/mo.`
+                    : "";
+                const data = await apiFetch<{ ticket_ref: string; created: boolean }>(
+                  "/api/tickets/_auto",
+                  {
+                    method: "POST",
+                    body: JSON.stringify({
+                      title: `Rightsizing: ${r.vm_name || r.vm_id} — ${classLabel}`,
+                      description:
+                        `VM ${r.vm_name || r.vm_id} (${r.vm_id}) in project ${r.project_name || "unknown"} ` +
+                        `is classified as ${classLabel}.${flavorChange}${savings}\n\n` +
+                        `CPU p95: ${r.cpu_p95_7d != null ? r.cpu_p95_7d.toFixed(1) + "%" : "n/a"} · ` +
+                        `RAM p95: ${r.ram_p95_7d != null ? r.ram_p95_7d.toFixed(1) + "%" : "n/a"}`,
+                      ticket_type: "rightsizing",
+                      priority: r.classification === "idle" ? "high" : "normal",
+                      to_dept_name: "Tier3 Support",
+                      auto_source: "admin_rightsizing",
+                      auto_source_id: `rightsizing:${r.id}`,
+                      resource_type: "vm",
+                      resource_id: r.vm_id,
+                      resource_name: r.vm_name,
+                      project_name: r.project_name,
+                    }),
+                  }
+                );
+                setTicketRef(data.ticket_ref);
+              } catch (e: unknown) {
+                alert("Could not open ticket: " + (e instanceof Error ? e.message : "Unknown error"));
+              } finally {
+                setTicketPending(false);
+              }
+            }}
+            style={{ minWidth: "90px" }}
+          >
+            {ticketPending ? "Opening…" : "🎫 Open Ticket"}
+          </button>
+        )}
         <button
           className="btn btn-sm btn-secondary"
           disabled={pending === r.id}

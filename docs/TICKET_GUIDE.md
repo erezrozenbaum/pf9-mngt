@@ -1,8 +1,8 @@
 # Support Ticket System — Comprehensive Guide
 
-> **Version:** v2.6.5 (T4 — Analytics, Polish & Cross-Service Ticket Creation)  
+> **Version:** v2.6.6 (T4 — Analytics, Polish & Cross-Service Ticket Creation)  
 > **System:** pf9-mngt | API prefix: `/api/tickets`  
-> **Introduced:** v1.58.0 (T1), extended in v1.59.0 (T3), v1.60.0 (T4), v2.6.5 (cross-service auto-ticket)
+> **Introduced:** v1.58.0 (T1), extended in v1.59.0 (T3), v1.60.0 (T4), v2.6.5 (cross-service auto-ticket), v2.6.6 (admin rightsizing Open Ticket button)
 
 ---
 
@@ -901,6 +901,7 @@ Six platform hooks automatically create tickets when significant events occur:
 | Runbook failure | `runbook_failure` | `runbook_routes.py` | Runbook execution raises an unhandled exception |
 | Migration wave | `migration` | `migration_routes.py` | Wave status transitions to `complete` |
 | **Tenant resize request** *(v2.6.5)* | `tenant_rightsizing_request` | `tenant_portal/rightsizing_routes.py` | Tenant clicks "Request Resize" on a right-sizing recommendation |
+| **Admin rightsizing ticket** *(v2.6.6)* | `admin_rightsizing` | `pf9-ui/src/components/RightsizingTab.tsx` | Admin clicks "🎫 Open Ticket" on a right-sizing recommendation card |
 
 The first five hooks call `_auto_ticket()` directly in-process. The tenant resize request hook **calls the `/internal/tickets/auto` HTTP endpoint** (cross-service, `X-Internal-Secret` authenticated) because the tenant portal is a separate service.
 

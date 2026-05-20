@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.6] - 2026-05-20
+
+### Added
+- **"Open Ticket" button on admin Right-Sizing cards** (`pf9-ui/src/components/RightsizingTab.tsx`): Each recommendation card in the admin Right-Sizing & Cost Waste view now has a **🎫 Open Ticket** button above the Snooze/Dismiss actions. Clicking it calls `POST /api/tickets/_auto` to create a support ticket routed to `Tier3 Support`, pre-filled with the VM name, classification, current/recommended flavor, CPU/RAM p95 utilisation, and estimated monthly savings. Uses `auto_source="admin_rightsizing"` + `auto_source_id="rightsizing:{rec_id}"` for deduplication — subsequent clicks return the same ticket ref. Priority is `high` for idle VMs, `normal` for over-provisioned. Once a ticket is created the button is replaced by the ticket reference.
+
+---
+
 ## [2.6.5] - 2026-05-20
 
 ### Added

@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.6.5  
-**Last Updated**: May 18, 2026  
+**Version**: 2.6.6  
+**Last Updated**: May 20, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -833,6 +833,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.6.6 — Admin Right-Sizing Open Ticket Button
+
+- **"Open Ticket" button on every right-sizing recommendation card**: The admin Right-Sizing & Cost Waste tab now shows a **🎫 Open Ticket** button above Snooze/Dismiss on each card. Clicking it calls `POST /api/tickets/_auto` (same endpoint used by Drift Detection, Health Score, and other admin auto-ticket sources) and creates a support ticket routed to **Tier3 Support** with:
+  - **Title**: `Rightsizing: <vm_name> — <classification>` (e.g. `Rightsizing: erezubunorg1 — Over Provisioned`)
+  - **Description**: VM ID, project, classification, current → recommended flavor, CPU/RAM p95 values, and estimated monthly savings
+  - **Priority**: `high` for idle VMs; `normal` for over-provisioned
+  - **Deduplication**: `auto_source=admin_rightsizing`, `auto_source_id=rightsizing:{rec_id}` — clicking again returns the same ticket ref instead of creating a duplicate
+  - **Button state**: Replaced by the ticket reference (e.g. `TKT-2026-00005`) after successful creation
 
 ### v2.6.5 — Auto-Create Internal Ticket on Tenant Resize Request
 

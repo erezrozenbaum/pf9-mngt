@@ -1,5 +1,6 @@
 # Features Reference — Technical Deep Dive (v2.6)
 
+> **v2.6.6 NEW**: Admin Right-Sizing Open Ticket button — each recommendation card in the admin Right-Sizing tab now has a 🎫 Open Ticket action; creates a support ticket via `/api/tickets/_auto` (`auto_source=admin_rightsizing`), routes to Tier3 Support, deduplicates on `rightsizing:{rec_id}`
 > **v2.6.4 NEW/FIX**: Billing impact fields (`current_monthly_cost`, `recommended_monthly_cost`, `currency`) on all rightsizing recommendations; admin project dropdown filter; tenant Request Resize CTA (`POST /tenant/rightsizing/{id}/request-change`); `tenant_portal_role` granted `UPDATE ON rightsizing_recommendations` + `SELECT ON metering_flavor_pricing`
 > **v2.6.3 FIX**: Metering worker API fallback unauthenticated (401) → `cpu_usage_percent = NULL` in all recent `metering_resources` rows → RightsizingEngine found 0 qualifying VMs; fixed by using `/internal/monitoring/vm-metrics` with `X-Internal-Secret`
 > **v2.6.2 FIX**: Tenant portal Cost Optimisation 500 error (`inject_rls_vars` connection/cursor bug); Right-Sizing nav item seeded into DB navigation
