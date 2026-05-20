@@ -26,7 +26,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import PyJWTError
 from passlib.context import CryptContext
 from pydantic import BaseModel
 
@@ -702,7 +703,7 @@ def verify_token(token: str) -> Optional[TokenData]:
             # DB unavailable — JWT signature + expiry + Redis check still apply.
             pass
         return TokenData(username=username, role=role)
-    except JWTError:
+    except PyJWTError:
         return None
 
 # User Management

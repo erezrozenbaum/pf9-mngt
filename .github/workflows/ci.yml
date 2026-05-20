@@ -169,11 +169,11 @@ jobs:
           pip install pip-audit
           # pip-audit 2.9+ removed --severity; run once and fail CI on any CVE.
           # The --desc flag prints the advisory description beside each finding.
-          # CVE-2024-23342 (ecdsa): timing side-channel; the ecdsa project
-          # explicitly considers side-channel attacks out of scope with no fix
-          # planned. ecdsa is a transitive dep of python-jose — ignored.
+          # PYSEC-2025-183 (pyjwt): "weak encryption" — disputed by PyJWT supplier;
+          # the key length is chosen by the application (we use HS256 with a 48-char
+          # secret). Transitive dep of openai/anthropic SDKs; no fix version available.
           pip-audit -r api/requirements.txt --desc \
-            --ignore-vuln CVE-2024-23342
+            --ignore-vuln PYSEC-2025-183
 
       - name: Create stub .env (required for docker compose build to parse)
         run: |
