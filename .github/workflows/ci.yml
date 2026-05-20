@@ -211,7 +211,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: pip install pytest python-jose requests cryptography
+        run: pip install pytest PyJWT requests cryptography
 
       - name: Copy CI environment file
         run: cp .env.ci .env
