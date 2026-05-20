@@ -286,6 +286,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v2.6.7** — Bug fix: VM provisioning batch failed immediately on execute; `get_provisioner_client()` bypasses `Pf9Client.__init__` so the `_cb` circuit-breaker attribute was never set, causing `AttributeError` in `_cb_request()` on every provisioning attempt (May 2026)
 - **v2.6.6** — Admin Right-Sizing & Cost Waste page: each recommendation card now has a **🎫 Open Ticket** button that creates a support ticket via `/api/tickets/_auto`, pre-filled with VM details, routed to Tier3 Support, with deduplication (`auto_source=admin_rightsizing`) (May 2026)
 - **v2.6.5** — Tenant "Request Resize" now auto-creates a tracked internal support ticket (routed to `Tier3 Support` by default) and sends an ops team notification email via the `rightsizing_request` template; replaces standalone email to `support_email` branding field; ticket deduplication prevents duplicate tickets for repeated clicks; new `/internal/tickets/auto` endpoint for cross-service ticket creation (May 2026)
 - **v2.6.4** — Right-Sizing billing impact display (monthly cost + projected savings in configured currency) for both admin and tenant portal; admin project dropdown filter; tenant "Request Resize" CTA; fixed `tenant_portal_role` missing `UPDATE` grant on `rightsizing_recommendations` and `SELECT` grant on `metering_flavor_pricing` (May 2026)

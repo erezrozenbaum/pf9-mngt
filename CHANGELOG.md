@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.7] - 2026-05-20
+
+### Fixed
+- **VM provisioning batch immediately fails on execute** (`api/vm_provisioning_service_user.py`): `get_provisioner_client()` builds a `Pf9Client` via `__new__()` + manual attribute assignment, bypassing `__init__`. The circuit-breaker attribute `_cb` added to `__init__` was therefore never set on the provisioner client. Every call to `_cb_request()` raised `AttributeError: 'Pf9Client' object has no attribute '_cb'`, which the execution thread caught and marked the batch as failed immediately. Fixed by importing `_get_circuit_breaker` and assigning `client._cb` after the rate-limiter block, mirroring `Pf9Client.__init__`.
+
+---
+
 ## [2.6.6] - 2026-05-20
 
 ### Added

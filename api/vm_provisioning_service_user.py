@@ -225,6 +225,10 @@ def get_provisioner_client(
     client._rl_last = __import__("time").monotonic()
     client._rl_lock = __import__("threading").Lock()
 
+    # Circuit breaker — must mirror Pf9Client.__init__ so _cb_request() works
+    from pf9_control import _get_circuit_breaker
+    client._cb = _get_circuit_breaker(client.region_id)
+
     # authenticate() does the real Keystone password auth + endpoint discovery
     client.authenticate()
     # Override project_id with the pre-resolved UUID (authenticate() may resolve it again
