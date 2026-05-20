@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.6.6  
+**Version**: 2.6.8  
 **Last Updated**: May 20, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.6.8 — Drift Detection False Positive Fix
+
+- **Skip NULL → value drift events** (`db_writer.py`): The drift engine now ignores field transitions where the previous value was `NULL`. Previously, a boot volume's `server_id` going from `NULL` to a VM UUID during new-VM provisioning triggered the `volumes.server_id` critical drift rule with message "Volume reattached to a different VM" — a false positive. Only transitions between two known non-null states (e.g. `vm_a` → `vm_b`) now produce drift events. This eliminates spurious critical alerts for every new VM provisioned.
+- **Affected rule**: `volumes.server_id` (severity `critical`, description "Volume reattached to a different VM") — existing open false-positive events (e.g. event #1244) can be acknowledged/dismissed via the Drift Detection page.
 
 ### v2.6.6 — Admin Right-Sizing Open Ticket Button
 

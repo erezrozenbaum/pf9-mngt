@@ -423,7 +423,13 @@ def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],
         new_val = str(new_record.get(field, "")) if new_record.get(field) is not None else None
         if old_val == new_val:
             continue
-        # Field changed — emit drift event.
+        # Skip first-time assignments (old_value IS NULL): the field was never set
+        # before, so this is initialization rather than a genuine state change.
+        # For example, a boot volume's server_id going NULL→VM_UUID during new-VM
+        # provisioning is NOT a "Volume reattached to a different VM" event.
+        if old_val is None:
+            continue
+        # Field changed between two known states — emit drift event.
         # Use a per-event savepoint so that a failed INSERT does NOT leave the
         # PostgreSQL transaction in an aborted state, which would propagate as
         # "current transaction is aborted" errors on all subsequent queries.

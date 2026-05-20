@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.8] - 2026-05-20
+
+### Fixed
+- **Drift detection false positive on new-VM provisioning** (`db_writer.py`): When a new VM was created, its boot volume's `server_id` changed from `NULL` → the VM UUID, triggering the `volumes.server_id` drift rule with severity **critical** and description "Volume reattached to a different VM". This was a false positive — the volume was attached for the first time, not moved from one VM to another. Fixed by skipping drift events where `old_value IS NULL`; only transitions between two known non-null states (e.g. `vm_a` → `vm_b`) now emit drift events.
+
+---
+
 ## [2.6.7] - 2026-05-20
 
 ### Fixed
