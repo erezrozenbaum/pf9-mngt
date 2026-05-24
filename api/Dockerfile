@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy API sources, shared module, DB migration scripts, and docs into the image
 COPY --chown=1000:1000 api/ ./
+COPY --chown=1000:1000 shared/ ./shared/
 COPY --chown=1000:1000 p9_common.py ./
 COPY --chown=1000:1000 run_migration.py ./
 COPY --chown=1000:1000 db/ ./db/

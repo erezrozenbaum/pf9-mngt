@@ -1420,7 +1420,7 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v2.9.0** (May 2026) — Closed-Loop Event Automation: `clea_policies` and `clea_executions` tables added; RBAC rows for `clea` resource; `admin_tools` nav item; migration file `migrate_v2_9_0_clea.sql`.
+Current schema version: **v2.10.0** (May 2026) — No schema changes (code-only release: shared internal library extraction). Previous schema: v2.9.0 — Closed-Loop Event Automation: `clea_policies` and `clea_executions` tables added; RBAC rows for `clea` resource; `admin_tools` nav item; migration file `migrate_v2_9_0_clea.sql`.
 
 ## Health Score Configuration (v2.3.0)
 

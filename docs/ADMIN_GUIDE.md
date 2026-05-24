@@ -834,6 +834,30 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v2.10.0 — Shared Internal Library
+
+- **`shared/` package** (repo root): Single source of truth for helpers shared across all pf9-mngt services.
+  - `shared/secret_helper.py`: Docker Secrets / env-var reader. Reads secret file content first; raises `PermissionError` for non-empty files whose group or other write bits are set; empty placeholder files (used in local dev with Docker Compose) are silently skipped and fall back to the corresponding env var.
+  - `shared/crypto_helper.py`: Fernet encrypt/decrypt helpers (`fernet_encrypt`, `fernet_decrypt`, `_derive_key`), moved from `api/crypto_helper.py`.
+  - `shared/request_helpers.py`: `get_request_ip(request)` — extracts the real client IP from `X-Real-IP`, falling back to the TCP peer address.
+- **Backward-compatible wrappers**: `api/crypto_helper.py`, `api/secret_helper.py`, `api/request_helpers.py`, `tenant_portal/secret_helper.py`, and `tenant_portal/request_helpers.py` are now thin re-export modules. No import changes were required anywhere in the service code.
+- **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
+- **No database changes** — pure code refactoring; no migration file required.
+
+### v2.9.0 — Closed-Loop Event Automation
+
+- **Automation Policies** (`api/clea_routes.py`): New policy engine maps operational event types to runbooks. Each `clea_policy` row specifies an `event_type`, `runbook_name`, `approval_mode` (`auto` or `single_approval`), and an optional `condition_expr` JSONB filter. Superadmins manage policies via `GET/POST/PUT/DELETE /api/admin/clea/policies`; admins have read-only access.
+- **Event-Driven Runbook Triggering** (`api/event_bus.py`): After every `operational_events` INSERT the event bus now evaluates all enabled policies for that `event_type`. `auto`-mode policies immediately create a `runbook_executions` record and run the runbook engine; `single_approval` policies create a `clea_executions` record in `pending` state for an operator to approve or reject.
+- **Execution Log API**: `GET /api/admin/clea/executions` returns execution history with status (`pending → approved/rejected/executed/skipped`). `POST /api/admin/clea/executions/{id}/approve` and `.../reject` advance the state machine.
+- **Automation UI Tab** (`pf9-ui/src/components/CleaPoliciesTab.tsx`): New "⚡ Automation" page under Admin Tools. Two-tab view: Policies table (CRUD modal for superadmins, read-only for admins) and Execution Log with inline approve/reject buttons on pending entries.
+- **DB schema** (`db/migrate_v2_9_0_clea.sql`): Adds `clea_policies`, `clea_executions`, RBAC rows for `clea` resource, `admin_tools` nav item. Seeded with 2 demo policies (`drift.resource_orphaned` → `orphan_resource_cleanup`, `quota.warning` → `quota_threshold_check`).
+
+### v2.8.0 — Schema Consolidation
+
+- **Retired `_ensure_tables()` lazy DDL**: Removed the `_ensure_tables()` / `_ensure_*()` pattern from all API route modules (`integration_routes.py`, `ticket_routes.py`, `onboarding_routes.py`, `migration_routes.py`, `provisioning_routes.py`, `runbook_routes.py`, `vm_provisioning_routes.py`). Tables are now exclusively defined in `db/init.sql` (fresh installs) and `db/migrate_*.sql` (existing installs). Runtime-DDL caused schema drift when the API started before migrations ran.
+- **New migration** (`db/migrate_v2_8_0_retire_ensure_tables.sql`): Adds `onboarding_batches`, `onboarding_customers`, `onboarding_projects`, `onboarding_networks`, `onboarding_users`, `migration_flavor_staging`, `vm_provisioning_batches`, `vm_provisioning_vms` for existing installs. All `CREATE TABLE IF NOT EXISTS` — safe no-ops on current deployments.
+- **Platform Health right-panel fix** (`pf9-ui/src/App.tsx`): Added `"platform_health"` to `hideDetailsPanel` so the detail side-panel is hidden on the Platform Health screen.
+
 ### v2.7.0 — Event Bus, Platform Health Endpoint, Extended Demo Seeder
 
 - **Event Bus** (`api/event_bus.py`): `emit_event()` fire-and-forget helper writes operational events to the `operational_events` timeline table from any request handler. Runs in a daemon background thread so failures never block request paths. Includes deduplication via the `(source, source_id)` partial unique index.

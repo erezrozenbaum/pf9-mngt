@@ -364,12 +364,12 @@ class TestPasswordResetSecurity:
 
 
 class TestSecretFilePermissions:
-    """secret_helper.py must raise PermissionError on writable secret files (v1.93.18 L3)."""
+    """shared/secret_helper.py must raise PermissionError on writable secret files (v1.93.18 L3)."""
 
     def test_secret_helper_raises_on_write_bits_in_source(self):
-        """secret_helper.py must contain a PermissionError raise for write bits."""
+        """shared/secret_helper.py must contain a PermissionError raise for write bits."""
         import os
-        sh_path = os.path.join(os.path.dirname(__file__), "..", "api", "secret_helper.py")
+        sh_path = os.path.join(os.path.dirname(__file__), "..", "shared", "secret_helper.py")
         with open(sh_path, encoding="utf-8") as f:
             source = f.read()
         assert "PermissionError" in source, (

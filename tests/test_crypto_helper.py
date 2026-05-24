@@ -20,6 +20,7 @@ _API_DIR = os.path.join(os.path.dirname(__file__), "..", "api")
 if _API_DIR not in sys.path:
     sys.path.insert(0, _API_DIR)
 
+import shared.crypto_helper as _shared_cm_mod  # noqa: E402
 import crypto_helper as _cm_mod  # noqa: E402
 from crypto_helper import fernet_encrypt, fernet_decrypt, _derive_key
 
@@ -32,13 +33,13 @@ _OTHER_SECRET_VALUE = "a-completely-different-key-value!"
 
 
 def _patch_read_secret(monkeypatch, return_value: str):
-    """Patch crypto_helper.read_secret to return *return_value* unconditionally."""
-    monkeypatch.setattr(_cm_mod, "read_secret", lambda name, env_var=None, **kw: return_value)
+    """Patch shared.crypto_helper.read_secret to return *return_value* unconditionally."""
+    monkeypatch.setattr(_shared_cm_mod, "read_secret", lambda name, env_var=None, **kw: return_value)
 
 
 def _patch_read_secret_missing(monkeypatch):
-    """Patch crypto_helper.read_secret to return empty string (secret absent)."""
-    monkeypatch.setattr(_cm_mod, "read_secret", lambda name, env_var=None, **kw: "")
+    """Patch shared.crypto_helper.read_secret to return empty string (secret absent)."""
+    monkeypatch.setattr(_shared_cm_mod, "read_secret", lambda name, env_var=None, **kw: "")
 
 
 class TestDeriveKey:

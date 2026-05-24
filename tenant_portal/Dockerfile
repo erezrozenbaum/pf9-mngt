@@ -12,6 +12,7 @@ COPY tenant_portal/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=1000:1000 tenant_portal/ ./
+COPY --chown=1000:1000 shared/ ./shared/
 COPY --chown=1000:1000 p9_common.py ./
 
 # Create writable log dir owned by app user (chown only this dir — not all of /app,

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.10.0] - 2026-05-24
+
+### Changed
+- **Shared internal library** (`shared/`): Extracted duplicated helper code that was maintained separately in `api/` and `tenant_portal/` into a single `shared/` package at the repo root — the single source of truth for all pf9-mngt services.
+  - `shared/secret_helper.py`: Docker Secrets / env-var reader with hardened permission checks (raises `PermissionError` for non-empty secret files with group/other write bits; empty placeholder files used in local dev are safely skipped).
+  - `shared/crypto_helper.py`: Fernet encrypt/decrypt helpers (moved from `api/crypto_helper.py`).
+  - `shared/request_helpers.py`: `get_request_ip()` FastAPI helper (was duplicated in both services).
+- `api/crypto_helper.py`, `api/secret_helper.py`, `api/request_helpers.py` and `tenant_portal/secret_helper.py`, `tenant_portal/request_helpers.py` are now thin backward-compatible re-exports — no cascading import changes required.
+- Both `api/Dockerfile` and `tenant_portal/Dockerfile` updated to `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
+- `pytest.ini`: added `pythonpath = .` so `shared` is importable from the repo root during test runs.
+- `tests/test_crypto_helper.py`: updated `monkeypatch` target to `shared.crypto_helper.read_secret` (correct module after extraction).
+- `tests/test_auth.py`: updated static source check to verify `shared/secret_helper.py` (the new canonical location).
+
+---
+
 ## [2.9.0] - 2026-05-24
 
 ### Added

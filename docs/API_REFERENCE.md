@@ -1,6 +1,9 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.7.0 — Event Bus, Platform Health endpoint, extended demo seeder.
+> **Version**: v2.10.0 — Shared internal library: `secret_helper`, `crypto_helper`, and `request_helpers` extracted to `shared/`; both Dockerfiles updated; backward-compatible re-export wrappers; no API surface changes.
+> Previous: v2.9.0 — Closed-Loop Event Automation: `clea_policies` + `clea_executions` tables, event-bus policy evaluation, auto/approval-gated runbook triggers, admin Automation UI tab.
+> Previous: v2.8.0 — Schema consolidation: retired `_ensure_tables()` lazy DDL from all API route modules; `db/migrate_v2_8_0_retire_ensure_tables.sql`.
+> Previous: v2.7.0 — Event Bus, Platform Health endpoint, extended demo seeder.
 > Previous: v2.6.x — Right-sizing recommendations, billing impact, auto-ticket on tenant resize request, drift false-positive fix.
 > Previous: v2.5.0 — Circuit breaker state surfaced in region sync-status endpoint.
 > Previous: v2.4.0 — Notification DLQ (`GET /notifications/admin/retry-queue`).
@@ -2530,6 +2533,109 @@ Admin self-monitoring endpoint. Returns infrastructure component health and back
 ```
 
 `overall` is `"degraded"` if the database is unreachable, Redis returns an error, or any worker reports `"failed"` or `"query_error"`.
+
+---
+
+## Automation Policy Endpoints *(v2.9.0)*
+
+Policy endpoints require `clea:read` (admin/superadmin). Write/delete endpoints require `clea:write` (superadmin only).
+
+### List Policies
+**GET** `/api/admin/clea/policies`  
+*Requires: `clea:read`*
+
+Returns all automation policies ordered by `created_at` descending.
+
+```json
+[
+  {
+    "id": 1,
+    "event_type": "drift.resource_orphaned",
+    "runbook_name": "orphan_resource_cleanup",
+    "approval_mode": "single_approval",
+    "condition_expr": null,
+    "enabled": true,
+    "label": "Auto-clean orphaned resources",
+    "description": "Triggers orphan cleanup runbook when a resource_orphaned drift event fires",
+    "created_by": "system",
+    "created_at": "2026-05-24T10:00:00Z",
+    "updated_at": "2026-05-24T10:00:00Z"
+  }
+]
+```
+
+### Create Policy
+**POST** `/api/admin/clea/policies`  
+*Requires: `clea:write` (superadmin)*
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `event_type` | string | ✅ | e.g. `drift.resource_orphaned`, `quota.warning` |
+| `runbook_name` | string | ✅ | Must match a runbook in `runbooks` table |
+| `approval_mode` | string | ✅ | `auto` or `single_approval` |
+| `condition_expr` | object | — | Optional JSONB key-equality filter on event metadata |
+| `enabled` | boolean | — | Default `true` |
+| `label` | string | — | Display name |
+| `description` | string | — | Free-text description |
+
+### Update Policy
+**PUT** `/api/admin/clea/policies/{id}`  
+*Requires: `clea:write` (superadmin)*
+
+Accepts any subset of the fields above (partial update).
+
+### Toggle Policy
+**PATCH** `/api/admin/clea/policies/{id}/toggle`  
+*Requires: `clea:write` (superadmin)*
+
+Flips `enabled` boolean. Returns updated policy object.
+
+### Delete Policy
+**DELETE** `/api/admin/clea/policies/{id}`  
+*Requires: `clea:write` (superadmin)*
+
+Returns `204 No Content`.
+
+---
+
+### List Executions
+**GET** `/api/admin/clea/executions`  
+*Requires: `clea:read`*
+
+Query params: `limit` (default 100), `status` (filter by status).
+
+```json
+[
+  {
+    "id": 42,
+    "policy_id": 1,
+    "event_id": 9901,
+    "event_type": "drift.resource_orphaned",
+    "runbook_name": "orphan_resource_cleanup",
+    "runbook_exec_id": "abc-123",
+    "status": "pending",
+    "approval_mode": "single_approval",
+    "triggered_by": "system",
+    "approved_by": null,
+    "created_at": "2026-05-24T11:00:00Z",
+    "updated_at": "2026-05-24T11:00:00Z"
+  }
+]
+```
+
+Status values: `pending` → `approved` / `rejected` / `executed` / `skipped`.
+
+### Approve Execution
+**POST** `/api/admin/clea/executions/{id}/approve`  
+*Requires: `clea:write` (superadmin)*
+
+Advances `pending` → launches runbook → `executed`. Returns updated execution object.
+
+### Reject Execution
+**POST** `/api/admin/clea/executions/{id}/reject`  
+*Requires: `clea:write` (superadmin)*
+
+Body: `{ "reason": "string" }` (optional). Advances `pending` → `rejected`.
 
 ---
 
