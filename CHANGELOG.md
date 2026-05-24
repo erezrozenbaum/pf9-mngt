@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.11.0] - 2026-05-25
+
+### Added
+- **Platform Health — Prometheus-backed pod metrics** (`api/platform_health_routes.py`): new `GET /api/admin/platform/metrics` endpoint proxies Prometheus range queries for all pods in the `pf9-mngt` namespace. Returns per-pod CPU (cores) and RAM (bytes) sparkline series over the last hour, PVC storage utilisation, and network receive rate. Falls back gracefully when Prometheus is not reachable (`prometheus_available: false`). Uses only stdlib `urllib` — no new dependencies.
+- **Platform Health UI redesign** (`pf9-ui/src/components/PlatformHealthTab.tsx`, `pf9-ui/src/styles/PlatformHealthTab.css`): complete visual overhaul matching the Right-Sizing page aesthetic.
+  - KPI summary tiles row (Components OK, Workers OK, DB latency, Redis latency) using `.metric-card` / `.metric-value` classes.
+  - Infrastructure component cards with colour-coded `borderLeft` accent (green / orange / red).
+  - Worker list as styled cards with left-border colour coding and detail pills.
+  - **Pod Metrics section**: canvas-based sparkline renderer (`Sparkline` component) draws CPU and RAM over 1 hour per pod; shown only when `prometheus_available: true`.
+  - PVC storage utilisation bars with colour-coded fill.
+  - Network receive-rate sparkline.
+  - All CSS variables updated to `--color-*` tokens consistent with the rest of the admin UI.
+- **Automation (CLEA) UI redesign** (`pf9-ui/src/components/CleaPoliciesTab.tsx`, `pf9-ui/src/styles/CleaPoliciesTab.css`): visual enhancement matching the Right-Sizing style.
+  - KPI summary tiles row (Total Policies, Enabled, Auto-Execute, Pending Approvals).
+  - Approval mode badges and execution status badges use inline colour tokens (green / amber / red) instead of static CSS classes.
+  - Table wrapped in a card with rounded corners and subtle shadow.
+  - Column headers uppercase with `--color-text-muted` styling.
+  - All CSS variables updated to `--color-*` tokens.
+- **Helm chart** (`k8s/helm/pf9-mngt/`): `PROMETHEUS_URL` and `K8S_NAMESPACE` environment variables added to the `pf9-api` deployment template; `prometheusUrl` default added to `values.yaml`.
+
+---
+
 ## [2.10.0] - 2026-05-24
 
 ### Changed

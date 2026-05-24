@@ -9,6 +9,13 @@ Returns a health snapshot of the platform's own infrastructure:
   - Worker last-run status (snapshot, backup, inventory, intelligence)
   - DB pool stats
 
+GET /api/admin/platform/metrics
+---------------------------------
+Proxies Prometheus range-query API to return pod CPU/RAM time-series,
+PVC utilisation, and HTTP request rate for all pods in the configured
+Kubernetes namespace (default: pf9-mngt).  Returns prometheus_available=false
+gracefully when Prometheus is unreachable (local dev / Docker Compose).
+
 RBAC: requires ``monitoring:read`` (admin, superadmin, operator).
 """
 
@@ -17,6 +24,9 @@ from __future__ import annotations
 import logging
 import os
 import time
+import urllib.request
+import urllib.parse
+import json as _json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -262,4 +272,166 @@ def get_platform_health(
             "db_pool": pool_stats,
         },
         "workers": workers,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Prometheus proxy helpers
+# ---------------------------------------------------------------------------
+
+_PROMETHEUS_URL = os.getenv(
+    "PROMETHEUS_URL",
+    "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090",
+)
+_K8S_NAMESPACE = os.getenv("K8S_NAMESPACE", "pf9-mngt")
+# How many seconds of history to return for sparklines (default 1 h)
+_METRICS_RANGE_S = 3600
+# Step between data-points (seconds) — 60 s gives 60 points per sparkline
+_METRICS_STEP_S = 60
+
+
+def _prom_query_range(query: str, start: float, end: float, step: int) -> list[list]:
+    """
+    Execute a Prometheus range query and return a list of (timestamp, value)
+    pairs for the first result series.  Returns [] on any error.
+    """
+    params = urllib.parse.urlencode({
+        "query": query,
+        "start": start,
+        "end": end,
+        "step": step,
+    })
+    url = f"{_PROMETHEUS_URL}/api/v1/query_range?{params}"
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = _json.loads(resp.read())
+        results = body.get("data", {}).get("result", [])
+        if results:
+            return [[float(ts), float(val)] for ts, val in results[0]["values"]]
+        return []
+    except Exception as exc:
+        logger.debug("Prometheus range query failed (%s): %s", query[:80], exc)
+        return []
+
+
+def _prom_query_instant(query: str) -> list[dict]:
+    """
+    Execute a Prometheus instant query and return the raw result list.
+    Returns [] on any error.
+    """
+    params = urllib.parse.urlencode({"query": query})
+    url = f"{_PROMETHEUS_URL}/api/v1/query?{params}"
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = _json.loads(resp.read())
+        return body.get("data", {}).get("result", [])
+    except Exception as exc:
+        logger.debug("Prometheus instant query failed (%s): %s", query[:80], exc)
+        return []
+
+
+def _prometheus_available() -> bool:
+    """Quick liveness check — hit /-/ready on the Prometheus server."""
+    url = f"{_PROMETHEUS_URL}/-/ready"
+    try:
+        with urllib.request.urlopen(url, timeout=2):
+            return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Metrics route
+# ---------------------------------------------------------------------------
+
+@router.get("/platform/metrics")
+def get_platform_metrics(
+    _user=Depends(require_permission("monitoring", "read")),
+):
+    """
+    Return Prometheus-backed pod metrics (CPU, RAM sparklines per pod),
+    PVC utilisation, and HTTP request rate for the configured K8s namespace.
+    Falls back gracefully with prometheus_available=false when Prometheus
+    is unreachable (e.g. local Docker Compose dev environment).
+    """
+    if not _prometheus_available():
+        return {"prometheus_available": False, "pods": [], "pvcs": [], "http_rps_series": []}
+
+    ns = _K8S_NAMESPACE
+    end = time.time()
+    start = end - _METRICS_RANGE_S
+    step = _METRICS_STEP_S
+
+    # ── Discover all pods in the namespace ──────────────────────────────────
+    pod_results = _prom_query_instant(
+        f'container_cpu_usage_seconds_total{{namespace="{ns}",container!="",container!="POD"}}'
+    )
+    pod_names: list[str] = sorted({r["metric"].get("pod", "") for r in pod_results if r["metric"].get("pod")})
+
+    # ── Per-pod CPU + RAM sparklines ─────────────────────────────────────────
+    pods: list[dict[str, Any]] = []
+    for pod in pod_names:
+        cpu_series = _prom_query_range(
+            f'sum(rate(container_cpu_usage_seconds_total{{namespace="{ns}",pod="{pod}",container!="",container!="POD"}}[5m]))',
+            start, end, step,
+        )
+        ram_series = _prom_query_range(
+            f'sum(container_memory_working_set_bytes{{namespace="{ns}",pod="{pod}",container!="",container!="POD"}})',
+            start, end, step,
+        )
+        # Derive a stable short name (strip replica-set / deployment hash suffix)
+        short = pod
+        parts = pod.rsplit("-", 2)
+        if len(parts) == 3 and len(parts[1]) in (5, 10) and len(parts[2]) == 5:
+            short = parts[0]
+        elif len(parts) >= 2 and len(parts[-1]) == 5:
+            short = "-".join(parts[:-1])
+
+        pods.append({
+            "pod": pod,
+            "short_name": short,
+            "cpu_series": cpu_series,     # [[ts, cores], ...]
+            "ram_series": ram_series,     # [[ts, bytes], ...]
+        })
+
+    # ── PVC utilisation ──────────────────────────────────────────────────────
+    used_results = _prom_query_instant(
+        f'kubelet_volume_stats_used_bytes{{namespace="{ns}"}}'
+    )
+    cap_results = _prom_query_instant(
+        f'kubelet_volume_stats_capacity_bytes{{namespace="{ns}"}}'
+    )
+    cap_map: dict[str, float] = {
+        r["metric"].get("persistentvolumeclaim", ""): float(r["value"][1])
+        for r in cap_results
+    }
+    pvcs: list[dict[str, Any]] = []
+    for r in used_results:
+        name = r["metric"].get("persistentvolumeclaim", "")
+        used = float(r["value"][1])
+        cap = cap_map.get(name, 0)
+        pvcs.append({
+            "name": name,
+            "used_bytes": used,
+            "capacity_bytes": cap,
+            "pct": round(used / cap * 100, 1) if cap > 0 else 0,
+        })
+    pvcs.sort(key=lambda x: x["pct"], reverse=True)
+
+    # ── HTTP request rate (nginx-ingress or kube metrics) ────────────────────
+    http_rps_series = _prom_query_range(
+        f'sum(rate(container_network_receive_packets_total{{namespace="{ns}"}}[5m]))',
+        start, end, step,
+    )
+
+    return {
+        "prometheus_available": True,
+        "namespace": ns,
+        "range_seconds": _METRICS_RANGE_S,
+        "step_seconds": step,
+        "pods": pods,
+        "pvcs": pvcs,
+        "http_rps_series": http_rps_series,
     }

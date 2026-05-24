@@ -167,6 +167,9 @@ api:
     openaiModel: gpt-4o-mini
     anthropicModel: claude-sonnet-4-20250514
     redactSensitive: "true"
+  prometheusUrl: ""   # e.g. http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+                      # Set this in the private deploy repo's values.prod.yaml.
+                      # Leave empty to disable pod-metrics proxy (Platform Health will show "Prometheus not reachable").
   service:
     type: ClusterIP
     port: 8000

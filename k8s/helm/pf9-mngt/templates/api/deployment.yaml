@@ -252,6 +252,16 @@ spec:
               value: {{ .Values.redis.cacheEnabled | quote }}
             - name: CACHE_TTL_SECONDS
               value: {{ .Values.redis.cacheTTLSeconds | quote }}
+            # --- Prometheus (pod metrics proxy) ---
+            # Only injected when prometheusUrl is set in values (private deploy repo).
+            # When absent the API falls back to its compiled-in default and
+            # returns prometheus_available=false gracefully in local/dev.
+            {{- if .Values.api.prometheusUrl }}
+            - name: PROMETHEUS_URL
+              value: {{ .Values.api.prometheusUrl | quote }}
+            {{- end }}
+            - name: K8S_NAMESPACE
+              value: {{ include "pf9mngt.namespace" . | quote }}
             # --- Ops Copilot ---
             - name: COPILOT_BACKEND
               value: {{ .Values.api.copilot.backend | quote }}

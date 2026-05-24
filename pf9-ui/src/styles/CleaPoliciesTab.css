@@ -1,160 +1,158 @@
 /* ============================================================
-   CleaPoliciesTab — v2.9.0
+   CleaPoliciesTab — v2.11.0
+   Styled to match Right-Sizing visual language: metric-card
+   summary tiles, inline badge colours, card-based layout.
    ============================================================ */
 
 .clea-root {
   padding: 1.5rem;
-  max-width: 1100px;
+  max-width: 1200px;
   margin: 0 auto;
   font-size: 0.875rem;
-  color: var(--text-primary, #1a1a2e);
+  color: var(--color-text, #1a1a2e);
 }
 
-/* Loading / error */
+/* ── Loading / Error ── */
 .clea-loading,
 .clea-error {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   padding: 2rem;
-  color: var(--text-secondary, #6b7280);
+  color: var(--color-text-muted, #6b7280);
 }
 
 .clea-spinner {
   width: 22px;
   height: 22px;
-  border: 3px solid var(--border-color, #e5e7eb);
-  border-top-color: var(--accent-color, #3b82f6);
+  border: 3px solid var(--color-border, #e5e7eb);
+  border-top-color: var(--color-info, #3b82f6);
   border-radius: 50%;
   animation: clea-spin 0.8s linear infinite;
 }
 
-@keyframes clea-spin {
-  to { transform: rotate(360deg); }
-}
+@keyframes clea-spin { to { transform: rotate(360deg); } }
 
-/* Header */
+/* ── Header ── */
 .clea-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 0.75rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
 }
 
 .clea-header h2 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1.35rem;
   font-weight: 700;
+  color: var(--color-text, #1a1a2e);
 }
 
 .clea-header__subtitle {
-  margin: 0.25rem 0 0;
-  color: var(--text-secondary, #6b7280);
-  font-size: 0.8rem;
+  margin: 0.3rem 0 0;
+  color: var(--color-text-muted, #6b7280);
+  font-size: 0.82rem;
+  max-width: 600px;
 }
 
-.clea-header__actions {
-  display: flex;
-  gap: 0.5rem;
+.clea-header__actions { display: flex; gap: 0.5rem; }
+
+/* ── KPI summary tiles ── */
+.clea-summary-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
 }
 
-/* Tabs */
+/* ── Tabs ── */
 .clea-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 2px solid var(--border-color, #e5e7eb);
+  border-bottom: 2px solid var(--color-border, #e5e7eb);
   margin-bottom: 1.25rem;
 }
 
 .clea-tab-btn {
-  padding: 0.5rem 1rem;
+  padding: 0.55rem 1.1rem;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
   margin-bottom: -2px;
   cursor: pointer;
   font-size: 0.875rem;
-  color: var(--text-secondary, #6b7280);
+  font-weight: 500;
+  color: var(--color-text-muted, #6b7280);
   transition: color 0.15s, border-color 0.15s;
 }
 
-.clea-tab-btn:hover {
-  color: var(--text-primary, #1a1a2e);
-}
+.clea-tab-btn:hover { color: var(--color-text, #1a1a2e); }
 
 .clea-tab-btn.active {
-  color: var(--accent-color, #3b82f6);
-  border-bottom-color: var(--accent-color, #3b82f6);
+  color: var(--color-info, #3b82f6);
+  border-bottom-color: var(--color-info, #3b82f6);
   font-weight: 600;
 }
 
-/* Table */
+/* ── Table ── */
 .clea-table-wrap {
   overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface, #fff);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
 .clea-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
 }
 
 .clea-table th {
-  background: var(--bg-secondary, #f8fafc);
-  border-bottom: 2px solid var(--border-color, #e5e7eb);
-  padding: 0.5rem 0.75rem;
+  background: var(--color-bg, #f9fafb);
+  border-bottom: 2px solid var(--color-border, #e5e7eb);
+  padding: 0.6rem 0.9rem;
   text-align: left;
   font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   white-space: nowrap;
-  color: var(--text-secondary, #6b7280);
+  color: var(--color-text-muted, #6b7280);
 }
 
 .clea-table td {
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--color-border, #f3f4f6);
   vertical-align: middle;
 }
 
-.clea-table tr:hover td {
-  background: var(--bg-hover, #f1f5f9);
-}
+.clea-table tbody tr:last-child td { border-bottom: none; }
+.clea-table tbody tr:hover td { background: var(--color-bg, #f9fafb); }
 
-/* Badges */
+/* ── Badge ── */
 .clea-badge {
   display: inline-block;
-  padding: 0.15rem 0.5rem;
-  border-radius: 9999px;
-  font-size: 0.7rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
 }
 
-.clea-badge--auto       { background: #dcfce7; color: #166534; }
-.clea-badge--single     { background: #fef9c3; color: #854d0e; }
-.clea-badge--disabled   { background: #f3f4f6; color: #6b7280; }
-.clea-badge--enabled    { background: #dcfce7; color: #166534; }
-.clea-badge--off        { background: #f3f4f6; color: #9ca3af; }
-.clea-badge--pending    { background: #fef9c3; color: #854d0e; }
-.clea-badge--approved   { background: #dcfce7; color: #166534; }
-.clea-badge--executed   { background: #dbeafe; color: #1e40af; }
-.clea-badge--rejected   { background: #fee2e2; color: #991b1b; }
-.clea-badge--skipped    { background: #f3f4f6; color: #6b7280; }
+/* ── Row actions ── */
+.clea-row-actions { display: flex; gap: 0.35rem; }
 
-/* Row actions */
-.clea-row-actions {
-  display: flex;
-  gap: 0.35rem;
-}
-
-/* Buttons */
+/* ── Buttons ── */
 .clea-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.375rem 0.75rem;
+  padding: 0.35rem 0.75rem;
   border-radius: 6px;
   border: 1px solid transparent;
   font-size: 0.8rem;
@@ -163,21 +161,18 @@
   transition: opacity 0.15s;
 }
 
-.clea-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.clea-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .clea-btn--primary {
-  background: var(--accent-color, #3b82f6);
+  background: var(--color-info, #3b82f6);
   color: #fff;
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--color-info, #3b82f6);
 }
 
 .clea-btn--secondary {
-  background: var(--bg-secondary, #f8fafc);
-  color: var(--text-primary, #1a1a2e);
-  border-color: var(--border-color, #e5e7eb);
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #1a1a2e);
+  border-color: var(--color-border, #e5e7eb);
 }
 
 .clea-btn--danger {
@@ -192,18 +187,29 @@
   border-color: #86efac;
 }
 
-/* Empty state */
+/* ── Empty state ── */
 .clea-empty {
   padding: 3rem;
   text-align: center;
-  color: var(--text-secondary, #6b7280);
+  color: var(--color-text-muted, #6b7280);
 }
 
-/* Modal overlay */
+/* ── Error message ── */
+.clea-error-msg {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 1rem;
+  color: #991b1b;
+  font-size: 0.82rem;
+}
+
+/* ── Modal ── */
 .clea-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0,0,0,0.45);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -212,9 +218,9 @@
 }
 
 .clea-modal {
-  background: var(--bg-primary, #fff);
+  background: var(--color-surface, #fff);
   border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
   width: 100%;
   max-width: 520px;
   padding: 1.5rem;
@@ -226,16 +232,14 @@
   font-weight: 700;
 }
 
-.clea-form-row {
-  margin-bottom: 1rem;
-}
+.clea-form-row { margin-bottom: 1rem; }
 
 .clea-form-row label {
   display: block;
   font-size: 0.8rem;
   font-weight: 600;
   margin-bottom: 0.35rem;
-  color: var(--text-secondary, #6b7280);
+  color: var(--color-text-muted, #6b7280);
 }
 
 .clea-form-row input,
@@ -243,11 +247,11 @@
 .clea-form-row textarea {
   width: 100%;
   padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border-color, #e5e7eb);
+  border: 1px solid var(--color-border, #e5e7eb);
   border-radius: 6px;
   font-size: 0.8rem;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #1a1a2e);
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #1a1a2e);
   box-sizing: border-box;
 }
 
@@ -266,15 +270,6 @@
 
 .clea-form-hint {
   font-size: 0.72rem;
-  color: var(--text-secondary, #6b7280);
+  color: var(--color-text-muted, #6b7280);
   margin-top: 0.2rem;
-}
-
-.clea-error-msg {
-  padding: 0.5rem 0.75rem;
-  background: #fee2e2;
-  color: #991b1b;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  margin-bottom: 1rem;
 }

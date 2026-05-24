@@ -844,6 +844,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.11.0 — Enhanced Platform Health UI & Prometheus Pod Metrics
+
+- **`GET /api/admin/platform/metrics`** (`api/platform_health_routes.py`): New endpoint proxies Prometheus range queries for all pods in the `pf9-mngt` namespace. Returns per-pod CPU (cores) and RAM (bytes) time-series over the last hour (60-second resolution), PVC storage utilisation, and network receive rate. Falls back gracefully with `prometheus_available: false` when Prometheus is unreachable (local Docker Compose dev environment). Uses only stdlib `urllib` — no new dependencies. RBAC: `monitoring / read`.
+- **Platform Health UI redesign** (`pf9-ui/src/components/PlatformHealthTab.tsx`): Complete visual overhaul — KPI summary tiles (Components OK, Workers OK, DB / Redis latency) using `.metric-card` layout; infrastructure component cards with colour-coded `borderLeft` accent; worker cards with status-based left border; canvas-based `Sparkline` component for pod CPU/RAM charts; PVC utilisation bars; network receive-rate sparkline. Pod metrics section hidden when Prometheus is unavailable.
+- **CLEA Automation UI redesign** (`pf9-ui/src/components/CleaPoliciesTab.tsx`): KPI summary tiles (Total Policies, Enabled, Auto-Execute, Pending Approvals); approval mode badges and execution status badges use inline colour tokens; table wrapped in a card with rounded corners and column headers styled with `--color-text-muted`.
+- **Helm chart** (`k8s/helm/pf9-mngt`): `PROMETHEUS_URL` and `K8S_NAMESPACE` env vars added to the `pf9-api` deployment template; `api.prometheusUrl` value defaults to `""` (empty = disabled); override in private deploy repo's `values.prod.yaml`.
+- **`.env.example`**: `PROMETHEUS_URL` and `K8S_NAMESPACE` documented with full setup notes.
+
 ### v2.9.0 — Closed-Loop Event Automation
 
 - **Automation Policies** (`api/clea_routes.py`): New policy engine maps operational event types to runbooks. Each `clea_policy` row specifies an `event_type`, `runbook_name`, `approval_mode` (`auto` or `single_approval`), and an optional `condition_expr` JSONB filter. Superadmins manage policies via `GET/POST/PUT/DELETE /api/admin/clea/policies`; admins have read-only access.

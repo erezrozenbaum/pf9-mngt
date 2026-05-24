@@ -786,7 +786,31 @@ The Helm chart deploys a `PrometheusRule` resource (`pf9-mngt-alerts`) into the 
 
 To disable alert rules: set `alerting.enabled: false` in `values.prod.yaml`.
 
-### 11.6 Upgrading the monitoring stack
+### 11.8 Platform Health — pod-metrics proxy
+
+Once `kube-prometheus-stack` is installed, enable the **Platform Health** pod-metrics
+dashboard by setting `prometheusUrl` in your private deploy repo's `values.prod.yaml`:
+
+```yaml
+# pf9-mngt-deploy / values.prod.yaml
+api:
+  prometheusUrl: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+```
+
+Replace `kube-prometheus-stack` with the Helm release name you chose during install if
+you used a different name.
+
+After ArgoCD applies the change, the **Platform Health** admin page will show:
+- Per-pod CPU and RAM sparklines (last 1 hour, 60-second resolution)
+- PVC storage utilisation bars
+- Network receive-rate sparkline
+- Namespace scoped to the `pf9-mngt` namespace (configurable via `K8S_NAMESPACE` env var)
+
+**In local Docker Compose** the `PROMETHEUS_URL` variable is left empty in `.env.example`.
+The endpoint returns `prometheus_available: false` and the UI displays a "Prometheus not
+reachable" notice — no errors, no impact on other functionality.
+
+
 
 ```bash
 # Copy updated values file to the cluster control plane, then:

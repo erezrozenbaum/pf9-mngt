@@ -1,5 +1,6 @@
-# Features Reference — Technical Deep Dive (v2.10)
+# Features Reference — Technical Deep Dive (v2.11)
 
+> **v2.11.0 NEW**: Enhanced Platform Health UI + Prometheus pod-metrics proxy — `GET /api/admin/platform/metrics` returns per-pod CPU/RAM sparklines (1h), PVC utilisation, and network receive rate sourced from `kube-prometheus-stack`; Platform Health admin page redesigned with KPI summary tiles, colour-coded infrastructure cards, canvas-based sparklines, and PVC usage bars. CLEA Automation tab redesigned with KPI summary row and inline-coloured mode/status badges. Both pages now match the Right-Sizing visual language. `PROMETHEUS_URL` + `K8S_NAMESPACE` env vars added; Helm chart updated.
 > **v2.10.0 NEW**: Shared internal library — `secret_helper`, `crypto_helper`, and `request_helpers` extracted from `api/` and `tenant_portal/` into a new `shared/` package (repo root). Single source of truth; both Dockerfiles updated; backward-compatible re-export wrappers. No API or schema changes.
 > **v2.9.0 NEW**: Closed-Loop Event Automation — `clea_policies` table maps operational event types to runbooks with `auto` or `single_approval` modes; event bus evaluates policies after every event write; CRUD API (`/api/admin/clea/policies`), execution log with approve/reject endpoints, admin "⚡ Automation" UI tab under Admin Tools.
 > **v2.8.0 NEW**: Schema consolidation — retired `_ensure_tables()` lazy DDL anti-pattern from all 7 API route modules; all tables now defined in `db/init.sql` + `db/migrate_*.sql`; `vm_provisioning_*`, `onboarding_*`, `migration_flavor_staging` tables added to init.sql for clean installs.
@@ -371,6 +372,37 @@ A single engineering console covering every operational surface with enterprise-
 - **Authenticated Metrics (UI)**: `GET /api/metrics` — Admin/Superadmin only
 - **Authenticated Logs (UI)**: `GET /api/logs` — with `limit`, `level`, `source`, `log_file` params
 - **Swagger Docs**: `GET /docs` — interactive API documentation
+
+### 🏥 Platform Health & Self-Monitoring *(v2.7.0 → v2.11.0)*
+
+**Admin Tools → Platform Health** provides a real-time self-monitoring dashboard:
+
+**Infrastructure status** (DB latency, Redis ping, pool stats) and **worker heartbeats** styled as colour-coded cards with left-border accent (green / amber / red).
+
+**KPI summary tiles** (v2.11.0): Components OK, Workers OK, DB latency, Redis latency — using the same `.metric-card` layout as Right-Sizing.
+
+**Prometheus-backed pod metrics** (v2.11.0, Kubernetes only):
+- `GET /api/admin/platform/metrics` — proxies `kube-prometheus-stack` range queries
+- Per-pod CPU (cores) and RAM sparklines over the last 1 hour at 60-second resolution
+- PVC storage utilisation progress bars
+- Network receive-rate sparkline
+- Graceful fallback: returns `prometheus_available: false` when Prometheus is unreachable (local Docker Compose dev)
+- Configured via `PROMETHEUS_URL` env var (set in the private deploy repo's `values.prod.yaml`)
+
+**Backend**: `api/platform_health_routes.py` — uses only stdlib `urllib` (no new dependencies).
+**RBAC**: requires `monitoring / read` permission.
+**Frontend**: `pf9-ui/src/components/PlatformHealthTab.tsx` + canvas-based `Sparkline` component.
+
+### ⚡ CLEA — Closed-Loop Event Automation *(v2.9.0 → v2.11.0)*
+
+**Admin Tools → Automation** manages policy-driven runbook execution:
+- `clea_policies` table maps event types → runbooks with `auto` or `single_approval` approval modes
+- Event bus evaluates policies after every `emit_event()` write
+- CRUD API: `POST/GET/PUT/DELETE /api/admin/clea/policies`
+- Execution log with approve/reject endpoints: `GET /api/admin/clea/executions`
+- **KPI summary tiles** (v2.11.0): Total Policies, Enabled, Auto-Execute count, Pending Approvals
+- Mode badges colour-coded inline: green (auto), amber (approval), red (disabled)
+- Execution status badges: green (executed/approved), amber (pending), red (rejected), grey (skipped)
 
 ---
 

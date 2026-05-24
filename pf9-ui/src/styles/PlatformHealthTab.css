@@ -1,6 +1,289 @@
 /* ============================================================
-   PlatformHealthTab — v2.7.0
+   PlatformHealthTab — v2.11.0
+   Styled to match Right-Sizing visual language: metric-card
+   summary tiles, card left-border colour coding, pod sparklines.
    ============================================================ */
+
+/* ── Root ── */
+.ph-root {
+  padding: 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  font-size: 0.875rem;
+  color: var(--color-text, #1a1a2e);
+}
+
+/* ── Loading / Error ── */
+.ph-loading,
+.ph-error {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.ph-spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--color-border, #e5e7eb);
+  border-top-color: var(--color-info, #3b82f6);
+  border-radius: 50%;
+  animation: ph-spin 0.8s linear infinite;
+}
+
+@keyframes ph-spin { to { transform: rotate(360deg); } }
+
+.ph-error__icon { font-size: 1.25rem; }
+
+/* ── Header ── */
+.ph-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.ph-header__left  { display: flex; align-items: center; gap: 1rem; }
+.ph-header__right { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+
+.ph-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--color-text, #1a1a2e);
+}
+
+.ph-overall {
+  padding: 0.25rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.ph-overall--ok       { background: #dcfce7; color: #16a34a; }
+.ph-overall--degraded { background: #fef3c7; color: #d97706; }
+
+.ph-timestamp {
+  font-size: 0.78rem;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.ph-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted, #6b7280);
+  cursor: pointer;
+}
+
+.ph-btn {
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 6px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #374151);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ph-btn:hover { background: var(--color-bg, #f3f4f6); }
+
+/* ── KPI summary tiles (matches .metric-card in RightsizingTab) ── */
+.ph-summary-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+}
+
+/* ── Sections ── */
+.ph-section { margin-bottom: 2rem; }
+
+.ph-section__title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text, #374151);
+  margin: 0 0 0.875rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.ph-section__sub {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-text-muted, #6b7280);
+}
+
+/* ── Infrastructure component grid ── */
+.ph-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+/* ── Metric rows inside component cards ── */
+.ph-metric {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border-top: 1px solid var(--color-border, #f3f4f6);
+}
+
+.ph-metric__label { color: var(--color-text-muted, #6b7280); }
+.ph-metric__value { font-weight: 500; }
+
+.ph-metric--error .ph-metric__value {
+  color: var(--color-error, #dc2626);
+  font-size: 0.78rem;
+  word-break: break-word;
+}
+
+/* ── Status badge ── */
+.ph-badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.ph-badge--ok  { background: #dcfce7; color: #16a34a; }
+.ph-badge--warn { background: #fef3c7; color: #d97706; }
+.ph-badge--err  { background: #fee2e2; color: #dc2626; }
+
+/* ── Worker list (card per worker) ── */
+.ph-worker-list { display: flex; flex-direction: column; gap: 0.6rem; }
+
+/* ── Detail pills ── */
+.ph-detail-pill {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  background: var(--color-bg, #f3f4f6);
+  color: var(--color-text-muted, #6b7280);
+  font-size: 0.72rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+}
+
+.ph-detail-error {
+  font-size: 0.75rem;
+  color: var(--color-error, #dc2626);
+}
+
+/* ── Pod metrics grid ── */
+.ph-pod-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 1rem;
+}
+
+.ph-pod-card {
+  padding: 0.9rem 1.1rem !important;
+  border-radius: 8px !important;
+  background: var(--color-surface, #fff) !important;
+  border: 1px solid var(--color-border, #e5e7eb) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
+}
+
+.ph-pod-card__name {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--color-text, #1a1a2e);
+  margin-bottom: 0.6rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ph-pod-card__metrics {
+  display: flex;
+  gap: 1rem;
+}
+
+.ph-pod-metric { flex: 1; }
+
+.ph-pod-metric__label {
+  font-size: 0.72rem;
+  color: var(--color-text-muted, #6b7280);
+  margin-bottom: 0.25rem;
+}
+
+/* ── PVC bars ── */
+.ph-pvc-row {
+  display: grid;
+  grid-template-columns: 200px 1fr 50px 130px;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--color-border, #f3f4f6);
+}
+
+.ph-pvc-row:last-child { border-bottom: none; }
+
+.ph-pvc-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ph-pvc-bar-wrap {
+  height: 8px;
+  background: var(--color-bg, #f3f4f6);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ph-pvc-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.ph-pvc-pct {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.ph-pvc-size {
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #6b7280);
+  text-align: right;
+}
+
+/* ── Prometheus unavailable notice ── */
+.ph-prometheus-unavailable {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.85rem 1.25rem;
+  background: var(--color-bg, #f9fafb);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  color: var(--color-text-muted, #6b7280);
+  font-size: 0.85rem;
+}
+
+/* ── Footer ── */
+.ph-footer {
+  margin-top: 2rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted, #6b7280);
+  text-align: center;
+}
+
 
 .ph-root {
   padding: 1.5rem;

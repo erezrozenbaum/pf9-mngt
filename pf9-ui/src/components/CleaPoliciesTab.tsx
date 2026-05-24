@@ -255,14 +255,31 @@ const CleaPoliciesTab: React.FC<Props> = ({ userRole }) => {
   // ---------------------------------------------------------------------------
 
   const approvalModeBadge = (mode: string) => {
-    if (mode === 'auto') return <span className="clea-badge clea-badge--auto">auto</span>;
-    if (mode === 'single_approval') return <span className="clea-badge clea-badge--single">approval</span>;
-    return <span className="clea-badge clea-badge--disabled">disabled</span>;
+    const [bg, color, label] =
+      mode === 'auto'
+        ? ['#dcfce7', '#16a34a', 'auto']
+        : mode === 'single_approval'
+        ? ['#fef3c7', '#d97706', 'approval']
+        : ['#fee2e2', '#dc2626', 'disabled'];
+    return (
+      <span className="clea-badge" style={{ background: bg, color, border: `1px solid ${color}40` }}>
+        {label}
+      </span>
+    );
   };
 
   const statusBadge = (s: string) => {
-    const cls = `clea-badge clea-badge--${s === 'executed' ? 'executed' : s === 'pending' ? 'pending' : s === 'approved' ? 'approved' : s === 'rejected' ? 'rejected' : 'skipped'}`;
-    return <span className={cls}>{s}</span>;
+    const [bg, color] =
+      s === 'executed'  ? ['#dcfce7', '#16a34a'] :
+      s === 'approved'  ? ['#d1fae5', '#059669'] :
+      s === 'pending'   ? ['#fef3c7', '#d97706'] :
+      s === 'rejected'  ? ['#fee2e2', '#dc2626'] :
+                          ['#f3f4f6', '#6b7280'];
+    return (
+      <span className="clea-badge" style={{ background: bg, color, border: `1px solid ${color}40` }}>
+        {s}
+      </span>
+    );
   };
 
   const fmtDate = (iso: string) =>
@@ -271,6 +288,11 @@ const CleaPoliciesTab: React.FC<Props> = ({ userRole }) => {
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
+
+  // KPI counts
+  const totalPolicies = policies.length;
+  const enabledPolicies = policies.filter(p => p.enabled).length;
+  const pendingApprovals = executions.filter(e => e.approval_status === 'pending').length;
 
   return (
     <div className="clea-root">
@@ -300,6 +322,32 @@ const CleaPoliciesTab: React.FC<Props> = ({ userRole }) => {
           </div>
         )}
       </div>
+
+      {/* KPI summary tiles */}
+      {!policiesLoading && !policiesError && (
+        <div className="clea-summary-tiles">
+          <div className="metric-card">
+            <div className="metric-label">Total Policies</div>
+            <div className="metric-value">{totalPolicies}</div>
+          </div>
+          <div className="metric-card">
+            <div className="metric-label">Enabled</div>
+            <div className="metric-value" style={{ color: enabledPolicies > 0 ? 'var(--color-success)' : 'var(--color-text-muted)' }}>{enabledPolicies}</div>
+          </div>
+          <div className="metric-card">
+            <div className="metric-label">Pending Approvals</div>
+            <div className="metric-value" style={{ color: pendingApprovals > 0 ? 'var(--color-warning)' : 'var(--color-success)' }}>
+              {activeTab === 'executions' ? pendingApprovals : '—'}
+            </div>
+          </div>
+          <div className="metric-card">
+            <div className="metric-label">Auto-Execute</div>
+            <div className="metric-value" style={{ color: 'var(--color-success)' }}>
+              {policies.filter(p => p.enabled && p.approval_mode === 'auto').length}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="clea-tabs">
@@ -361,7 +409,10 @@ const CleaPoliciesTab: React.FC<Props> = ({ userRole }) => {
                         <td>{p.runbook_name}</td>
                         <td>{approvalModeBadge(p.approval_mode)}</td>
                         <td>
-                          <span className={`clea-badge ${p.enabled ? 'clea-badge--enabled' : 'clea-badge--off'}`}>
+                          <span className="clea-badge" style={p.enabled
+                            ? { background: '#dcfce7', color: '#16a34a', border: '1px solid #16a34a40' }
+                            : { background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }
+                          }>
                             {p.enabled ? 'enabled' : 'disabled'}
                           </span>
                         </td>

@@ -44,3 +44,9 @@ schedulerWorker:
 api:
   env:
     PF9_OUTPUT_DIR: /mnt/reports
+  # Prometheus service URL for Platform Health pod-metrics proxy.
+  # Set to your kube-prometheus-stack service FQDN.
+  # Replace <release-name> with the Helm release name used during install
+  # (default: kube-prometheus-stack) and <namespace> with the monitoring
+  # namespace (default: monitoring).
+  prometheusUrl: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
