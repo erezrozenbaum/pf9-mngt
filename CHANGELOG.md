@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.11.0] - 2026-05-25
+## [2.11.1] - 2026-05-24
+
+### Fixed
+- **NetworkPolicy** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): added
+  egress rule allowing `pf9-api` to reach Prometheus on port 9090 in the
+  `monitoring` namespace. Without this rule, the new `/api/admin/platform/metrics`
+  endpoint always returned `prometheus_available: false` even with `PROMETHEUS_URL`
+  correctly injected.
+- **KPI summary tiles** (Platform Health + Automation pages): `.metric-label` and
+  `.metric-value` inherited `text-align: right` and `min-width` from
+  `LandingDashboard.css` row-layout context, causing values to appear
+  right-aligned and not directly beneath their labels. Added scoped CSS overrides
+  in `PlatformHealthTab.css` and `CleaPoliciesTab.css` to enforce
+  `flex-direction: column`, `text-align: left`, and proper card box styling.
+
+## [2.11.0] - 2026-05-24
 
 ### Added
 - **Platform Health — Prometheus-backed pod metrics** (`api/platform_health_routes.py`): new `GET /api/admin/platform/metrics` endpoint proxies Prometheus range queries for all pods in the `pf9-mngt` namespace. Returns per-pod CPU (cores) and RAM (bytes) sparkline series over the last hour, PVC storage utilisation, and network receive rate. Falls back gracefully when Prometheus is not reachable (`prometheus_available: false`). Uses only stdlib `urllib` — no new dependencies.

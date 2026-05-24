@@ -67,6 +67,37 @@
   margin-bottom: 1.5rem;
 }
 
+/* Scoped overrides: metric-card/label/value in LandingDashboard.css are
+   row-oriented (text-align:right, min-width). Reset them for KPI tiles. */
+.clea-summary-tiles .metric-card {
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.clea-summary-tiles .metric-label {
+  min-width: unset;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--color-text-muted, #6b7280);
+}
+
+.clea-summary-tiles .metric-value {
+  min-width: unset;
+  text-align: left;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-text, #1a1a2e);
+}
+
 /* ── Tabs ── */
 .clea-tabs {
   display: flex;

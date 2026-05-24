@@ -800,6 +800,20 @@ api:
 Replace `kube-prometheus-stack` with the Helm release name you chose during install if
 you used a different name.
 
+> **NetworkPolicy note (v2.11.1+):** The `pf9-api` NetworkPolicy now includes an egress
+> rule for TCP 9090 → `monitoring` namespace. If you are running an older chart version,
+> add the rule manually:
+> ```yaml
+> # spec.egress addition on the pf9-api NetworkPolicy
+> - to:
+>     - namespaceSelector:
+>         matchLabels:
+>           kubernetes.io/metadata.name: monitoring
+>   ports:
+>     - port: 9090
+>       protocol: TCP
+> ```
+
 After ArgoCD applies the change, the **Platform Health** admin page will show:
 - Per-pod CPU and RAM sparklines (last 1 hour, 60-second resolution)
 - PVC storage utilisation bars

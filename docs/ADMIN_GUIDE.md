@@ -844,6 +844,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.11.1 — NetworkPolicy fix + KPI tile alignment
+
+- **NetworkPolicy egress** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): Added egress rule allowing `pf9-api` pods to reach Prometheus on TCP 9090 in the `monitoring` namespace. The v2.11.0 deployment injected `PROMETHEUS_URL` correctly but the NetworkPolicy had no corresponding egress rule, so all queries timed out and `prometheus_available` was always `false`.
+- **KPI tile alignment** (`CleaPoliciesTab.css`, `PlatformHealthTab.css`): Scoped `.metric-card` / `.metric-label` / `.metric-value` overrides added. `LandingDashboard.css` defines these classes for a horizontal row layout (`text-align: right`, `min-width`), which caused values to appear right-aligned and misaligned in the vertical card context. Overrides enforce `flex-direction: column`, `text-align: left`, and proper card background/border/shadow.
+
 ### v2.11.0 — Enhanced Platform Health UI & Prometheus Pod Metrics
 
 - **`GET /api/admin/platform/metrics`** (`api/platform_health_routes.py`): New endpoint proxies Prometheus range queries for all pods in the `pf9-mngt` namespace. Returns per-pod CPU (cores) and RAM (bytes) time-series over the last hour (60-second resolution), PVC storage utilisation, and network receive rate. Falls back gracefully with `prometheus_available: false` when Prometheus is unreachable (local Docker Compose dev environment). Uses only stdlib `urllib` — no new dependencies. RBAC: `monitoring / read`.

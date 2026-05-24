@@ -140,6 +140,16 @@ spec:
       ports:
         - port: 8001
           protocol: TCP
+    # Prometheus (pod-metrics proxy) — only when prometheusUrl is configured
+    {{- if .Values.api.prometheusUrl }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 9090
+          protocol: TCP
+    {{- end }}
     # DNS (CoreDNS)
     - to:
         - namespaceSelector:
