@@ -20,8 +20,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_SECRETS_DIR = os.getenv("SECRETS_DIR", "/run/secrets")
-
 
 def read_secret(name: str, env_var: str = None, default: str = "") -> str:
     """
@@ -35,7 +33,8 @@ def read_secret(name: str, env_var: str = None, default: str = "") -> str:
     Returns:
         The secret value as a stripped string, never None.
     """
-    secret_path = os.path.join(_SECRETS_DIR, name)
+    secrets_dir = os.getenv("SECRETS_DIR", "/run/secrets")
+    secret_path = os.path.join(secrets_dir, name)
     if os.path.isfile(secret_path):
         try:
             with open(secret_path, "r", encoding="utf-8") as fh:
