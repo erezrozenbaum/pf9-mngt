@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.6.8  
-**Last Updated**: May 20, 2026  
+**Version**: 2.7.0  
+**Last Updated**: May 24, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -833,6 +833,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.7.0 — Event Bus, Platform Health Endpoint, Extended Demo Seeder
+
+- **Event Bus** (`api/event_bus.py`): `emit_event()` fire-and-forget helper writes operational events to the `operational_events` timeline table from any request handler. Runs in a daemon background thread so failures never block request paths. Includes deduplication via the `(source, source_id)` partial unique index.
+- **Platform Health Endpoint** (`GET /api/admin/platform/health`): New admin monitoring endpoint (requires `monitoring:read` — admin/superadmin/operator). Returns: overall status (`healthy`/`degraded`), database round-trip latency, Redis connectivity and latency, connection pool min/max stats, and last-run status for inventory, snapshot, backup, and intelligence workers.
+- **Platform Health UI Tab**: New "Platform Health" tab in the Admin Tools navigation group. Shows component cards (DB, Redis, pool) and a workers table with relative last-run times and detail pills. Auto-refreshes every 30 seconds.
+- **Extended Demo Seeder** (`seed_demo_data.py`): Five new idempotent seed functions — `seed_operational_insights` (10 intelligence insights), `seed_support_tickets` (5 tickets with SLA deadlines), `seed_sla_compliance` (7 tenant rows for April 2026, 1 with a breach), `seed_backup_history` (5 backup jobs), `seed_operational_events` (10 timeline events).
 
 ### v2.6.8 — Drift Detection False Positive Fix
 

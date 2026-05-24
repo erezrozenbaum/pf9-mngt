@@ -135,6 +135,7 @@ from psa_routes import router as psa_router
 from tenant_health_routes import router as tenant_health_router
 from snapshot_chain_routes import router as snapshot_chain_router
 from rightsizing_routes import router as rightsizing_router
+from platform_health_routes import router as platform_health_router
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -428,6 +429,7 @@ app.include_router(psa_router)
 app.include_router(tenant_health_router)
 app.include_router(snapshot_chain_router)
 app.include_router(rightsizing_router)
+app.include_router(platform_health_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode
 @app.get("/demo-mode")

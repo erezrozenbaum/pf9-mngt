@@ -1,6 +1,8 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.5.0 — Circuit breaker state surfaced in region sync-status endpoint.
+> **Version**: v2.7.0 — Event Bus, Platform Health endpoint, extended demo seeder.
+> Previous: v2.6.x — Right-sizing recommendations, billing impact, auto-ticket on tenant resize request, drift false-positive fix.
+> Previous: v2.5.0 — Circuit breaker state surfaced in region sync-status endpoint.
 > Previous: v2.4.0 — Notification DLQ (`GET /notifications/admin/retry-queue`).
 > Previous: v2.3.0 — Health score weight configuration (`GET/PUT /api/tenants/health-score/weights`), health score toggle per project (`PUT /api/tenants/{project_id}/health-score/toggle`), snapshot chain explorer (`GET /api/snapshots/{id}/chain`, `GET /api/volumes/{id}/chains`, `GET/PUT /api/projects/{id}/chain-policies`).
 > Previous: v2.2.0 — Copilot agentic execution: new `POST /api/copilot/execute-intent` and `GET /api/copilot/agentic-status` endpoints; `ask` response extended with action fields.
@@ -2498,6 +2500,36 @@ Response:
   }
 }
 ```
+
+---
+
+## Platform Health Endpoint *(v2.7.0)*
+
+Admin self-monitoring endpoint. Returns infrastructure component health and background worker last-run status.
+
+**GET** `/api/admin/platform/health`  
+*Requires: `monitoring:read` (admin, superadmin, operator)*
+
+**Response**:
+```json
+{
+  "overall": "healthy",
+  "checked_at": "2026-05-24T10:41:13+00:00",
+  "components": {
+    "database": { "status": "ok", "latency_ms": 0.7 },
+    "redis":    { "status": "ok", "latency_ms": 1.2 },
+    "db_pool":  { "status": "ok", "min_conn": 2, "max_conn": 10 }
+  },
+  "workers": [
+    { "worker": "inventory_collector", "status": "success", "last_run_at": "...", "details": { "source": "pf9_rvtools", "duration_seconds": 59 } },
+    { "worker": "snapshot_worker",     "status": "skipped", "last_run_at": "...", "details": { "run_type": "monthly_1st", "created": 0, "failed": 0 } },
+    { "worker": "backup_worker",       "status": "completed","last_run_at": "...", "details": { "backup_type": "scheduled", "backup_target": "database" } },
+    { "worker": "intelligence_worker", "status": "ok",       "last_run_at": "...", "details": { "source": "metering_efficiency" } }
+  ]
+}
+```
+
+`overall` is `"degraded"` if the database is unreachable, Redis returns an error, or any worker reports `"failed"` or `"query_error"`.
 
 ---
 

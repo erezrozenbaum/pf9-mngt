@@ -1420,7 +1420,7 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v2.3.0** (May 2026)
+Current schema version: **v2.7.0** (May 2026) — nav item `platform_health` added to `admin_tools` group; no new tables.
 
 ## Health Score Configuration (v2.3.0)
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.0] - 2026-05-21
+
+### Added
+- **Event Bus** (`api/event_bus.py`): Fire-and-forget `emit_event()` helper writes operational events to the `operational_events` timeline table. Runs in a daemon background thread so failures never block request paths. Includes deduplication via the `(source, source_id)` partial unique index.
+- **Platform Health Endpoint** (`api/platform_health_routes.py`): New `GET /api/admin/platform/health` endpoint (requires `monitoring:read` — admin/superadmin/operator). Returns overall health status (`healthy`/`degraded`), DB round-trip latency, Redis connectivity and latency, DB connection-pool statistics, and last-run status for inventory, snapshot, backup, and intelligence workers.
+- **Extended Demo Seeder** (`seed_demo_data.py`): Five new seed functions for richer demo environments — `seed_operational_insights` (10 intelligence insights across idle VMs, SLA risk, drift, and orphaned volumes), `seed_support_tickets` (5 tickets with SLA deadlines and department routing), `seed_sla_compliance` (7 tenant SLA rows for April 2026, 1 with a breach), `seed_backup_history` (5 backup jobs — 4 completed, 1 failed), and `seed_operational_events` (10 timeline events spanning provisioning, backup, ticket, and intelligence categories). All new seeds are idempotent.
+
 ## [2.6.8] - 2026-05-20
 
 ### Fixed

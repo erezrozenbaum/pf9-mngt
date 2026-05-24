@@ -783,6 +783,275 @@ def seed_copilot_config(cur):
 
 
 # ---------------------------------------------------------------------------
+# Operational Data Seeds  (v2.7.0)
+# ---------------------------------------------------------------------------
+
+def seed_operational_insights(cur):
+    """Seed 10 intelligence insights covering idle VMs, SLA risk, drift, etc."""
+    insights = [
+        # (type, severity, entity_type, entity_id, entity_name, title, message, metadata, status)
+        ("idle_vm",        "medium",   "server",  "srv-acme-web-01",   "acme-web-01",
+         "Idle VM detected", "VM acme-web-01 has CPU utilisation <2% for 7 consecutive days.",
+         json.dumps({"avg_cpu_pct": 1.4, "idle_days": 7}), "open"),
+        ("idle_vm",        "medium",   "server",  "srv-globex-test-02","globex-test-02",
+         "Idle VM detected", "VM globex-test-02 has not been accessed for 14 days.",
+         json.dumps({"avg_cpu_pct": 0.8, "idle_days": 14}), "open"),
+        ("snapshot_gap",   "high",     "volume",  "vol-initech-db-01", "initech-db-01",
+         "Snapshot gap exceeded SLA", "Volume initech-db-01 last snapshot is 26 hours old (SLA: 24 h).",
+         json.dumps({"last_snapshot_age_hours": 26, "sla_hours": 24}), "open"),
+        ("sla_risk",       "critical", "project", "p-initech-prod",    "initech production",
+         "SLA breach risk: uptime", "Uptime for initech production is at 99.3%, approaching the 99.5% SLA threshold.",
+         json.dumps({"uptime_pct": 99.3, "sla_threshold_pct": 99.5}), "open"),
+        ("drift_detected", "high",     "server",  "srv-acme-api-03",   "acme-api-03",
+         "Configuration drift detected", "acme-api-03 security group rules diverge from baseline by 3 changes.",
+         json.dumps({"drift_count": 3, "rule": "security_groups"}), "open"),
+        ("oversized_vm",   "low",      "server",  "srv-acme-batch-05", "acme-batch-05",
+         "Oversized VM candidate", "acme-batch-05 uses <15% vCPU and <20% RAM over 30 days. Consider downsizing.",
+         json.dumps({"avg_cpu_pct": 14.2, "avg_ram_pct": 18.7, "days": 30}), "open"),
+        ("backup_failure", "high",     "project", "p-globex-dr",       "globex DR",
+         "Backup failure", "Scheduled backup for globex disaster-recovery failed 2 times in the last 48 h.",
+         json.dumps({"failure_count": 2, "window_hours": 48}), "open"),
+        ("idle_vm",        "low",      "server",  "srv-acme-staging-07","acme-staging-07",
+         "Idle VM detected", "acme-staging-07 in staging shows near-zero I/O for 5 days.",
+         json.dumps({"avg_cpu_pct": 0.5, "idle_days": 5}), "acknowledged"),
+        ("snapshot_gap",   "medium",   "volume",  "vol-globex-prod-02","globex-prod-02",
+         "Snapshot gap warning", "Volume globex-prod-02 last snapshot is 18 hours old (SLA: 12 h).",
+         json.dumps({"last_snapshot_age_hours": 18, "sla_hours": 12}), "snoozed"),
+        ("orphaned_volume","medium",   "volume",  "vol-initech-old-03","initech-old-03",
+         "Orphaned volume detected", "Volume initech-old-03 has been detached for 30+ days with no snapshot activity.",
+         json.dumps({"detached_days": 31}), "open"),
+    ]
+    for (itype, severity, etype, eid, ename, title, message, metadata, status) in insights:
+        cur.execute(
+            """
+            INSERT INTO operational_insights
+                (type, severity, entity_type, entity_id, entity_name,
+                 title, message, metadata, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+            ON CONFLICT (type, entity_type, entity_id)
+            WHERE status IN ('open','acknowledged','snoozed')
+            DO NOTHING
+            """,
+            (itype, severity, etype, eid, ename, title, message, metadata, status),
+        )
+    print("  + operational_insights (10 rows)")
+
+
+def seed_support_tickets(cur):
+    """Seed 5 support tickets: 2 open, 1 resolved, 1 pending_approval, 1 escalated."""
+    # Check idempotency by ticket_ref uniqueness (ticket_ref is UNIQUE)
+    tickets = [
+        # (ticket_ref, title, description, ticket_type, status, priority,
+        #  from_dept_name, to_dept_name, opened_by, customer_name, customer_email,
+        #  project_id, domain_id, sla_response_h, sla_resolve_h)
+        ("TKT-DEMO-001",
+         "acme-web-01 intermittent connectivity loss",
+         "Users report intermittent 502 errors on acme-web-01 since 08:00 UTC.",
+         "incident", "open", "high",
+         "Engineering", "Tier2 Support",
+         "alice@acme-corp.com", "ACME Corp", "ops@acme-corp.com",
+         "p-acme-prod", "d-acme-corp", 4, 8),
+        ("TKT-DEMO-002",
+         "Request additional vCPU quota for acme staging",
+         "Staging environment needs quota bump from 40 vCPU to 80 vCPU for load test.",
+         "service_request", "open", "normal",
+         "Engineering", "Tier1 Support",
+         "bob@acme-corp.com", "ACME Corp", "ops@acme-corp.com",
+         "p-acme-staging", "d-acme-corp", 8, 48),
+        ("TKT-DEMO-003",
+         "globex-test-02 snapshot restore request",
+         "Restore globex-test-02 volume from snapshot taken 2026-05-18.",
+         "service_request", "resolved", "normal",
+         "Engineering", "Tier2 Support",
+         "carol@globex-inc.com", "Globex Inc", "it@globex-inc.com",
+         "p-globex-prod", "d-globex-inc", 8, 48),
+        ("TKT-DEMO-004",
+         "Emergency firewall rule change for initech-prod",
+         "Urgent: block port 8080 inbound on initech-prod security group.",
+         "change_request", "pending_approval", "urgent",
+         "Engineering", "Tier3 Support",
+         "dave@initech.io", "initech", "infra@initech.io",
+         "p-initech-prod", "d-initech", 2, 4),
+        ("TKT-DEMO-005",
+         "SLA compliance report missing for April 2026",
+         "Monthly SLA report for globex DR project was not delivered on time.",
+         "incident", "open", "normal",
+         "Account Management", "Tier1 Support",
+         "eve@globex-inc.com", "Globex Inc", "mgmt@globex-inc.com",
+         "p-globex-dr", "d-globex-inc", 8, 24),
+    ]
+    now_ts = now()
+    for (ref, title, desc, ttype, status, priority,
+         from_dept_name, to_dept_name, opened_by, cname, cemail,
+         project_id, domain_id, sla_r, sla_res) in tickets:
+        resolved_at = (now_ts - timedelta(days=2)) if status == "resolved" else None
+        first_resp_at = (now_ts - timedelta(hours=sla_r - 1)) if status != "open" else None
+        cur.execute(
+            """
+            INSERT INTO support_tickets
+                (ticket_ref, title, description, ticket_type, status, priority,
+                 from_dept_id, to_dept_id,
+                 opened_by, customer_name, customer_email,
+                 project_id, domain_id,
+                 sla_response_hours, sla_resolve_hours,
+                 sla_response_at, sla_resolve_at,
+                 first_response_at, resolved_at,
+                 requires_approval)
+            VALUES (
+                %s, %s, %s, %s, %s, %s,
+                (SELECT id FROM departments WHERE name = %s),
+                (SELECT id FROM departments WHERE name = %s),
+                %s, %s, %s,
+                %s, %s,
+                %s, %s,
+                now() + (%s || ' hours')::interval,
+                now() + (%s || ' hours')::interval,
+                %s, %s,
+                %s
+            )
+            ON CONFLICT (ticket_ref) DO NOTHING
+            """,
+            (ref, title, desc, ttype, status, priority,
+             from_dept_name, to_dept_name,
+             opened_by, cname, cemail,
+             project_id, domain_id,
+             sla_r, sla_res,
+             sla_r, sla_res,
+             first_resp_at, resolved_at,
+             status == "pending_approval"),
+        )
+    print("  + support_tickets (5 rows)")
+
+
+def seed_sla_compliance(cur):
+    """Seed one month of SLA compliance data per project (7 rows; 1 with breach)."""
+    month = "2026-04-01"
+    rows = [
+        # (project_id, uptime_pct, rto_h, rpo_h, mtta_h, mttr_h, backup_pct, breach, at_risk)
+        ("p-acme-prod",    99.87, 1.5, 0.5, 0.25, 1.1, 100.0, [],              []),
+        ("p-acme-staging", 99.50, 3.0, 1.0, 0.50, 2.0,  98.0, [],              ["uptime_actual_pct"]),
+        ("p-acme-dev",     98.90, 6.0, 2.0, 1.00, 4.0,  95.0, [],              []),
+        ("p-globex-prod",  99.95, 0.8, 0.2, 0.15, 0.6, 100.0, [],              []),
+        ("p-globex-dr",    99.10, 2.5, 1.0, 0.60, 2.3,  88.0,
+         ["backup_success_pct", "uptime_actual_pct"], []),      # ← breach
+        ("p-initech-prod", 99.75, 1.8, 0.6, 0.30, 1.5, 100.0, [],              []),
+        ("p-initech-test", 99.20, 4.0, 1.5, 0.80, 3.0,  96.0, [],              ["rto_worst_hours"]),
+    ]
+    for (pid, uptime, rto, rpo, mtta, mttr, bk_pct, breach, at_risk) in rows:
+        cur.execute(
+            """
+            INSERT INTO sla_compliance_monthly
+                (tenant_id, month, region_id,
+                 uptime_actual_pct, rto_worst_hours, rpo_worst_hours,
+                 mtta_avg_hours, mttr_avg_hours,
+                 backup_success_pct, migrations_completed,
+                 breach_fields, at_risk_fields)
+            VALUES (%s, %s::date, '', %s, %s, %s, %s, %s, %s, 0, %s, %s)
+            ON CONFLICT (tenant_id, month, region_id) DO NOTHING
+            """,
+            (pid, month, uptime, rto, rpo, mtta, mttr, bk_pct,
+             breach, at_risk),
+        )
+    print("  + sla_compliance_monthly (7 rows)")
+
+
+def seed_backup_history(cur):
+    """Seed 5 backup history rows (4 completed, 1 failed). Idempotent via file_name guard."""
+    cur.execute("SELECT COUNT(*) FROM backup_history WHERE initiated_by = 'seed_demo_data'")
+    if cur.fetchone()[0] > 0:
+        print("  + backup_history (already seeded, skipping)")
+        return
+    rows = [
+        # (status, backup_type, backup_target, file_name, file_size, duration_s, initiated_by,
+        #  started_offset_h, duration_seconds, integrity_status)
+        ("completed", "scheduled", "database", "pf9_mgmt_20260510_020000.dump.gz",
+         524288000, 142.3, ago(hours=120), ago(hours=120) + timedelta(seconds=142), "completed", "valid"),
+        ("completed", "scheduled", "database", "pf9_mgmt_20260511_020000.dump.gz",
+         526385152, 145.1, ago(hours=96),  ago(hours=96)  + timedelta(seconds=145), "completed", "valid"),
+        ("completed", "manual",    "database", "pf9_mgmt_20260512_143021.dump.gz",
+         528482304, 148.0, ago(hours=72),  ago(hours=72)  + timedelta(seconds=148), "completed", "valid"),
+        ("failed",    "scheduled", "database", None,
+         None, None, ago(hours=48), None, "seed_demo_data", "skipped"),
+        ("completed", "scheduled", "database", "pf9_mgmt_20260514_020000.dump.gz",
+         530579456, 151.2, ago(hours=24),  ago(hours=24)  + timedelta(seconds=151), "completed", "valid"),
+    ]
+    for (status, btype, target, fname, fsize, duration,
+         started, completed, initiated, integrity) in rows:
+        error_msg = "pg_dump: connection error after 3 retries" if status == "failed" else None
+        cur.execute(
+            """
+            INSERT INTO backup_history
+                (status, backup_type, backup_target, file_name, file_size_bytes,
+                 duration_seconds, initiated_by, error_message,
+                 started_at, completed_at, integrity_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (status, btype, target, fname, fsize, duration,
+             initiated, error_msg, started, completed if status == "completed" else None, integrity),
+        )
+    print("  + backup_history (5 rows)")
+
+
+def seed_operational_events(cur):
+    """Seed 10 timeline events across categories. Idempotent via source_id."""
+    events = [
+        # (event_type, category, severity, title, entity_type, entity_id, entity_name,
+        #  domain_id, project_id, source_id, actor, occurred_offset_h)
+        ("vm.provisioned",     "provisioning", "info",
+         "VM acme-web-01 provisioned", "server", "srv-acme-web-01", "acme-web-01",
+         "d-acme-corp", "p-acme-prod", "provision-acme-web-01", "alice@acme-corp.com", 120),
+        ("backup.completed",   "backup",       "info",
+         "Scheduled backup completed (120 h ago)", "project", "p-acme-prod", "acme production",
+         "d-acme-corp", "p-acme-prod", "backup-acme-prod-120h", "system", 120),
+        ("snapshot.created",   "snapshot",     "info",
+         "Snapshot of vol-acme-db-01 created", "volume", "vol-acme-db-01", "acme-db-01",
+         "d-acme-corp", "p-acme-prod", "snap-acme-db-01-96h", "system", 96),
+        ("drift.detected",     "monitoring",   "warning",
+         "Security group drift on acme-api-03", "server", "srv-acme-api-03", "acme-api-03",
+         "d-acme-corp", "p-acme-prod", "drift-acme-api-03-72h", "drift_engine", 72),
+        ("backup.failed",      "backup",       "critical",
+         "Scheduled backup failed for globex DR", "project", "p-globex-dr", "globex DR",
+         "d-globex-inc", "p-globex-dr", "backup-globex-dr-fail-48h", "system", 48),
+        ("ticket.opened",      "ticket",       "info",
+         "Ticket TKT-DEMO-001 opened: connectivity loss", "ticket", "TKT-DEMO-001", "TKT-DEMO-001",
+         "d-acme-corp", "p-acme-prod", "ticket-TKT-DEMO-001-open", "alice@acme-corp.com", 36),
+        ("sla.risk_detected",  "sla",          "warning",
+         "initech production approaching SLA breach", "project", "p-initech-prod", "initech production",
+         "d-initech", "p-initech-prod", "sla-risk-initech-prod-24h", "sla_engine", 24),
+        ("vm.deleted",         "provisioning", "info",
+         "VM acme-staging-07 deleted", "server", "srv-acme-staging-07", "acme-staging-07",
+         "d-acme-corp", "p-acme-staging", "delete-acme-staging-07-12h", "bob@acme-corp.com", 12),
+        ("intelligence.insight","intelligence","warning",
+         "Idle VM insight raised: globex-test-02", "server", "srv-globex-test-02", "globex-test-02",
+         "d-globex-inc", "p-globex-prod", "insight-idle-globex-test-02", "intelligence_engine", 6),
+        ("ticket.resolved",    "ticket",       "info",
+         "Ticket TKT-DEMO-003 resolved", "ticket", "TKT-DEMO-003", "TKT-DEMO-003",
+         "d-globex-inc", "p-globex-prod", "ticket-TKT-DEMO-003-resolve", "carol@globex-inc.com", 2),
+    ]
+    for (etype, category, severity, title, enttype, entid, entname,
+         domain_id, project_id, source_id, actor, offset_h) in events:
+        occurred = ago(hours=offset_h)
+        cur.execute(
+            """
+            INSERT INTO operational_events
+                (occurred_at, event_type, category, severity, title,
+                 entity_type, entity_id, entity_name,
+                 domain_id, project_id,
+                 source, source_id, actor, visibility)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'seed_demo_data', %s, %s, 'operational')
+            ON CONFLICT (source, source_id)
+            WHERE source_id IS NOT NULL
+            DO NOTHING
+            """,
+            (occurred, etype, category, severity, title,
+             enttype, entid, entname,
+             domain_id, project_id,
+             source_id, actor),
+        )
+    print("  + operational_events (10 rows)")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -874,6 +1143,13 @@ def main():
 
         print("\n--- Copilot Config ---")
         seed_copilot_config(cur)
+
+        print("\n--- Operational Data ---")
+        seed_operational_insights(cur)
+        seed_support_tickets(cur)
+        seed_sla_compliance(cur)
+        seed_backup_history(cur)
+        seed_operational_events(cur)
 
         conn.commit()
         print("\n=== Demo Data Seeded Successfully ===")

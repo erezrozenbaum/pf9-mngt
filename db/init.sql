@@ -2941,7 +2941,8 @@ INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort
     ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'admin',              'Auth Management',  '⚙️', '/admin',              'users',              1),
     ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'notifications',      'Notifications',    '🔔', '/notifications',      'notifications',      2),
     ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'cluster_management', 'Cluster Management','🌐', '/cluster_management', 'cluster_management', 3),
-    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'tenant_portal',      'Tenant Portal',    '🏢', '/tenant_portal',      'tenant_portal',      4)
+    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'tenant_portal',      'Tenant Portal',    '🏢', '/tenant_portal',      'tenant_portal',      4),
+    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'platform_health',    'Platform Health',  '💚', '/platform_health',    'monitoring',         5)
 ON CONFLICT (key) DO NOTHING;
 
 -- Technical Tools group

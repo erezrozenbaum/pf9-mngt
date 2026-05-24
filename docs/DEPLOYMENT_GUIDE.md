@@ -1705,6 +1705,15 @@ kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py
 
 **v2.6.4** adds `db/migrate_v2_6_4_rightsizing_billing.sql`: grants `SELECT, UPDATE ON rightsizing_recommendations` and `SELECT ON metering_flavor_pricing` to `tenant_portal_role`. Required for the tenant "Request Resize" CTA (`POST /tenant/rightsizing/{id}/request-change`) and for billing cost display in tenant Cost Optimisation. Apply with `docker exec pf9_api python run_migration.py` or `kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py`.
 
+**v2.7.0** adds `db/migrate_v2_7_0_platform_health.sql`: inserts the `platform_health` nav item under the `admin_tools` navigation group. The migration is idempotent (`ON CONFLICT (key) DO NOTHING`). Apply:
+```powershell
+# Docker
+docker exec -i pf9_db psql -U pf9 -d pf9_mgmt < db/migrate_v2_7_0_platform_health.sql
+# Kubernetes
+$pod = kubectl get pods -n pf9-mngt -l app=db -o jsonpath="{.items[0].metadata.name}"
+Get-Content db/migrate_v2_7_0_platform_health.sql | kubectl exec -i -n pf9-mngt $pod -- psql -U pf9 -d pf9_mgmt
+```
+
 **v1.86.1** adds `db/migrate_v1_86_1_insights_nav.sql`: registers the `insights` nav item in `nav_items` (under the `metering_reporting` group) and seeds `department_nav_items` for all departments. Without this, the Insights tab is invisible in the grouped navigation on existing installs. Apply with `docker exec pf9_api python run_migration.py` or `kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py`.
 
 **v1.83.47** adds `db/migrate_v1_83_47.sql`: three new columns on `migration_projects` (`wan_bandwidth_mbps`, `throttle_mbps`, `max_concurrent_migrations`) and a new `ldap_sync_dept_mappings` table. Apply with `docker exec pf9_api python run_migration.py` or `kubectl exec ... -- python run_migration.py`.
