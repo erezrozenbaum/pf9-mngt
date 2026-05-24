@@ -876,19 +876,6 @@ async def startup_event():
       except Exception as _exc:
         logger.warning("Container alerts migration skipped: %s", _exc)
 
-      # Apply Phase 4A tables migration (migration_flavor_staging, flavor-staging endpoints)
-      try:
-        _p4a_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_phase4_preparation.sql")
-        if os.path.exists(_p4a_sql):
-            with open(_p4a_sql) as _f:
-                _sql = _f.read()
-            with get_connection() as _conn:
-                with _conn.cursor() as _cur:
-                    _cur.execute(_sql)
-            logger.info("Phase 4A migration applied (migration_flavor_staging ready)")
-      except Exception as _exc:
-        logger.warning("Phase 4A migration skipped: %s", _exc)
-
       # -----------------------------------------------------------------------
       # Multi-cluster Phase 1: pf9_control_planes + pf9_regions schema migration
       # then seed the default control plane / region from env vars (idempotent).

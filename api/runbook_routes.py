@@ -29,28 +29,18 @@ router = APIRouter(prefix="/api/runbooks", tags=["runbooks"])
 
 
 # ---------------------------------------------------------------------------
-#  Auto-migration on import
+#  Startup patches (data fixes, not DDL — run on every API startup)
 # ---------------------------------------------------------------------------
-def _ensure_tables():
-    """Run migration if tables don't exist yet."""
+def _apply_startup_patches():
+    """Apply idempotent data fixes for runbook records and GRANTs.
+
+    These are data-level operations (UPDATE / INSERT ON CONFLICT / GRANT),
+    not table DDL.  The runbooks table itself is guaranteed to exist by
+    db/init.sql and run_migration.py (migrate_runbooks.sql).
+    """
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables
-                        WHERE table_name = 'runbooks'
-                    )
-                """)
-                if not cur.fetchone()[0]:
-                    migration = os.path.join(
-                        os.path.dirname(__file__), "..", "db", "migrate_runbooks.sql"
-                    )
-                    if os.path.exists(migration):
-                        with open(migration) as f:
-                            cur.execute(f.read())
-                        logger.info("Runbook tables created via auto-migration")
-
                 # Keep orphan_resource_cleanup schema up-to-date
                 cur.execute("""
                     UPDATE runbooks
@@ -116,13 +106,14 @@ def _ensure_tables():
                     END $$;
                 """)
     except Exception as e:
-        logger.warning("Could not ensure runbook tables on startup: %s", e)
+        logger.warning("Could not apply runbook startup patches: %s", e)
 
 
 try:
-    _ensure_tables()
+    _apply_startup_patches()
 except Exception:
     pass
+
 
 
 # ---------------------------------------------------------------------------

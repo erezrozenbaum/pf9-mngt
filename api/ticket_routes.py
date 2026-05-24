@@ -60,39 +60,6 @@ logger = logging.getLogger("pf9_tickets")
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
 
 # ---------------------------------------------------------------------------
-#  Auto-migration on import
-# ---------------------------------------------------------------------------
-def _ensure_tables() -> None:
-    """Run migration file if core ticket tables are absent."""
-    try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables
-                        WHERE table_name = 'support_tickets'
-                    )
-                """)
-                if not cur.fetchone()[0]:
-                    migration = os.path.join(
-                        os.path.dirname(__file__), "..", "db",
-                        "migrate_support_tickets.sql"
-                    )
-                    if os.path.exists(migration):
-                        with open(migration) as f:
-                            cur.execute(f.read())
-                        logger.info("Ticket tables created via auto-migration")
-    except Exception as exc:
-        logger.warning("Could not ensure ticket tables on startup: %s", exc)
-
-
-try:
-    _ensure_tables()
-except Exception:
-    pass
-
-
-# ---------------------------------------------------------------------------
 #  Internal helpers
 # ---------------------------------------------------------------------------
 def _now() -> datetime:

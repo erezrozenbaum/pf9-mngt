@@ -42,36 +42,7 @@ logger = logging.getLogger("pf9_integrations")
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
-# ---------------------------------------------------------------------------
-#  Auto-migration on import (creates tables if they don't exist)
-# ---------------------------------------------------------------------------
-def _ensure_tables():
-    try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables
-                        WHERE table_name = 'external_integrations'
-                    )
-                """)
-                if not cur.fetchone()[0]:
-                    migration = os.path.join(
-                        os.path.dirname(__file__), "..", "db",
-                        "migrate_runbooks_dept_visibility.sql"
-                    )
-                    if os.path.exists(migration):
-                        with open(migration) as f:
-                            cur.execute(f.read())
-                        logger.info("External integrations tables created via auto-migration")
-    except Exception as e:
-        logger.warning("Could not ensure integration tables on startup: %s", e)
 
-
-try:
-    _ensure_tables()
-except Exception:
-    pass
 
 
 

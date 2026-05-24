@@ -98,73 +98,12 @@ def _log_activity(conn, resource_type: str, resource_id: str, action: str,
 # ---------------------------------------------------------------------------
 # Table migration (inlined for container compatibility)
 # ---------------------------------------------------------------------------
-_TABLES_SQL = """
-CREATE TABLE IF NOT EXISTS vm_provisioning_batches (
-    id              SERIAL PRIMARY KEY,
-    name            TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'validated',
-    approval_status TEXT NOT NULL DEFAULT 'pending_approval',
-    require_approval BOOLEAN NOT NULL DEFAULT TRUE,
-    created_by      TEXT,
-    domain_name     TEXT NOT NULL,
-    project_name    TEXT NOT NULL,
-    dry_run_results JSONB,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS vm_provisioning_vms (
-    id              SERIAL PRIMARY KEY,
-    batch_id        INTEGER NOT NULL REFERENCES vm_provisioning_batches(id) ON DELETE CASCADE,
-    vm_name_suffix  TEXT NOT NULL,
-    count           INTEGER NOT NULL DEFAULT 1,
-    image_name      TEXT,
-    image_id        TEXT,
-    flavor_name     TEXT,
-    flavor_id       TEXT,
-    volume_gb       INTEGER NOT NULL DEFAULT 20,
-    network_name    TEXT,
-    network_id      TEXT,
-    security_groups JSONB DEFAULT '[]',
-    fixed_ip        TEXT,
-    hostname        TEXT,
-    os_username     TEXT NOT NULL,
-    os_password     TEXT NOT NULL,
-    extra_cloudinit TEXT,
-    os_type         TEXT NOT NULL DEFAULT 'linux',
-    delete_on_termination BOOLEAN NOT NULL DEFAULT TRUE,
-    pcd_server_ids  JSONB DEFAULT '[]',
-    assigned_ips    JSONB DEFAULT '[]',
-    status          TEXT NOT NULL DEFAULT 'pending',
-    error_msg       TEXT,
-    console_log     TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-"""
+_TABLES_SQL = ""  # Kept for reference; tables are now in db/init.sql and migrate_v2_8_0_retire_ensure_tables.sql
 
 _tables_initialized = False
 
 def _ensure_tables():
-    global _tables_initialized
-    if _tables_initialized:
-        return
-    try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(_TABLES_SQL)
-                # Migration: add delete_on_termination if it doesn't exist yet
-                cur.execute(
-                    """ALTER TABLE vm_provisioning_vms
-                       ADD COLUMN IF NOT EXISTS delete_on_termination BOOLEAN NOT NULL DEFAULT TRUE"""
-                )
-                # Migration: add region_id for multi-cluster support
-                cur.execute(
-                    """ALTER TABLE vm_provisioning_batches
-                       ADD COLUMN IF NOT EXISTS region_id TEXT"""
-                )
-        _tables_initialized = True
-    except Exception as e:
-        logger.error("vm_provisioning _ensure_tables failed: %s", e)
+    pass  # No-op: tables are managed by run_migration.py
 
 # ---------------------------------------------------------------------------
 # Naming helpers
@@ -1850,8 +1789,3 @@ async def delete_batch(batch_id: int, user=Depends(get_current_user)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-
-# Ensure DB tables exist once at import time (startup), not on every request.
-_ensure_tables()

@@ -3735,16 +3735,8 @@ ALTER TABLE snapshot_assignments ADD COLUMN IF NOT EXISTS region_id TEXT REFEREN
 ALTER TABLE snapshot_records     ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 ALTER TABLE deletions_history    ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 
--- vm_provisioning_batches is created dynamically by vm_provisioning_routes.py on first API call.
--- Guard: skip if the table doesn't exist yet — _ensure_tables() in the API adds the column on creation.
-DO $$ BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_name = 'vm_provisioning_batches' AND table_schema = 'public'
-  ) THEN
-    ALTER TABLE vm_provisioning_batches ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
-  END IF;
-END $$;
+-- vm_provisioning_batches region_id FK (table is now always created above)
+ALTER TABLE vm_provisioning_batches ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 
 -- Per-cluster RBAC scoping (NULL = global; enforcement deferred to Phase 5)
 ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS region_id        TEXT REFERENCES pf9_regions(id);
@@ -4870,10 +4862,370 @@ CREATE OR REPLACE VIEW tenant_health_scores_latest AS
     ORDER BY project_id, computed_at DESC;
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Migration Planner core tables
+-- On fresh installs these are also created (idempotently) by run_migration.py
+-- applying migrate_00_migration_planner.sql and subsequent migrate_phase*.sql.
+-- The CREATE TABLE IF NOT EXISTS guards make this safe to run in either order.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS migration_projects (
+    id                          BIGSERIAL PRIMARY KEY,
+    project_id                  TEXT NOT NULL UNIQUE DEFAULT gen_random_uuid()::text,
+    name                        TEXT NOT NULL,
+    description                 TEXT,
+    status                      TEXT NOT NULL DEFAULT 'draft',
+    topology_type               TEXT NOT NULL DEFAULT 'local',
+    source_nic_speed_gbps       NUMERIC(6,1) DEFAULT 10.0,
+    source_usable_pct           NUMERIC(5,2) DEFAULT 40.0,
+    link_speed_gbps             NUMERIC(8,2),
+    link_usable_pct             NUMERIC(5,2) DEFAULT 60.0,
+    source_upload_mbps          NUMERIC(8,2),
+    dest_download_mbps          NUMERIC(8,2),
+    estimated_rtt_ms            NUMERIC(6,1),
+    rtt_category                TEXT,
+    target_ingress_speed_gbps   NUMERIC(6,1) DEFAULT 10.0,
+    target_usable_pct           NUMERIC(5,2) DEFAULT 40.0,
+    pcd_storage_write_mbps      NUMERIC(8,2) DEFAULT 500.0,
+    agent_count                 INTEGER DEFAULT 2,
+    agent_concurrent_vms        INTEGER DEFAULT 5,
+    agent_vcpu_per_slot         INTEGER DEFAULT 2,
+    agent_ram_base_gb           NUMERIC(5,1) DEFAULT 2.0,
+    agent_ram_per_slot_gb       NUMERIC(5,1) DEFAULT 1.0,
+    agent_nic_speed_gbps        NUMERIC(6,1) DEFAULT 10.0,
+    agent_nic_usable_pct        NUMERIC(5,2) DEFAULT 70.0,
+    agent_disk_buffer_factor    NUMERIC(4,2) DEFAULT 1.2,
+    daily_change_rate_pct       NUMERIC(5,2) DEFAULT 5.0,
+    migration_duration_days     INTEGER DEFAULT 30,
+    working_hours_per_day       NUMERIC(4,1) DEFAULT 8.0,
+    working_days_per_week       INTEGER DEFAULT 5,
+    target_vms_per_day          INTEGER,
+    auto_expire_days            INTEGER DEFAULT 90,
+    rvtools_filename            TEXT,
+    rvtools_uploaded_at         TIMESTAMPTZ,
+    rvtools_sheet_stats         JSONB DEFAULT '{}',
+    overcommit_profile_name     TEXT DEFAULT 'balanced',
+    pcd_auth_url                TEXT,
+    pcd_username                TEXT,
+    pcd_password_hint           TEXT,
+    pcd_region                  TEXT DEFAULT 'region-one',
+    pcd_last_checked_at         TIMESTAMPTZ,
+    pcd_readiness_score         NUMERIC(5,1),
+    prep_approval_status        TEXT,
+    prep_requested_by           TEXT,
+    prep_approved_by            TEXT,
+    prep_approved_at            TIMESTAMPTZ,
+    executive_summary           TEXT,
+    technical_notes             TEXT,
+    vjb_api_url                 TEXT,
+    vjb_namespace               TEXT DEFAULT 'migration',
+    vjb_bearer_token            TEXT,
+    use_maintenance_windows     BOOLEAN DEFAULT FALSE,
+    source_region_id            TEXT,
+    target_region_id            TEXT,
+    wan_bandwidth_mbps          NUMERIC,
+    throttle_mbps               NUMERIC,
+    max_concurrent_migrations   INTEGER,
+    webhook_secret              TEXT,
+    created_by                  TEXT NOT NULL DEFAULT 'system',
+    approved_by                 TEXT,
+    approved_at                 TIMESTAMPTZ,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mig_projects_status     ON migration_projects(status);
+CREATE INDEX IF NOT EXISTS idx_mig_projects_created_at ON migration_projects(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS migration_vms (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      TEXT NOT NULL REFERENCES migration_projects(project_id) ON DELETE CASCADE,
+    vm_id           TEXT NOT NULL DEFAULT gen_random_uuid()::text,
+    vm_name         TEXT NOT NULL,
+    power_state     TEXT,
+    template        BOOLEAN DEFAULT false,
+    guest_os        TEXT,
+    guest_os_tools  TEXT,
+    os_family       TEXT,
+    folder_path     TEXT,
+    resource_pool   TEXT,
+    vapp_name       TEXT,
+    annotation      TEXT,
+    tenant_name     TEXT,
+    org_vdc         TEXT,
+    app_group       TEXT,
+    cpu_count       INTEGER,
+    ram_mb          INTEGER,
+    total_disk_gb   NUMERIC(12,2),
+    provisioned_mb  BIGINT DEFAULT 0,
+    in_use_mb       BIGINT DEFAULT 0,
+    in_use_gb       NUMERIC(12,2) DEFAULT 0,
+    partition_used_gb NUMERIC(12,2) DEFAULT 0,
+    disk_count      INTEGER DEFAULT 0,
+    nic_count       INTEGER DEFAULT 0,
+    network_name    TEXT,
+    os_version      TEXT,
+    snapshot_count  INTEGER DEFAULT 0,
+    snapshot_oldest_days INTEGER,
+    host_name       TEXT,
+    cluster         TEXT,
+    datacenter      TEXT,
+    vm_uuid         TEXT,
+    firmware        TEXT,
+    boot_required   TEXT,
+    change_tracking BOOLEAN,
+    connection_state TEXT,
+    dns_name        TEXT,
+    primary_ip      TEXT,
+    risk_score      NUMERIC(5,1),
+    risk_category   TEXT,
+    risk_reasons    JSONB DEFAULT '[]',
+    migration_mode  TEXT,
+    mode_reasons    JSONB DEFAULT '[]',
+    phase1_duration_hours   NUMERIC(8,2),
+    cutover_downtime_hours  NUMERIC(8,2),
+    total_migration_hours   NUMERIC(8,2),
+    production_impact       TEXT,
+    target_flavor   TEXT,
+    target_flavor_id TEXT,
+    target_network  TEXT,
+    target_project  TEXT,
+    exclude_from_migration BOOLEAN DEFAULT false,
+    exclude_reason  TEXT,
+    manual_mode_override TEXT,
+    priority        INTEGER DEFAULT 50,
+    migration_status TEXT NOT NULL DEFAULT 'pending',
+    failure_reason  TEXT,
+    migrated_at     TIMESTAMPTZ,
+    raw_data        JSONB DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, vm_name)
+);
+CREATE INDEX IF NOT EXISTS idx_mig_vms_project ON migration_vms(project_id);
+CREATE INDEX IF NOT EXISTS idx_mig_vms_tenant  ON migration_vms(project_id, tenant_name);
+CREATE INDEX IF NOT EXISTS idx_mig_vms_risk    ON migration_vms(project_id, risk_category);
+
+CREATE TABLE IF NOT EXISTS migration_waves (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      TEXT NOT NULL REFERENCES migration_projects(project_id) ON DELETE CASCADE,
+    wave_number     INTEGER NOT NULL,
+    name            TEXT,
+    description     TEXT,
+    status          TEXT NOT NULL DEFAULT 'planned',
+    vm_count        INTEGER DEFAULT 0,
+    total_disk_gb   NUMERIC(12,2) DEFAULT 0,
+    estimated_phase1_hours NUMERIC(8,2),
+    estimated_cutover_hours NUMERIC(8,2),
+    maintenance_window_start TIMESTAMPTZ,
+    maintenance_window_end   TIMESTAMPTZ,
+    bottleneck_info JSONB DEFAULT '{}',
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, wave_number)
+);
+CREATE INDEX IF NOT EXISTS idx_mig_waves_project ON migration_waves(project_id);
+
+CREATE TABLE IF NOT EXISTS migration_webhook_events (
+    id           BIGSERIAL PRIMARY KEY,
+    project_id   TEXT NOT NULL REFERENCES migration_projects(project_id) ON DELETE CASCADE,
+    received_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_type   TEXT NOT NULL,
+    vm_id        TEXT,
+    wave_id      INTEGER,
+    payload      JSONB NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_mwe_project_received ON migration_webhook_events(project_id, received_at DESC);
+
+CREATE TABLE IF NOT EXISTS migration_flavor_staging (
+    id                  SERIAL PRIMARY KEY,
+    project_id          TEXT NOT NULL REFERENCES migration_projects(project_id) ON DELETE CASCADE,
+    source_shape        TEXT NOT NULL,
+    vcpus               INTEGER NOT NULL,
+    ram_mb              INTEGER NOT NULL,
+    disk_gb             INTEGER NOT NULL,
+    target_flavor_name  TEXT,
+    pcd_flavor_id       TEXT,
+    vm_count            INTEGER DEFAULT 0,
+    confirmed           BOOLEAN DEFAULT FALSE,
+    skip                BOOLEAN DEFAULT FALSE,
+    existing_flavor_id  TEXT,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (project_id, source_shape)
+);
+CREATE INDEX IF NOT EXISTS idx_flavor_staging_project ON migration_flavor_staging(project_id);
+
+-- Onboarding tables (previously inline in api/onboarding_routes.py)
+CREATE TABLE IF NOT EXISTS onboarding_batches (
+    id                  SERIAL PRIMARY KEY,
+    batch_id            UUID NOT NULL DEFAULT gen_random_uuid(),
+    batch_name          TEXT NOT NULL,
+    uploaded_by         TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'validating',
+    validation_errors   JSONB DEFAULT '[]'::jsonb,
+    dry_run_result      JSONB,
+    approval_status     TEXT DEFAULT 'not_submitted',
+    approved_by         TEXT,
+    approved_at         TIMESTAMPTZ,
+    rejection_comment   TEXT,
+    execution_result    JSONB,
+    total_customers     INT DEFAULT 0,
+    total_projects      INT DEFAULT 0,
+    total_networks      INT DEFAULT 0,
+    total_users         INT DEFAULT 0,
+    execution_log       JSONB DEFAULT '[]'::jsonb,
+    rerun_count         INT DEFAULT 0,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_onboarding_batches_batch_id ON onboarding_batches (batch_id);
+
+CREATE TABLE IF NOT EXISTS onboarding_customers (
+    id              SERIAL PRIMARY KEY,
+    batch_id        UUID NOT NULL REFERENCES onboarding_batches(batch_id) ON DELETE CASCADE,
+    domain_name     TEXT NOT NULL,
+    display_name    TEXT,
+    description     TEXT,
+    contact_email   TEXT,
+    department_tag  TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    error_msg       TEXT,
+    pcd_domain_id   TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_customers_batch ON onboarding_customers (batch_id);
+
+CREATE TABLE IF NOT EXISTS onboarding_projects (
+    id                      SERIAL PRIMARY KEY,
+    batch_id                UUID NOT NULL REFERENCES onboarding_batches(batch_id) ON DELETE CASCADE,
+    customer_id             INT REFERENCES onboarding_customers(id) ON DELETE CASCADE,
+    domain_name             TEXT NOT NULL,
+    project_name            TEXT NOT NULL,
+    subscription_id         TEXT DEFAULT '',
+    description             TEXT,
+    quota_vcpu              INT DEFAULT 20,
+    quota_ram_mb            INT DEFAULT 51200,
+    quota_instances         INT DEFAULT 10,
+    quota_server_groups     INT DEFAULT 10,
+    quota_networks          INT DEFAULT 10,
+    quota_subnets           INT DEFAULT 20,
+    quota_routers           INT DEFAULT 5,
+    quota_ports             INT DEFAULT 200,
+    quota_floatingips       INT DEFAULT 20,
+    quota_security_groups   INT DEFAULT 10,
+    quota_volumes           INT DEFAULT 20,
+    quota_snapshots         INT DEFAULT 20,
+    quota_disk_gb           INT DEFAULT 1000,
+    status                  TEXT NOT NULL DEFAULT 'pending',
+    error_msg               TEXT,
+    pcd_project_id          TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_projects_batch ON onboarding_projects (batch_id);
+
+CREATE TABLE IF NOT EXISTS onboarding_networks (
+    id                      SERIAL PRIMARY KEY,
+    batch_id                UUID NOT NULL REFERENCES onboarding_batches(batch_id) ON DELETE CASCADE,
+    project_id              INT REFERENCES onboarding_projects(id) ON DELETE CASCADE,
+    domain_name             TEXT NOT NULL,
+    project_name            TEXT NOT NULL,
+    network_name            TEXT NOT NULL,
+    network_kind            TEXT DEFAULT 'physical_managed',
+    network_type            TEXT DEFAULT 'vlan',
+    physical_network        TEXT DEFAULT 'physnet1',
+    cidr                    TEXT,
+    gateway                 TEXT,
+    dns1                    TEXT DEFAULT '8.8.8.8',
+    vlan_id                 INT,
+    dhcp_enabled            BOOLEAN DEFAULT TRUE,
+    is_external             BOOLEAN DEFAULT FALSE,
+    shared                  BOOLEAN DEFAULT FALSE,
+    allocation_pool_start   TEXT,
+    allocation_pool_end     TEXT,
+    status                  TEXT NOT NULL DEFAULT 'pending',
+    error_msg               TEXT,
+    pcd_network_id          TEXT,
+    pcd_subnet_id           TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_networks_batch ON onboarding_networks (batch_id);
+
+CREATE TABLE IF NOT EXISTS onboarding_users (
+    id                  SERIAL PRIMARY KEY,
+    batch_id            UUID NOT NULL REFERENCES onboarding_batches(batch_id) ON DELETE CASCADE,
+    project_id          INT REFERENCES onboarding_projects(id) ON DELETE CASCADE,
+    domain_name         TEXT NOT NULL,
+    project_name        TEXT NOT NULL,
+    username            TEXT NOT NULL,
+    email               TEXT,
+    role                TEXT NOT NULL DEFAULT 'member',
+    user_password       TEXT,
+    send_welcome_email  BOOLEAN DEFAULT TRUE,
+    status              TEXT NOT NULL DEFAULT 'pending',
+    error_msg           TEXT,
+    pcd_user_id         TEXT,
+    temp_password       TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_users_batch ON onboarding_users (batch_id);
+
+-- vm_provisioning_batches / vm_provisioning_vms
+-- Created here for fresh installs; previously created at runtime by vm_provisioning_routes.py.
+CREATE TABLE IF NOT EXISTS vm_provisioning_batches (
+    id              SERIAL PRIMARY KEY,
+    name            TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'validated',
+    approval_status TEXT NOT NULL DEFAULT 'pending_approval',
+    require_approval BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by      TEXT,
+    domain_name     TEXT NOT NULL,
+    project_name    TEXT NOT NULL,
+    dry_run_results JSONB,
+    region_id       TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS vm_provisioning_vms (
+    id              SERIAL PRIMARY KEY,
+    batch_id        INTEGER NOT NULL REFERENCES vm_provisioning_batches(id) ON DELETE CASCADE,
+    vm_name_suffix  TEXT NOT NULL,
+    count           INTEGER NOT NULL DEFAULT 1,
+    image_name      TEXT,
+    image_id        TEXT,
+    flavor_name     TEXT,
+    flavor_id       TEXT,
+    volume_gb       INTEGER NOT NULL DEFAULT 20,
+    network_name    TEXT,
+    network_id      TEXT,
+    security_groups JSONB DEFAULT '[]',
+    fixed_ip        TEXT,
+    hostname        TEXT,
+    os_username     TEXT NOT NULL,
+    os_password     TEXT NOT NULL,
+    extra_cloudinit TEXT,
+    os_type         TEXT NOT NULL DEFAULT 'linux',
+    delete_on_termination BOOLEAN NOT NULL DEFAULT TRUE,
+    pcd_server_ids  JSONB DEFAULT '[]',
+    assigned_ips    JSONB DEFAULT '[]',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    error_msg       TEXT,
+    console_log     TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- v2.0.0: vJailbreak Execution Feedback Loop
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Webhook HMAC secret per migration project (set via regenerate endpoint)
+-- These ALTER TABLE statements are guarded by IF NOT EXISTS.
+-- On fresh installs, migration_projects was just created above with all columns,
+-- so these are no-ops. On existing installs, only new columns get added.
 ALTER TABLE migration_projects
     ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
 

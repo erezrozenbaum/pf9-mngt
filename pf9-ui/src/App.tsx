@@ -3255,6 +3255,7 @@ const App: React.FC = () => {
     "cluster_management",
     "tenant_portal",
     "operational_timeline",
+    "platform_health",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------

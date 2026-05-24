@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.0] - 2026-05-24
+
+### Changed
+- **Schema consolidation — retired `_ensure_tables()` lazy DDL** (`api/integration_routes.py`, `api/ticket_routes.py`, `api/onboarding_routes.py`, `api/migration_routes.py`, `api/provisioning_routes.py`, `api/runbook_routes.py`, `api/vm_provisioning_routes.py`, `api/main.py`): Removed the `_ensure_tables()` / `_ensure_*()` pattern from all API route modules. These functions were creating tables at Python import time, bypassing the migration system and causing schema drift. All tables are now defined authoritatively in `db/init.sql` (fresh installs) and tracked via `db/migrate_*.sql` files applied by `run_migration.py` on startup. The `runbook_routes.py` data-level operations (seed runbooks, fix descriptions, GRANTs) were preserved in a renamed `_apply_startup_patches()` helper that contains no DDL.
+- **New migration file** (`db/migrate_v2_8_0_retire_ensure_tables.sql`): Adds `onboarding_batches`, `onboarding_customers`, `onboarding_projects`, `onboarding_networks`, `onboarding_users`, `migration_flavor_staging`, `vm_provisioning_batches`, and `vm_provisioning_vms` for existing installs that never had a proper migration file for these tables. All statements are `CREATE TABLE IF NOT EXISTS` — safe no-ops on existing deployments.
+- **`db/init.sql` updated**: Added canonical `CREATE TABLE IF NOT EXISTS` definitions for all previously missing tables so fresh Docker/K8s installs get a complete and correct schema without needing to start the API first.
+
+### Fixed
+- **Right panel shown on `platform_health` view** (`pf9-ui/src/App.tsx`): Added `"platform_health"` to the `hideDetailsPanel` list so the detail side-panel is correctly hidden on the Platform Health screen.
+
+---
+
 ## [2.7.0] - 2026-05-21
 
 ### Added
