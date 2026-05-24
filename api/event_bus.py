@@ -139,6 +139,7 @@ VALUES (
 ON CONFLICT (source, source_id)
 WHERE source_id IS NOT NULL
 DO NOTHING
+RETURNING id
 """
 
 
@@ -193,5 +194,16 @@ def _write_event(
                         visibility,
                     ),
                 )
+                row = cur.fetchone()
+                event_id = row[0] if row else None
+
+        # Evaluate CLEA policies in this same background thread
+        if event_id is not None:
+            try:
+                from clea_routes import evaluate_clea_policies  # lazy import
+                evaluate_clea_policies(event_id, event_type, metadata)
+            except Exception:
+                logger.debug("event_bus: clea evaluation failed for %r", event_type, exc_info=True)
+
     except Exception:
         logger.debug("event_bus: failed to write event %r", event_type, exc_info=True)

@@ -1420,7 +1420,7 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v2.8.0** (May 2026) — schema consolidation: `onboarding_*`, `migration_flavor_staging`, and `vm_provisioning_*` tables added to `db/init.sql`; lazy DDL anti-pattern (`_ensure_tables()`) retired from all API route modules.
+Current schema version: **v2.9.0** (May 2026) — Closed-Loop Event Automation: `clea_policies` and `clea_executions` tables added; RBAC rows for `clea` resource; `admin_tools` nav item; migration file `migrate_v2_9_0_clea.sql`.
 
 ## Health Score Configuration (v2.3.0)
 
@@ -1654,6 +1654,66 @@ CREATE INDEX IF NOT EXISTS idx_copilot_exec_log_user_ts
 |-----|---------|-------------|
 | `copilot.agentic_enabled` | `true` | Platform-wide on/off toggle for Copilot-triggered executions |
 | `copilot.execution_quota_per_hour` | `10` | Max executions a single user can trigger per hour via Copilot |
+
+## Closed-Loop Event Automation (v2.9.0)
+
+### clea_policies
+Defines automation policies that map operational event types to runbooks.
+
+```sql
+CREATE TABLE IF NOT EXISTS clea_policies (
+    id             BIGSERIAL    PRIMARY KEY,
+    event_type     TEXT         NOT NULL,
+    runbook_name   TEXT         NOT NULL,
+    approval_mode  TEXT         NOT NULL DEFAULT 'single_approval',  -- auto | single_approval
+    condition_expr JSONB,                -- optional key-equality filter on event metadata
+    enabled        BOOLEAN      NOT NULL DEFAULT true,
+    label          TEXT,
+    description    TEXT,
+    created_by     TEXT         NOT NULL DEFAULT 'system',
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clea_policy_event_runbook
+    ON clea_policies (event_type, runbook_name);
+```
+
+### clea_executions
+State machine for each policy evaluation triggered by an operational event.
+
+```sql
+CREATE TABLE IF NOT EXISTS clea_executions (
+    id               BIGSERIAL    PRIMARY KEY,
+    policy_id        BIGINT       NOT NULL REFERENCES clea_policies(id) ON DELETE CASCADE,
+    event_id         BIGINT,
+    event_type       TEXT         NOT NULL,
+    runbook_name     TEXT         NOT NULL,
+    runbook_exec_id  TEXT,
+    status           TEXT         NOT NULL DEFAULT 'pending',  -- pending | approved | rejected | executed | skipped
+    approval_mode    TEXT         NOT NULL,
+    triggered_by     TEXT         NOT NULL DEFAULT 'system',
+    approved_by      TEXT,
+    rejected_by      TEXT,
+    rejection_reason TEXT,
+    metadata         JSONB,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_clea_exec_policy  ON clea_executions (policy_id);
+CREATE INDEX IF NOT EXISTS idx_clea_exec_status  ON clea_executions (status);
+CREATE INDEX IF NOT EXISTS idx_clea_exec_event   ON clea_executions (event_id);
+CREATE INDEX IF NOT EXISTS idx_clea_exec_created ON clea_executions (created_at DESC);
+```
+
+**RBAC permissions added**:
+| role | resource | action |
+|------|----------|--------|
+| `admin` | `clea` | `read` |
+| `superadmin` | `clea` | `read` |
+| `superadmin` | `clea` | `write` |
+| `superadmin` | `clea` | `admin` |
+
+**Migration file**: `db/migrate_v2_9_0_clea.sql`
 
 ## Tenant Notifications (v2.1.0)
 

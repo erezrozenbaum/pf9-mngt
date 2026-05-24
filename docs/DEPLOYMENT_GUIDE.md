@@ -1705,6 +1705,8 @@ kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py
 
 **v2.6.4** adds `db/migrate_v2_6_4_rightsizing_billing.sql`: grants `SELECT, UPDATE ON rightsizing_recommendations` and `SELECT ON metering_flavor_pricing` to `tenant_portal_role`. Required for the tenant "Request Resize" CTA (`POST /tenant/rightsizing/{id}/request-change`) and for billing cost display in tenant Cost Optimisation. Apply with `docker exec pf9_api python run_migration.py` or `kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py`.
 
+**v2.9.0** adds `db/migrate_v2_9_0_clea.sql`: creates `clea_policies` and `clea_executions` tables, RBAC rows for the `clea` resource, and a "⚡ Automation" nav item in the `admin_tools` group. Seeds 2 demo policies (`drift.resource_orphaned` → `orphan_resource_cleanup` and `quota.warning` → `quota_threshold_check`). All statements are idempotent (`IF NOT EXISTS` / `ON CONFLICT DO NOTHING`). Apply with `docker exec pf9_api python run_migration.py` or `kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py`.
+
 **v2.8.0** adds `db/migrate_v2_8_0_retire_ensure_tables.sql`: ensures `onboarding_batches`, `onboarding_customers`, `onboarding_projects`, `onboarding_networks`, `onboarding_users`, `migration_flavor_staging`, `vm_provisioning_batches`, and `vm_provisioning_vms` exist on existing installs. All statements use `CREATE TABLE IF NOT EXISTS` — fully safe on live databases. Apply with `docker exec pf9_api python run_migration.py` or `kubectl exec -n pf9-mngt deploy/pf9-api -- python run_migration.py`.
 
 **v2.7.0** adds `db/migrate_v2_7_0_platform_health.sql`: inserts the `platform_health` nav item under the `admin_tools` navigation group. The migration is idempotent (`ON CONFLICT (key) DO NOTHING`). Apply:

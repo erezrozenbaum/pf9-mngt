@@ -4,8 +4,8 @@ description: >
   Platform9 Management — full-stack platform (API, UI, PostgreSQL, Redis,
   OpenLDAP, monitoring, and seven background workers).
 type: application
-version: 2.8.0
-appVersion: "2.8.0"
+version: 2.9.0
+appVersion: "2.9.0"
 kubeVersion: ">=1.28.0-0"
 home: https://github.com/erezrozenbaum/pf9-mngt
 maintainers:

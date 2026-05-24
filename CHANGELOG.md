@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.0] - 2026-05-24
+
+### Added
+- **Closed-Loop Event Automation** (`api/clea_routes.py`): New `GET/POST/PUT /api/admin/clea/policies` endpoints let superadmins create, edit, toggle, and delete automation policies. Each policy maps an operational event type (e.g. `drift.resource_orphaned`, `quota.warning`) to a runbook with an approval mode of `auto` or `single_approval`. `GET/POST /api/admin/clea/executions` tracks per-event execution history; approve/reject endpoints allow gated promotion.
+- **Event-driven runbook triggering** (`api/event_bus.py`): After every operational event is written to the timeline, the event bus now evaluates all enabled automation policies for that event type. `auto`-mode policies immediately launch a runbook execution; `single_approval` policies create a pending execution record for operator review.
+- **Automation policies DB schema** (`db/migrate_v2_9_0_clea.sql`, `db/init.sql`): Two new tables — `clea_policies` (policy definitions with optional JSON condition filter) and `clea_executions` (per-event execution state machine: `pending → approved/rejected/executed/skipped`). RBAC rows added for `admin` (read) and `superadmin` (read/write/admin) on the `clea` resource. A new "⚡ Automation" nav item is added to the `admin_tools` group. Two demo policies are seeded for `drift.resource_orphaned` and `quota.warning`.
+- **Automation UI tab** (`pf9-ui/src/components/CleaPoliciesTab.tsx`, `pf9-ui/src/styles/CleaPoliciesTab.css`): Admin-only "⚡ Automation" page with two views — a Policies table (CRUD for superadmins, read-only for admins) and an Execution Log with one-click approve/reject for pending entries.
+
+---
+
 ## [2.8.0] - 2026-05-24
 
 ### Changed

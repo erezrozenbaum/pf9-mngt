@@ -41,6 +41,7 @@ import OperationalTimelineTab from "./components/OperationalTimelineTab";
 import AccountManagerDashboard from "./components/AccountManagerDashboard";
 import ExecutiveDashboard from "./components/ExecutiveDashboard";
 import PlatformHealthTab from "./components/PlatformHealthTab";
+import CleaPoliciesTab from "./components/CleaPoliciesTab";
 import DocsTab from "./components/DocsTab";
 import TicketsTab from "./components/TicketsTab";
 import MigrationPlannerTab from "./components/MigrationPlannerTab";
@@ -422,7 +423,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "operational_timeline" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal" | "account_manager_dashboard" | "executive_dashboard" | "snapshot-chains" | "rightsizing" | "platform_health";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "operational_timeline" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal" | "account_manager_dashboard" | "executive_dashboard" | "snapshot-chains" | "rightsizing" | "platform_health" | "clea_policies";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -491,6 +492,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "account_manager_dashboard", label: "📋 My Portfolio",       adminOnly: false, actionStyle: false },
   { id: "executive_dashboard",       label: "📊 Portfolio Health",   adminOnly: false, actionStyle: false },
   { id: "platform_health",           label: "💚 Platform Health",    adminOnly: true,  actionStyle: false },
+  { id: "clea_policies",             label: "⚡ Automation",          adminOnly: true,  actionStyle: false },
 ];
 
 // ---------------------------------------------------------------------------
@@ -3256,6 +3258,7 @@ const App: React.FC = () => {
     "tenant_portal",
     "operational_timeline",
     "platform_health",
+    "clea_policies",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------
@@ -6564,6 +6567,11 @@ const App: React.FC = () => {
           {/* Platform Self-Monitoring Health */}
           {activeTab === "platform_health" && (
             <PlatformHealthTab userRole={authUser?.role || ""} />
+          )}
+
+          {/* CLEA — Closed-Loop Event Automation */}
+          {activeTab === "clea_policies" && (
+            <CleaPoliciesTab userRole={authUser?.role || ""} />
           )}
 
         </div>

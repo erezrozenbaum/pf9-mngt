@@ -32,11 +32,11 @@
 
 • **🏗️ 18-container microservices** — designed for production deployment  
 • **📈 670+ commits, actively evolving** — established codebase  
-• **✅ 593 passing tests** — comprehensive test coverage ([see tests/](tests/))  
+• **✅ 626 passing tests** — comprehensive test coverage ([see tests/](tests/))  
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
 
-[![Version](https://img.shields.io/badge/version-2.8.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-2.9.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -286,6 +286,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v2.9.0** — Closed-Loop Event Automation: `clea_policies` table maps operational event types to runbooks with `auto` or `single_approval` modes; event bus now evaluates policies after every event write and auto-triggers or queues runbook executions; policy CRUD API (`/api/admin/clea/policies`), execution log with approve/reject endpoints; admin-only "⚡ Automation" UI tab. (May 2026)
 - **v2.8.0** — Schema consolidation: retired `_ensure_tables()` lazy DDL from all API route modules; all tables now defined in `db/init.sql` (fresh installs) and `db/migrate_*.sql` (existing installs); Platform Health right-panel fix. (May 2026)
 - **v2.7.0** — Event Bus (`emit_event` fire-and-forget writer to `operational_events`); Platform Health endpoint (`GET /api/admin/platform/health` with DB latency, Redis ping, pool stats, and worker last-run status); Platform Health UI tab (admin); extended demo seeder with 5 new seed functions (insights, tickets, SLA compliance, backup history, operational events). (May 2026)
 - **v2.6.x** — Workload Right-Sizing & Cost Waste Detection: idle/over-provisioned VM classification, flavor recommendations, monthly savings estimates, Snooze/Dismiss lifecycle; tenant "Request Resize" auto-creates a tracked internal support ticket with ops-team email notification; admin recommendation cards have a 🎫 Open Ticket action; billing impact (monthly cost + projected savings) on all recommendation objects; drift detection false positive fix (NULL → value no longer triggers an alert); VM provisioning circuit-breaker fix. (May 2026) — *patch history in [CHANGELOG.md](CHANGELOG.md)*
