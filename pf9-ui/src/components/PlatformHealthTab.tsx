@@ -213,19 +213,18 @@ interface PercentBarProps {
   pct: number;   // 0-100+
   label: string;
   color?: string;
-  width?: number;
 }
 
-function PercentBar({ pct, label, color, width = 120 }: PercentBarProps) {
+function PercentBar({ pct, label, color }: PercentBarProps) {
   const clamped = Math.min(pct, 100);
   const barColor = color ?? (pct > 90 ? 'var(--color-error)' : pct > 60 ? 'var(--color-warning)' : 'var(--color-success)');
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-      <span style={{ whiteSpace: 'nowrap', minWidth: 64 }}>{label}</span>
-      <div style={{ width, height: 5, borderRadius: 3, background: 'var(--color-border)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: 'var(--color-text-muted)', width: '100%', overflow: 'hidden' }}>
+      <span style={{ whiteSpace: 'nowrap', flexShrink: 0, minWidth: 52 }}>{label}</span>
+      <div style={{ flex: 1, minWidth: 28, height: 5, borderRadius: 3, background: 'var(--color-border)', overflow: 'hidden' }}>
         <div style={{ width: `${clamped}%`, height: '100%', background: barColor, borderRadius: 3, transition: 'width 0.3s' }} />
       </div>
-      <span style={{ color: barColor, fontWeight: 600, minWidth: 36 }}>{pct.toFixed(0)}%</span>
+      <span style={{ color: barColor, fontWeight: 600, flexShrink: 0, minWidth: 32 }}>{pct.toFixed(0)}%</span>
     </div>
   );
 }
@@ -424,16 +423,16 @@ function PodCard({ pod, nodeCpuTotal, nodeRamTotal }: { pod: PodMetric; nodeCpuT
             CPU <span style={{ color: cpuColor, fontWeight: 600 }}>{cpuCores < 0.001 ? '<1m' : cpuCores < 1 ? `${(cpuCores * 1000).toFixed(0)}m` : `${cpuCores.toFixed(2)}`} cores</span>
           </div>
           <Sparkline series={pod.cpu_series} color={cpuColor} width={150} height={38} />
-          {cpuReq > 0 && <PercentBar pct={cpuPctReq} label="of request" color={cpuColor} width={100} />}
-          {nodeCpuTotal > 0 && <PercentBar pct={cpuPctNode} label="of node" width={100} />}
+          {cpuReq > 0 && <PercentBar pct={cpuPctReq} label="of request" color={cpuColor} />}
+          {nodeCpuTotal > 0 && <PercentBar pct={cpuPctNode} label="of node" />}
         </div>
         <div className="ph-pod-metric">
           <div className="ph-pod-metric__label">
             RAM <span style={{ color: ramColor, fontWeight: 600 }}>{fmtBytes(ramBytes)}</span>
           </div>
           <Sparkline series={pod.ram_series} color={ramColor} width={150} height={38} />
-          {ramReq > 0 && <PercentBar pct={ramPctReq} label="of request" color={ramColor} width={100} />}
-          {nodeRamTotal > 0 && <PercentBar pct={ramPctNode} label="of node" width={100} />}
+          {ramReq > 0 && <PercentBar pct={ramPctReq} label="of request" color={ramColor} />}
+          {nodeRamTotal > 0 && <PercentBar pct={ramPctNode} label="of node" />}
         </div>
       </div>
     </div>
@@ -660,7 +659,7 @@ const PlatformHealthTab: React.FC<Props> = ({ userRole: _userRole }) => {
                   <span>⬇ Inbound (receive)</span>
                   <span style={{ color: 'var(--color-info, #3b82f6)', fontWeight: 600 }}>{fmtNetBytes(lastVal(netRx))}</span>
                 </div>
-                <Sparkline series={netRx} color="var(--color-info, #3b82f6)" width={700} height={50} />
+                <div style={{ width: '100%', overflowX: 'hidden' }}><Sparkline series={netRx} color="var(--color-info, #3b82f6)" width={600} height={50} /></div>
               </div>
             )}
             {netTx.length > 1 && (
@@ -669,7 +668,7 @@ const PlatformHealthTab: React.FC<Props> = ({ userRole: _userRole }) => {
                   <span>⬆ Outbound (transmit)</span>
                   <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>{fmtNetBytes(lastVal(netTx))}</span>
                 </div>
-                <Sparkline series={netTx} color="var(--color-warning)" width={700} height={50} />
+                <div style={{ width: '100%', overflowX: 'hidden' }}><Sparkline series={netTx} color="var(--color-warning)" width={600} height={50} /></div>
               </div>
             )}
           </div>

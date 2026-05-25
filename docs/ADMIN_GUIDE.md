@@ -844,6 +844,20 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.12.1 — Platform Health layout fix, nav_items migration, CI fixes
+
+- **Responsive PercentBar** (`PlatformHealthTab.tsx`): Bar fill now uses `flex: 1; minWidth: 28px` — no more fixed 100 px overflow in narrow pod-card columns. Container is `width: 100%; overflow: hidden`.
+- **Network sparkline overflow** (`PlatformHealthTab.tsx`): Sparkline wrapper changed to `width: 100%; overflowX: hidden` (was hard-coded 700 px).
+- **Nav items migration** (`db/migrate_v2_12_0_nav_items.sql`): Inserts `node_logs` (📋 Node Logs, sort 7), `admin_settings` (⚙️ System Settings, sort 8), and `clea_policies` (⚡ Automation, sort 6) into the `nav_items` table under the `admin_tools` nav group. Apply on existing v2.12.0 installs:
+  ```bash
+  # Docker
+  docker exec -i pf9_db psql -U pf9 -d pf9_mgmt < db/migrate_v2_12_0_nav_items.sql
+  # Kubernetes
+  kubectl exec -n pf9-mngt pf9-db-0 -- psql -U pf9 -d pf9_mgmt -c "$(cat db/migrate_v2_12_0_nav_items.sql)"
+  ```
+- **CI flake8 F824** (`api/db_pool.py`): Removed `global _read_pool` from `get_read_connection()` (read-only access does not require a `global` statement).
+- **CI TypeScript fixes** (`pf9-ui/src/App.tsx`, `pf9-ui/src/components/NodeLogsTab.tsx`): Orphaned fragment in tabs array corrected; unused `import React` removed; `setMeta` spread type fix.
+
 ### v2.12.0 — SSE live events, Platform Health %, node logs, multi-region HA
 
 #### Real-time SSE event stream

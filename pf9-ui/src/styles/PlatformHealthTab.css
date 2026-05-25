@@ -214,7 +214,7 @@
 /* ── Pod metrics grid ── */
 .ph-pod-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 1rem;
 }
 
@@ -238,7 +238,8 @@
 
 .ph-pod-card__metrics {
   display: flex;
-  gap: 1rem;
+  gap: 0.75rem;
+  overflow: hidden;
 }
 
 .ph-pod-metric { flex: 1; }

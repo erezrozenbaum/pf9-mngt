@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.1] - 2026-05-25
+
+### Fixed
+
+- **Platform Health responsive layout** (`PlatformHealthTab.tsx`): `PercentBar` component now uses `flex: 1; minWidth: 28px` for the bar fill — removes the old fixed 100 px width that overflowed pod cards in narrow viewports. Container set to `width: 100%; overflow: hidden`. Network sparklines (formerly hard-coded 700 px) are now wrapped in `width: 100%; overflowX: hidden`.
+- **Nav items DB seed** (`db/migrate_v2_12_0_nav_items.sql`, `db/init.sql`): `node_logs`, `admin_settings`, and `clea_policies` rows added to the `nav_items` table. These tabs now appear correctly in the Admin Tools grouped navigation sidebar (visible to admin/superadmin roles). Previous installs running v2.12.0 without the migration would show the new tabs only in the fallback flat sidebar.
+- **CI — flake8 F824** (`api/db_pool.py`): Removed redundant `global _read_pool` declaration from `get_read_connection()` — the statement declared a global without assigning to it, which flake8 flags as F824. The function only reads the module-level variable and requires no `global` statement.
+- **CI — TypeScript TS2353 / TS6133** (`pf9-ui/src/App.tsx`, `pf9-ui/src/components/NodeLogsTab.tsx`): Fixed orphaned tab-array fragment left by a partial multi-line replacement. Removed unused `import React` (JSX transform). Fixed `setMeta()` call to destructure `log_lines` before spreading the rest into the `Omit<…, 'log_lines'>` typed setter.
+
+---
+
 ## [2.12.0] - 2026-05-25
 
 ### Added
