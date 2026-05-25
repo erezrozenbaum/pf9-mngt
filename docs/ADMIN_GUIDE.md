@@ -844,6 +844,24 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.12.5 — NetworkPolicy SSH egress fix
+
+- **NetworkPolicy — API pod blocked from SSH to KVM nodes** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): The `pf9-api` NetworkPolicy had no egress rule for port 22. All SSH connections from the API pod to KVM nodes timed out silently. Added a conditional egress rule on TCP port `PF9_SSH_PORT` (default 22) that is only rendered when `api.nodeLogSource=ssh` in Helm values. No credentials or application code changes required.
+
+### v2.12.4 — SSH-based Node Logs
+
+- **`_fetch_via_ssh()`** (`api/node_logs_routes.py`): New log-fetch path that SSHs to the KVM node's `ip_address` (from the `hypervisors` table) using paramiko. Authenticates as `PF9_SSH_USER` (`cloud-kvm`) with the password from the `pf9-ssh-credentials` K8s secret. Executes `sudo tail -n {lines}` on the relevant `/var/log/pf9/` file. The `pf9-comms` component resolves to the latest `.log` file in `/var/log/pf9/comms/`. Requires sudoers NOPASSWD for `/usr/bin/tail` and `/usr/bin/ls` on each node.
+- **`NODE_LOG_SOURCE=ssh`** routing: `get_node_logs()` routes to `_fetch_via_ssh()` when the env var is set. Enable by setting `api.nodeLogSource: "ssh"` in the private Helm values.
+- **`_fetch_via_resmgr()` rewrite**: When `NODE_LOG_SOURCE=resmgr` (the default), returns rich diagnostic pseudo-log-lines synthesised from the resmgr host object: host status, resource usage (CPU/mem/disk %), load average, per-role convergence status, network interfaces. No longer errors on missing `/log` endpoint.
+- **Helm**: `api.nodeLogSource` and `api.ssh.port` values added; `NODE_LOG_SOURCE` and `PF9_SSH_PORT` env vars injected into the API deployment.
+- **Sealed secret example**: `k8s/sealed-secrets/pf9-ssh-credentials.yaml.example` committed to public repo. Real SealedSecret with the `cloud-kvm` password belongs in the private deploy repo.
+
+**Node preparation** (one-time, run as root on each KVM node):
+```bash
+echo "cloud-kvm ALL=(ALL) NOPASSWD: /usr/bin/tail, /usr/bin/ls" > /etc/sudoers.d/cloud-kvm-logs
+chmod 440 /etc/sudoers.d/cloud-kvm-logs
+```
+
 ### v2.12.3 — Node Logs 404 fix (resmgr UUID)
 
 - **Node Logs — HTTP 404 when fetching logs** (`api/node_logs_routes.py`): `_fetch_via_resmgr()` was called with the PostgreSQL integer `id` (e.g. `6`, `7`) instead of the PF9 resmgr UUID. The resmgr UUID lives at `raw_json->'service'->>'host'` (e.g. `6751ba6a-295b-43be-847a-25c3cd149880`). `_get_nodes()` now includes a `resmgr_id` field and `get_node_logs()` passes it to `_fetch_via_resmgr()`. Logs now load correctly for all nodes. No DB migration or config change needed.

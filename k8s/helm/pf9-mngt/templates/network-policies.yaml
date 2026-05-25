@@ -160,6 +160,13 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+    {{- if eq (.Values.api.nodeLogSource | default "") "ssh" }}
+    # SSH to KVM hypervisors for node log fetching (NODE_LOG_SOURCE=ssh)
+    - to: []
+      ports:
+        - port: {{ .Values.api.ssh.port | default "22" | int }}
+          protocol: TCP
+    {{- end }}
 
 # ---------------------------------------------------------------------------
 # Database (PostgreSQL)

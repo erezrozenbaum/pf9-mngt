@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.5] - 2026-05-25
+
+### Fixed
+
+- **NetworkPolicy — API pod blocked from SSH to KVM nodes** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): The `pf9-api` NetworkPolicy had no egress rule for port 22, causing `paramiko` connections to time out. Added a conditional egress rule on TCP port `PF9_SSH_PORT` (default 22) that activates only when `api.nodeLogSource=ssh`.
+
+---
+
 ## [2.12.4] - 2026-05-25
 
 ### Added

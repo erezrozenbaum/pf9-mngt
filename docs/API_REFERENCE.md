@@ -1,6 +1,12 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.10.0 — Shared internal library: `secret_helper`, `crypto_helper`, and `request_helpers` extracted to `shared/`; both Dockerfiles updated; backward-compatible re-export wrappers; no API surface changes.
+> **Version**: v2.12.5 — NetworkPolicy SSH egress fix: port 22 egress added to `pf9-api` policy (conditional on `api.nodeLogSource=ssh`).
+> Previous: v2.12.4 — SSH-based Node Logs: `_fetch_via_ssh()` via paramiko (`cloud-kvm` user, `sudo tail /var/log/pf9/`); `NODE_LOG_SOURCE=ssh` env var; `pf9-ssh-credentials` secret; `_fetch_via_resmgr()` rewritten as diagnostic fallback.
+> Previous: v2.12.3 — Node Logs 404 fix: use resmgr UUID from `raw_json->'service'->>'host'` instead of PostgreSQL integer id.
+> Previous: v2.12.2 — Node Logs column fix (`hostname`), System Settings 403 fix, right panel fix, permissions seed.
+> Previous: v2.12.1 — Platform Health layout fixes, nav items seed, CI fixes.
+> Previous: v2.12.0 — SSE live events, Platform Health enhanced, Node Logs API, multi-region HA.
+> Previous: v2.10.0 — Shared internal library: `secret_helper`, `crypto_helper`, and `request_helpers` extracted to `shared/`; both Dockerfiles updated; backward-compatible re-export wrappers; no API surface changes.
 > Previous: v2.9.0 — Closed-Loop Event Automation: `clea_policies` + `clea_executions` tables, event-bus policy evaluation, auto/approval-gated runbook triggers, admin Automation UI tab.
 > Previous: v2.8.0 — Schema consolidation: retired `_ensure_tables()` lazy DDL from all API route modules; `db/migrate_v2_8_0_retire_ensure_tables.sql`.
 > Previous: v2.7.0 — Event Bus, Platform Health endpoint, extended demo seeder.

@@ -1936,6 +1936,18 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.12.5 Fix
+
+### NetworkPolicy — SSH egress
+The `pf9-api` NetworkPolicy in `k8s/helm/pf9-mngt/templates/network-policies.yaml` previously had no egress rule for port 22. When `NODE_LOG_SOURCE=ssh`, paramiko SSH connections from the API pod to KVM nodes timed out silently. A conditional egress rule for TCP port `PF9_SSH_PORT` (default 22) is now rendered only when `api.nodeLogSource=ssh` in Helm values.
+
+## v2.12.4 Additions
+
+### SSH-based Node Logs
+`_fetch_via_ssh(node_ip, component, lines)` in `api/node_logs_routes.py` opens a paramiko SSH connection to the KVM node's `ip_address` (from the `hypervisors` table), authenticates as `cloud-kvm` (configurable via `PF9_SSH_USER`) using the password from the `pf9-ssh-credentials` K8s secret, and runs `sudo tail -n {lines} /var/log/pf9/{file}`. The `pf9-comms` component resolves to the most recently modified file in `/var/log/pf9/comms/`. `get_node_logs()` routes to this function when `NODE_LOG_SOURCE=ssh`.
+
+`_fetch_via_resmgr()` is rewritten as a diagnostic fallback: instead of calling a non-existent `/log` endpoint it synthesises structured log-line dicts from the resmgr host object (status, resource usage, role convergence, network interfaces).
+
 ## v2.12.3 Fixes
 
 ### Node Logs — resmgr UUID
