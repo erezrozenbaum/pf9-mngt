@@ -14,7 +14,7 @@
  * - "Refresh" button with cache-bypass
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../lib/api';
 import '../styles/NodeLogsTab.css';
 
@@ -134,7 +134,9 @@ export default function NodeLogsTab() {
         `/api/admin/nodes/${encodeURIComponent(selectedNode)}/logs?${params}`
       );
       setLogs(data.log_lines);
-      setMeta({ ...data, log_lines: undefined as unknown as LogLine[] });
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { log_lines: _ll, ...metaOnly } = data;
+      setMeta(metaOnly);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to fetch logs');
     } finally {

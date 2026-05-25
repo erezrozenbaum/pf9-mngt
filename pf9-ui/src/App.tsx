@@ -495,9 +495,9 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "account_manager_dashboard", label: "📋 My Portfolio",       adminOnly: false, actionStyle: false },
   { id: "executive_dashboard",       label: "📊 Portfolio Health",   adminOnly: false, actionStyle: false },
   { id: "platform_health",           label: "💚 Platform Health",    adminOnly: true,  actionStyle: false },
-  { id: "clea_policies",             label: "⚡ Automation",        adminOnly: true },
-  { id: "node_logs",                 label: "📋 Node Logs",          adminOnly: true },
-  { id: "admin_settings",            label: "⚙️ System Settings",    adminOnly: true },          adminOnly: true,  actionStyle: false },
+  { id: "clea_policies",             label: "⚡ Automation",        adminOnly: true,  actionStyle: false },
+  { id: "node_logs",                 label: "📋 Node Logs",          adminOnly: true,  actionStyle: false },
+  { id: "admin_settings",            label: "⚙️ System Settings",    adminOnly: true,  actionStyle: false },
 ];
 
 // ---------------------------------------------------------------------------
