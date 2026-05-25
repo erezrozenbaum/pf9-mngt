@@ -1,5 +1,6 @@
 # Features Reference — Technical Deep Dive (v2.11)
 
+> **v2.11.2 FIX**: Platform Health blank-screen crash — `CanvasGradient.addColorStop()` cannot parse CSS `var()` strings; Sparkline now resolves CSS variables via `getComputedStyle` at draw time.
 > **v2.11.1 FIX**: NetworkPolicy egress rule for Prometheus port 9090 (`monitoring` ns) — pod metrics were blocked despite `PROMETHEUS_URL` being set; KPI summary tile alignment fixed on Platform Health and Automation pages.
 > **v2.11.0 NEW**: Enhanced Platform Health UI + Prometheus pod-metrics proxy — `GET /api/admin/platform/metrics` returns per-pod CPU/RAM sparklines (1h), PVC utilisation, and network receive rate sourced from `kube-prometheus-stack`; Platform Health admin page redesigned with KPI summary tiles, colour-coded infrastructure cards, canvas-based sparklines, and PVC usage bars. CLEA Automation tab redesigned with KPI summary row and inline-coloured mode/status badges. Both pages now match the Right-Sizing visual language. `PROMETHEUS_URL` + `K8S_NAMESPACE` env vars added; Helm chart updated.
 > **v2.10.0 NEW**: Shared internal library — `secret_helper`, `crypto_helper`, and `request_helpers` extracted from `api/` and `tenant_portal/` into a new `shared/` package (repo root). Single source of truth; both Dockerfiles updated; backward-compatible re-export wrappers. No API or schema changes.

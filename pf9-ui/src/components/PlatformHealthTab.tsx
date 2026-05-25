@@ -78,6 +78,17 @@ const Sparkline: React.FC<SparklineProps> = ({ series, color, width = 160, heigh
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Canvas API cannot resolve CSS variables — resolve at draw time
+    let resolvedColor = color;
+    if (color.startsWith('var(')) {
+      const m = color.match(/var\((--[\w-]+)(?:,\s*([^)]+))?\)/);
+      if (m) {
+        const computed = getComputedStyle(document.documentElement)
+          .getPropertyValue(m[1]).trim();
+        resolvedColor = computed || m[2]?.trim() || '#3b82f6';
+      }
+    }
+
     const dpr = window.devicePixelRatio || 1;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
@@ -98,8 +109,8 @@ const Sparkline: React.FC<SparklineProps> = ({ series, color, width = 160, heigh
 
     // Fill area
     const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, color + '40');
-    gradient.addColorStop(1, color + '08');
+    gradient.addColorStop(0, resolvedColor + '40');
+    gradient.addColorStop(1, resolvedColor + '08');
     ctx.beginPath();
     ctx.moveTo(toX(0), height);
     series.forEach(([, v], i) => ctx.lineTo(toX(i), toY(v)));
@@ -114,7 +125,7 @@ const Sparkline: React.FC<SparklineProps> = ({ series, color, width = 160, heigh
       if (i === 0) ctx.moveTo(toX(i), toY(v));
       else ctx.lineTo(toX(i), toY(v));
     });
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = resolvedColor;
     ctx.lineWidth = 1.5;
     ctx.lineJoin = 'round';
     ctx.stroke();
@@ -123,7 +134,7 @@ const Sparkline: React.FC<SparklineProps> = ({ series, color, width = 160, heigh
     const last = series[series.length - 1];
     ctx.beginPath();
     ctx.arc(toX(series.length - 1), toY(last[1]), 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = color;
+    ctx.fillStyle = resolvedColor;
     ctx.fill();
   }, [series, color, width, height]);
 

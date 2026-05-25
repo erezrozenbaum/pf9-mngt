@@ -844,6 +844,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.11.2 — Canvas CSS variable crash fix
+
+- **`PlatformHealthTab.tsx`**: The `Sparkline` canvas component was passing CSS `var(--color-info, #3b82f6)` strings directly to `CanvasGradient.addColorStop()`. The Canvas 2D API cannot resolve CSS custom properties, throwing `SyntaxError: Failed to execute 'addColorStop'` and leaving the Platform Health page blank. Fixed by resolving `var()` expressions via `getComputedStyle(document.documentElement).getPropertyValue(varName)` at draw time, with inline fallback (e.g. `#3b82f6`). Theme changes (dark mode) are reflected correctly on next render.
+
 ### v2.11.1 — NetworkPolicy fix + KPI tile alignment
 
 - **NetworkPolicy egress** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): Added egress rule allowing `pf9-api` pods to reach Prometheus on TCP 9090 in the `monitoring` namespace. The v2.11.0 deployment injected `PROMETHEUS_URL` correctly but the NetworkPolicy had no corresponding egress rule, so all queries timed out and `prometheus_available` was always `false`.

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.11.2] - 2026-05-25
+
+### Fixed
+
+- **Canvas CSS variable crash** (`PlatformHealthTab.tsx`): The `Sparkline` canvas component passed CSS `var(--color-*)` strings directly to `CanvasGradient.addColorStop()`, which threw `SyntaxError: Failed to execute 'addColorStop'` and caused a blank Platform Health page. Fixed by resolving CSS variables via `getComputedStyle(document.documentElement).getPropertyValue()` at draw time, falling back to the inline default (e.g. `#3b82f6`). Dark-mode theme changes are now also handled correctly.
+
 ## [2.11.1] - 2026-05-24
 
 ### Fixed
