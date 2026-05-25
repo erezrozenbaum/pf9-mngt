@@ -207,12 +207,16 @@ spec:
                   key: user-password-encrypted
                   optional: true
             # --- SSH log collection ---
+            - name: NODE_LOG_SOURCE
+              value: {{ .Values.api.nodeLogSource | default "" | quote }}
             - name: SSH_PF9_HOSTS
               value: {{ .Values.api.ssh.hosts | quote }}
             - name: PF9_SSH_USER
               value: {{ .Values.api.ssh.user | quote }}
             - name: PF9_SSH_KEY_PATH
               value: {{ .Values.api.ssh.keyPath | quote }}
+            - name: PF9_SSH_PORT
+              value: {{ .Values.api.ssh.port | default "22" | quote }}
             - name: PF9_SSH_PASSWORD
               valueFrom:
                 secretKeyRef:

@@ -155,8 +155,10 @@ api:
     serviceUserDomain: Default
   ssh:
     hosts: ""
-    user: pf9
+    user: cloud-kvm
     keyPath: ""
+    port: "22"
+  nodeLogSource: ""   # ssh | resmgr | hostagent | disabled  (empty = resmgr default)
   parallel:
     maxRegions: "3"
     regionRequestTimeoutSec: "30"

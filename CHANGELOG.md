@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.4] - 2026-05-25
+
+### Added
+
+- **Node Logs — SSH-based log fetching** (`api/node_logs_routes.py`): Added `_fetch_via_ssh()` which SSHs to a KVM node (using paramiko) and tails the relevant `/var/log/pf9/` log file. Component-to-file mapping: `pf9-hostagent → hostagent.log`, `du-agent → ostackhost.log`, `pf9-comms → comms/` (latest file auto-resolved), `pf9-kube → pf9-kube.log`. Unknown components fall back to `/var/log/pf9/{component}.log`. Authenticate with either a private key (`PF9_SSH_KEY_PATH`) or a password (`PF9_SSH_PASSWORD`).
+- **`NODE_LOG_SOURCE=ssh` routing**: `get_node_logs()` now routes through `_fetch_via_ssh()` when `NODE_LOG_SOURCE=ssh`, using `ip_address` from the hypervisor inventory. `list_nodes()` reflects `log_source_configured: true` when SSH credentials are present.
+- **Helm chart** (`k8s/helm/pf9-mngt/values.yaml`, `templates/api/deployment.yaml`): Added `api.nodeLogSource` (empty string = default resmgr) and `api.ssh.port` (default `"22"`) values; injected as `NODE_LOG_SOURCE` and `PF9_SSH_PORT` env vars.
+- **SealedSecret template** (`k8s/sealed-secrets/pf9-ssh-credentials.yaml.example`): Committed a public-safe example showing the expected SealedSecret structure for `pf9-ssh-credentials`. Real sealed secret with the actual password goes in the private deploy repo.
+- **Sealed secrets README** (`k8s/sealed-secrets/README.md`): Added `pf9-ssh-credentials` section with `kubeseal` command and private-repo guidance.
+
+### Changed
+
+- **`_fetch_via_resmgr()`** (`api/node_logs_routes.py`): Now returns rich diagnostic pseudo-log-lines synthesised from the resmgr host object (host status, resource usage, role convergence, network interfaces) instead of erroring when the `/log` endpoint is absent. Remains the default `NODE_LOG_SOURCE` fallback.
+
+---
+
 ## [2.12.3] - 2026-05-25
 
 ### Fixed

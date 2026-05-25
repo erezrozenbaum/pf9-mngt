@@ -149,6 +149,37 @@ kubectl create secret generic pf9-tenant-portal-db-credentials \
 > `tenant_portal_role` Postgres role via:
 > `ALTER ROLE tenant_portal_role WITH PASSWORD '<CHANGE_ME>'`
 
+### pf9-ssh-credentials (SSH password for Node Logs — v2.12.4+)
+
+Used when `api.nodeLogSource: "ssh"` is set in `values.prod.yaml`.
+This is the password for the `pf9` OS user on your KVM hypervisors.
+The real SealedSecret should live in your **private deploy repo** — only the
+template/example is committed to the public repo.
+
+```bash
+kubectl create secret generic pf9-ssh-credentials \
+  --namespace pf9-mngt \
+  --from-literal=password=<PF9_USER_PASSWORD> \
+  --dry-run=client -o yaml \
+  | kubeseal --controller-namespace kube-system \
+             --controller-name sealed-secrets-controller \
+             --format yaml \
+  > /path/to/private-deploy-repo/secrets/pf9-ssh-credentials.yaml
+```
+
+Then set in your private Helm overrides (`values.prod.yaml`):
+
+```yaml
+api:
+  nodeLogSource: "ssh"   # enable SSH-based Node Logs
+  ssh:
+    user: cloud-kvm      # OS user you SSH to the KVM nodes with
+    port: "22"           # SSH port (default 22)
+```
+
+See `pf9-ssh-credentials.yaml.example` in this directory for the expected
+SealedSecret structure.
+
 ### pf9-encryption-secrets (at-rest encryption keys)
 
 This secret holds all Fernet keys used to encrypt data persisted to the
