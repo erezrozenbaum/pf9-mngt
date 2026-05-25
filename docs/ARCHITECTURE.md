@@ -1936,6 +1936,11 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.12.3 Fixes
+
+### Node Logs — resmgr UUID
+`_fetch_via_resmgr()` in `api/node_logs_routes.py` was called with `node["id"]` (the PostgreSQL integer, e.g. `6`). The PF9 resmgr API at `{DU_URL}/resmgr/v1/hosts/{host_id}/log` expects a UUID (e.g. `6751ba6a-295b-43be-847a-25c3cd149880`), stored in `hypervisors.raw_json->'service'->>'host'`. `_get_nodes()` now selects this field as `resmgr_id`; `get_node_logs()` passes `node["resmgr_id"]` to the resmgr fetch (falls back to `str(node["id"])` if null).
+
 ## v2.12.2 Fixes
 
 ### Node Logs — hypervisors column name

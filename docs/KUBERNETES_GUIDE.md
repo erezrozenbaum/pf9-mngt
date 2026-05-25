@@ -1323,6 +1323,11 @@ PgBouncer is not required on the replica path but is supported.
 The runtime toggle in `⚙️ System Settings` allows enabling without a pod restart
 (persists in Redis for 24 h; make permanent via Helm).
 
+## v2.12.3 Notes
+
+### Node Logs — 404 from resmgr
+The `GET /api/admin/nodes/{id}/logs` backend calls `{DU_URL}/resmgr/v1/hosts/{host_id}/log`. In v2.12.2 and earlier, `host_id` was the PostgreSQL integer `id` (e.g. `6`). The resmgr API expects its own UUID (stored in `hypervisors.raw_json->'service'->>'host'`). No DB migration or Helm change is needed — the fix is purely in API code.
+
 ## v2.12.2 Notes
 
 ### System Settings 403 under PgBouncer

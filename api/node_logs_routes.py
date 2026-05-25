@@ -250,8 +250,9 @@ def _get_nodes() -> list[dict]:
                     """
                     SELECT
                         id,
-                        hostname                     AS name,
-                        raw_json->>'host_ip'         AS ip_address,
+                        hostname                          AS name,
+                        raw_json->>'host_ip'              AS ip_address,
+                        raw_json->'service'->>'host'      AS resmgr_id,
                         state,
                         status,
                         region_id
@@ -355,7 +356,9 @@ def get_node_logs(
 
     try:
         if _LOG_SOURCE == "resmgr":
-            log_lines = _fetch_via_resmgr(node["id"], component, lines)
+            # Use the PF9 resmgr UUID (raw_json->service->host); fall back to DB id
+            resmgr_host_id = node.get("resmgr_id") or str(node["id"])
+            log_lines = _fetch_via_resmgr(resmgr_host_id, component, lines)
         elif _LOG_SOURCE == "hostagent":
             ip = node.get("ip_address")
             if not ip:

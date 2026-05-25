@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.3] - 2026-05-25
+
+### Fixed
+
+- **Node Logs — HTTP 404 when fetching logs** (`api/node_logs_routes.py`): `_fetch_via_resmgr()` was called with the PostgreSQL integer `id` (e.g. `6`, `7`) instead of the PF9 resmgr UUID. The resmgr UUID is stored in `raw_json->'service'->>'host'` (e.g. `6751ba6a-295b-43be-847a-25c3cd149880`). `_get_nodes()` now includes `resmgr_id` and `get_node_logs()` uses it when calling resmgr. Logs now load correctly from all four KVM nodes.
+
+---
+
 ## [2.12.2] - 2026-05-25
 
 ### Fixed

@@ -844,6 +844,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.12.3 — Node Logs 404 fix (resmgr UUID)
+
+- **Node Logs — HTTP 404 when fetching logs** (`api/node_logs_routes.py`): `_fetch_via_resmgr()` was called with the PostgreSQL integer `id` (e.g. `6`, `7`) instead of the PF9 resmgr UUID. The resmgr UUID lives at `raw_json->'service'->>'host'` (e.g. `6751ba6a-295b-43be-847a-25c3cd149880`). `_get_nodes()` now includes a `resmgr_id` field and `get_node_logs()` passes it to `_fetch_via_resmgr()`. Logs now load correctly for all nodes. No DB migration or config change needed.
+
 ### v2.12.2 — Node Logs column fix, System Settings 403 fix, right panel, permissions seed
 
 - **Node Logs — nodes not loading** (`api/node_logs_routes.py`): Column `hypervisor_hostname` corrected to `hostname` (actual `hypervisors` table column). All 4 nodes now appear in the dropdown.
