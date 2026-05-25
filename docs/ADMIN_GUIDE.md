@@ -844,6 +844,31 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.12.0 — SSE live events, Platform Health %, node logs, multi-region HA
+
+#### Real-time SSE event stream
+- New endpoint `GET /api/events/stream` (`api/sse_routes.py`). Requires session auth. Streams `data: {...}\n\n` events from Redis pub/sub channel `pf9:live_events`. Heartbeat `}: keepalive` every 25 s.
+- Frontend: `useEventStream` hook + notification bell in App header. Last 50 events retained, unread badge cleared on open.
+
+#### Platform Health enhancements (`PlatformHealthTab.tsx`)
+- Pod cards now show % of CPU/RAM request and % of node capacity as mini progress bars.
+- Pod cards show a restart badge (red) when `restarts_1h > 0` (data from `increase(kube_pod_container_status_restarts_total[1h])`).
+- Resource distribution donut charts (SVG, no external library) show which pods consume the most CPU and RAM.
+- Network section replaced: now shows RX (inbound) + TX (outbound) bytes/s as separate sparklines.
+
+#### PF9 Node Logs
+- `GET /api/admin/nodes` — list hypervisor nodes from DB.
+- `GET /api/admin/nodes/{id}/logs?component=pf9-hostagent&lines=200` — fetch structured log lines.
+- Configure `NODE_LOG_SOURCE` env var: `resmgr` (default) uses PF9 DU API; `hostagent` queries hostagent directly on port 9080; `disabled` skips fetch.
+- Results cached in Redis for `NODE_LOG_CACHE_TTL_S` seconds (default 300). Use `?refresh=true` to bypass cache.
+- RBAC: requires `monitoring:read`.
+
+#### Multi-region HA — read replica (feature-flagged)
+- `get_read_connection()` context manager in `api/db_pool.py` routes to a read replica when `ENABLE_MULTI_REGION=true` + `DB_READ_REPLICA_URL` set.
+- Helm: `multiRegion.enabled: false` (default), `multiRegion.dbReadReplicaUrl: ""`.
+- Falls back to primary transparently on error or when not configured.
+- **Disabled by default in all environments.**
+
 ### v2.11.2 — Canvas CSS variable crash fix
 
 - **`PlatformHealthTab.tsx`**: The `Sparkline` canvas component was passing CSS `var(--color-info, #3b82f6)` strings directly to `CanvasGradient.addColorStop()`. The Canvas 2D API cannot resolve CSS custom properties, throwing `SyntaxError: Failed to execute 'addColorStop'` and leaving the Platform Health page blank. Fixed by resolving `var()` expressions via `getComputedStyle(document.documentElement).getPropertyValue(varName)` at draw time, with inline fallback (e.g. `#3b82f6`). Theme changes (dark mode) are reflected correctly on next render.

@@ -575,3 +575,41 @@ docker exec pf9_ldap ldapsearch -x -H ldap://localhost -D "cn=admin,dc=pf9mgmt,d
 
 **Document Status**: Ready for Use  
 **Last Updated**: May 2026
+
+---
+
+## v2.12.0 — New Environment Variables
+
+The following variables were introduced in v2.12.0. Add them to your `.env` file as needed.
+
+### PF9 Node Log Viewer
+
+| Variable | Default | Description |
+|---|---|---|
+| `NODE_LOG_SOURCE` | `disabled` | Log source: `resmgr` (PF9 DU API), `hostagent` (direct port), or `disabled` |
+| `HOSTAGENT_PORT` | `9080` | Port for direct hostagent log calls (used when `NODE_LOG_SOURCE=hostagent`) |
+| `NODE_LOG_CACHE_TTL_S` | `300` | Redis TTL in seconds for cached node log responses |
+
+```bash
+# .env example
+NODE_LOG_SOURCE=resmgr        # or hostagent / disabled
+# HOSTAGENT_PORT=9080
+# NODE_LOG_CACHE_TTL_S=300
+```
+
+### Multi-Region HA — Read Replica Routing
+
+| Variable | Default | Description |
+|---|---|---|
+| `ENABLE_MULTI_REGION` | `false` | Set to `true` to activate read replica routing |
+| `DB_READ_REPLICA_URL` | _(empty)_ | PostgreSQL DSN for the read replica (streaming replica of primary) |
+
+```bash
+# .env example  ⚠ keep this file out of version control
+ENABLE_MULTI_REGION=false
+# DB_READ_REPLICA_URL=postgresql://pf9:SECRET@replica-host:5432/pf9_mgmt
+```
+
+When both variables are set, `get_read_connection()` routes read-heavy queries to the replica
+with automatic fallback to the primary. The admin `⚙️ System Settings` UI allows a runtime
+toggle (stored in Redis for 24 h) without a pod restart.

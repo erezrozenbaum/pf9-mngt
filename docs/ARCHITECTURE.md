@@ -1886,3 +1886,51 @@ python host_metrics_collector.py > metrics.log 2>&1
 - Existing single-region deployments map directly to `default` control plane + `default:region-one` region — zero migration burden
 - `Pf9Client.from_env()` preserves all existing behavior; constructor is injectable via the live `ClusterRegistry` registry which manages all registered control planes and regions without modifying call sites
 - Region-scoped Redis cache keys prevent data leakage between regions sharing one Redis instance without requiring a separate Redis per deployment
+
+---
+
+## v2.12.0 Additions
+
+### SSE Live Event Stream
+`api/sse_routes.py` exposes `GET /api/events/stream` as a `text/event-stream` (Server-Sent Events) endpoint.
+
+**Flow:**
+1. Authenticated client opens a long-lived SSE connection to `/api/events/stream`.
+2. The backend subscribes to the Redis pub/sub channel `pf9:live_events` using `redis.asyncio`.
+3. Operational events (VM created, backup triggered, alert fired, etc.) are published to this channel via `api/event_bus.py` after each DB write.
+4. The SSE endpoint forwards events to all connected clients within ~100 ms.
+5. A heartbeat comment (`: heartbeat`) is sent every 25 s to prevent proxy timeouts.
+6. On disconnect, the Redis subscription is cleaned up automatically.
+7. The frontend `useEventStream.ts` hook reconnects with exponential back-off (1 s → 30 s cap).
+
+**Auth**: Same session/JWT cookie as all API calls — `require_authentication` dependency on the SSE endpoint.
+
+### Multi-Region HA — Read Replica Routing
+`api/db_pool.py` introduces `get_read_connection()` as a drop-in complement to `get_connection()`.
+
+When `ENABLE_MULTI_REGION=true` and `DB_READ_REPLICA_URL` is set:
+- `get_read_connection()` returns a connection from a dedicated `psycopg2.pool.ThreadedConnectionPool` pointing at the replica.
+- Falls back to the primary pool transparently on error.
+- Feature-flagged off by default; no change to existing read paths without opt-in.
+
+In Helm, the feature is exposed under `multiRegion.enabled` / `multiRegion.dbReadReplicaUrl` in `values.yaml`.
+The Admin UI (`⚙️ System Settings` tab) allows runtime override via Redis (24 h TTL) with hot reinitialisation of the pool.
+
+### PF9 Node Log Viewer
+`api/node_logs_routes.py` provides three endpoints:
+- `GET /api/admin/nodes` — list all hypervisor nodes from the `cluster_registry`
+- `GET /api/admin/nodes/{id}/logs` — fetch structured log lines from a node
+- `GET /api/admin/nodes/{id}/logs/components` — list log component names
+
+Log source is configured by `NODE_LOG_SOURCE`:
+- `resmgr` — proxies to `{DU_URL}/resmgr/v1/hosts/{id}/log` via PF9 token auth
+- `hostagent` — calls `http://{node_ip}:{HOSTAGENT_PORT}/v1/logs` directly
+- `disabled` — endpoints return an informational 200 (no logs fetched)
+
+Redis TTL cache (`NODE_LOG_CACHE_TTL_S`, default 300 s). `?refresh=true` bypasses cache.
+
+The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/keyword filters, auto-refresh, and copy-to-clipboard.
+
+### System Settings Admin Panel
+`api/system_config_routes.py` exposes `GET /api/admin/system/config` and `POST /api/admin/system/config/multi-region` (superadmin-only). Returns sanitised config (no secrets). Runtime overrides stored in Redis for 24 h.
+

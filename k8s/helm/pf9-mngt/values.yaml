@@ -588,3 +588,11 @@ ingress:
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/limit-rps: "100"
     nginx.ingress.kubernetes.io/limit-connections: "20"
+
+# Multi-region HA (feature-flagged)
+multiRegion:
+  # Set to true to enable read replica routing
+  enabled: false
+  # PostgreSQL read replica connection string
+  # e.g. postgresql://user:pass@replica.host:5432/pf9_mgmt
+  dbReadReplicaUrl: ""

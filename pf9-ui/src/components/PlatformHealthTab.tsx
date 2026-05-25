@@ -40,6 +40,9 @@ interface PodMetric {
   short_name: string;
   cpu_series: Series;
   ram_series: Series;
+  cpu_request_cores?: number;
+  ram_request_bytes?: number;
+  restarts_1h?: number;
 }
 
 interface PvcMetric {
@@ -54,7 +57,12 @@ interface MetricsResponse {
   namespace?: string;
   pods: PodMetric[];
   pvcs: PvcMetric[];
-  http_rps_series: Series;
+  /** @deprecated use net_rx_series */
+  http_rps_series?: Series;
+  net_rx_series?: Series;
+  net_tx_series?: Series;
+  node_cpu_total_cores?: number;
+  node_ram_total_bytes?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +188,13 @@ function fmtBytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
+function fmtNetBytes(bps: number): string {
+  if (bps < 1024) return `${bps.toFixed(0)} B/s`;
+  if (bps < 1024 ** 2) return `${(bps / 1024).toFixed(1)} KB/s`;
+  if (bps < 1024 ** 3) return `${(bps / 1024 ** 2).toFixed(1)} MB/s`;
+  return `${(bps / 1024 ** 3).toFixed(2)} GB/s`;
+}
+
 function lastVal(series: Series): number {
   return series.length ? series[series.length - 1][1] : 0;
 }
@@ -188,6 +203,112 @@ function componentColor(status: string): string {
   if (status === 'ok') return 'var(--color-success)';
   if (status === 'error') return 'var(--color-error)';
   return 'var(--color-warning)';
+}
+
+// ---------------------------------------------------------------------------
+// Percent bar (request % + node % mini indicators)
+// ---------------------------------------------------------------------------
+
+interface PercentBarProps {
+  pct: number;   // 0-100+
+  label: string;
+  color?: string;
+  width?: number;
+}
+
+function PercentBar({ pct, label, color, width = 120 }: PercentBarProps) {
+  const clamped = Math.min(pct, 100);
+  const barColor = color ?? (pct > 90 ? 'var(--color-error)' : pct > 60 ? 'var(--color-warning)' : 'var(--color-success)');
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+      <span style={{ whiteSpace: 'nowrap', minWidth: 64 }}>{label}</span>
+      <div style={{ width, height: 5, borderRadius: 3, background: 'var(--color-border)', overflow: 'hidden' }}>
+        <div style={{ width: `${clamped}%`, height: '100%', background: barColor, borderRadius: 3, transition: 'width 0.3s' }} />
+      </div>
+      <span style={{ color: barColor, fontWeight: 600, minWidth: 36 }}>{pct.toFixed(0)}%</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Donut chart (pure SVG — no dependencies)
+// ---------------------------------------------------------------------------
+
+interface DonutSlice {
+  label: string;
+  value: number;
+  color: string;
+}
+
+function DonutChart({ slices, label }: { slices: DonutSlice[]; label: string }) {
+  const total = slices.reduce((s, i) => s + i.value, 0);
+  if (total === 0) {
+    return (
+      <div style={{ width: 120, height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
+        no data
+      </div>
+    );
+  }
+
+  const cx = 60, cy = 60, r = 44, strokeW = 16;
+
+  function polarToCartesian(angleDeg: number) {
+    const rad = (angleDeg - 90) * (Math.PI / 180);
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  }
+
+  function arcPath(startDeg: number, endDeg: number): string {
+    // Clamp arc to < 360 to avoid degenerate full-circle arcs
+    const sweep = Math.min(endDeg - startDeg, 359.99);
+    const s = polarToCartesian(startDeg);
+    const e = polarToCartesian(startDeg + sweep);
+    const large = sweep > 180 ? 1 : 0;
+    return `M ${s.x} ${s.y} A ${r} ${r} 0 ${large} 1 ${e.x} ${e.y}`;
+  }
+
+  let currentDeg = 0;
+  const arcs = slices.map((slice) => {
+    const deg = (slice.value / total) * 360;
+    const path = arcPath(currentDeg, currentDeg + deg);
+    const start = currentDeg;
+    currentDeg += deg;
+    return { ...slice, path, deg, start };
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+      <svg width={120} height={120} viewBox="0 0 120 120" style={{ overflow: 'visible' }}>
+        {/* Track ring */}
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--color-border)" strokeWidth={strokeW} />
+        {/* Segments */}
+        {arcs.map((arc) => (
+          <path
+            key={arc.label}
+            d={arc.path}
+            fill="none"
+            stroke={arc.color}
+            strokeWidth={strokeW}
+            strokeLinecap="butt"
+          >
+            <title>{arc.label}: {((arc.value / total) * 100).toFixed(1)}%</title>
+          </path>
+        ))}
+        {/* Centre label */}
+        <text x={cx} y={cy - 5} textAnchor="middle" fontSize="10" fill="var(--color-text-muted)" dominantBaseline="middle">{label}</text>
+        <text x={cx} y={cy + 8} textAnchor="middle" fontSize="9" fill="var(--color-text-muted)">{slices.length} pods</text>
+      </svg>
+      {/* Legend */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem 0.6rem', justifyContent: 'center', maxWidth: 200 }}>
+        {arcs.slice(0, 6).map((arc) => (
+          <div key={arc.label} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: arc.color, display: 'inline-block', flexShrink: 0 }} />
+            <span style={{ maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{arc.label}</span>
+          </div>
+        ))}
+        {arcs.length > 6 && <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>+{arcs.length - 6} more</span>}
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -273,27 +394,46 @@ function ComponentCard({ icon, name, data }: { icon: string; name: string; data:
 // Pod metrics card
 // ---------------------------------------------------------------------------
 
-function PodCard({ pod }: { pod: PodMetric }) {
+function PodCard({ pod, nodeCpuTotal, nodeRamTotal }: { pod: PodMetric; nodeCpuTotal: number; nodeRamTotal: number }) {
   const cpuCores = lastVal(pod.cpu_series);
   const ramBytes = lastVal(pod.ram_series);
   const cpuColor = cpuCores > 0.8 ? 'var(--color-error)' : cpuCores > 0.4 ? 'var(--color-warning)' : 'var(--color-info, #3b82f6)';
   const ramColor = 'var(--color-info, #3b82f6)';
 
+  const cpuReq = pod.cpu_request_cores ?? 0;
+  const ramReq = pod.ram_request_bytes ?? 0;
+  const cpuPctReq = cpuReq > 0 ? (cpuCores / cpuReq) * 100 : 0;
+  const ramPctReq = ramReq > 0 ? (ramBytes / ramReq) * 100 : 0;
+  const cpuPctNode = nodeCpuTotal > 0 ? (cpuCores / nodeCpuTotal) * 100 : 0;
+  const ramPctNode = nodeRamTotal > 0 ? (ramBytes / nodeRamTotal) * 100 : 0;
+  const restarts = pod.restarts_1h ?? 0;
+
   return (
     <div className="card ph-pod-card">
-      <div className="ph-pod-card__name" title={pod.pod}>{pod.short_name}</div>
+      <div className="ph-pod-card__name" title={pod.pod}>
+        {pod.short_name}
+        {restarts > 0 && (
+          <span title={`${restarts} restart${restarts > 1 ? 's' : ''} in last 1h`} style={{ marginLeft: '0.4rem', background: 'var(--color-error)', color: '#fff', borderRadius: 10, fontSize: '0.65rem', fontWeight: 700, padding: '1px 6px' }}>
+            ↺ {restarts}
+          </span>
+        )}
+      </div>
       <div className="ph-pod-card__metrics">
         <div className="ph-pod-metric">
           <div className="ph-pod-metric__label">
             CPU <span style={{ color: cpuColor, fontWeight: 600 }}>{cpuCores < 0.001 ? '<1m' : cpuCores < 1 ? `${(cpuCores * 1000).toFixed(0)}m` : `${cpuCores.toFixed(2)}`} cores</span>
           </div>
           <Sparkline series={pod.cpu_series} color={cpuColor} width={150} height={38} />
+          {cpuReq > 0 && <PercentBar pct={cpuPctReq} label="of request" color={cpuColor} width={100} />}
+          {nodeCpuTotal > 0 && <PercentBar pct={cpuPctNode} label="of node" width={100} />}
         </div>
         <div className="ph-pod-metric">
           <div className="ph-pod-metric__label">
             RAM <span style={{ color: ramColor, fontWeight: 600 }}>{fmtBytes(ramBytes)}</span>
           </div>
           <Sparkline series={pod.ram_series} color={ramColor} width={150} height={38} />
+          {ramReq > 0 && <PercentBar pct={ramPctReq} label="of request" color={ramColor} width={100} />}
+          {nodeRamTotal > 0 && <PercentBar pct={ramPctNode} label="of node" width={100} />}
         </div>
       </div>
     </div>
@@ -383,6 +523,21 @@ const PlatformHealthTab: React.FC<Props> = ({ userRole: _userRole }) => {
   const overallOk = data.overall === 'healthy';
   const hasPodMetrics = metrics?.prometheus_available && (metrics.pods?.length ?? 0) > 0;
   const hasPvcs = metrics?.prometheus_available && (metrics.pvcs?.length ?? 0) > 0;
+  const nodeCpuTotal = metrics?.node_cpu_total_cores ?? 0;
+  const nodeRamTotal = metrics?.node_ram_total_bytes ?? 0;
+
+  // Build donut slices from latest pod values
+  const DONUT_PALETTE = ['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#14b8a6','#a855f7'];
+  const cpuDonutSlices = hasPodMetrics
+    ? metrics!.pods.map((p, i) => ({ label: p.short_name, value: lastVal(p.cpu_series), color: DONUT_PALETTE[i % DONUT_PALETTE.length] })).filter(s => s.value > 0)
+    : [];
+  const ramDonutSlices = hasPodMetrics
+    ? metrics!.pods.map((p, i) => ({ label: p.short_name, value: lastVal(p.ram_series), color: DONUT_PALETTE[i % DONUT_PALETTE.length] })).filter(s => s.value > 0)
+    : [];
+
+  const netRx = metrics?.net_rx_series ?? metrics?.http_rps_series ?? [];
+  const netTx = metrics?.net_tx_series ?? [];
+  const hasNetwork = metrics?.prometheus_available && (netRx.length > 1 || netTx.length > 1);
 
   return (
     <div className="ph-root">
@@ -468,18 +623,55 @@ const PlatformHealthTab: React.FC<Props> = ({ userRole: _userRole }) => {
           <h3 className="ph-section__title">Pod Metrics <span className="ph-section__sub">CPU &amp; RAM · last 1h · {metrics!.namespace}</span></h3>
           <div className="ph-pod-grid">
             {metrics!.pods.map((pod) => (
-              <PodCard key={pod.pod} pod={pod} />
+              <PodCard key={pod.pod} pod={pod} nodeCpuTotal={nodeCpuTotal} nodeRamTotal={nodeRamTotal} />
             ))}
           </div>
         </section>
       )}
 
-      {/* ── HTTP request rate ── */}
-      {metrics?.prometheus_available && (metrics.http_rps_series?.length ?? 0) > 1 && (
+      {/* ── Resource distribution donuts ── */}
+      {hasPodMetrics && (cpuDonutSlices.length > 0 || ramDonutSlices.length > 0) && (
         <section className="ph-section">
-          <h3 className="ph-section__title">Network Receive Rate <span className="ph-section__sub">packets/s · last 1h · {metrics.namespace}</span></h3>
+          <h3 className="ph-section__title">Resource Distribution <span className="ph-section__sub">share per pod · current snapshot</span></h3>
+          <div className="card" style={{ padding: '1.25rem 1.5rem', borderRadius: '8px', background: 'var(--color-surface)', display: 'flex', gap: '3rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--color-text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>CPU</div>
+              <DonutChart slices={cpuDonutSlices} label="CPU" />
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--color-text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>RAM</div>
+              <DonutChart slices={ramDonutSlices} label="RAM" />
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ── Network traffic ── */}
+      {hasNetwork && (
+        <section className="ph-section">
+          <h3 className="ph-section__title">
+            Network Traffic
+            <span className="ph-section__sub">bytes/s · last 1h · {metrics!.namespace}</span>
+          </h3>
           <div className="card" style={{ padding: '1rem 1.25rem', borderRadius: '8px', background: 'var(--color-surface)' }}>
-            <Sparkline series={metrics.http_rps_series} color="var(--color-info, #3b82f6)" width={700} height={60} />
+            {netRx.length > 1 && (
+              <div style={{ marginBottom: '0.5rem' }}>
+                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>⬇ Inbound (receive)</span>
+                  <span style={{ color: 'var(--color-info, #3b82f6)', fontWeight: 600 }}>{fmtNetBytes(lastVal(netRx))}</span>
+                </div>
+                <Sparkline series={netRx} color="var(--color-info, #3b82f6)" width={700} height={50} />
+              </div>
+            )}
+            {netTx.length > 1 && (
+              <div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>⬆ Outbound (transmit)</span>
+                  <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>{fmtNetBytes(lastVal(netTx))}</span>
+                </div>
+                <Sparkline series={netTx} color="var(--color-warning)" width={700} height={50} />
+              </div>
+            )}
           </div>
         </section>
       )}

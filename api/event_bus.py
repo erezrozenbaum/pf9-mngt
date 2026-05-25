@@ -205,5 +205,25 @@ def _write_event(
             except Exception:
                 logger.debug("event_bus: clea evaluation failed for %r", event_type, exc_info=True)
 
+        # Publish to SSE channel so connected browser clients see the event
+        # in real time.  Redis unavailability is silently ignored.
+        try:
+            from cache import _get_client as _redis_client  # lazy import
+            rc = _redis_client()
+            if rc is not None and event_id is not None:
+                payload = json.dumps({
+                    "id": event_id,
+                    "type": event_type,
+                    "title": title,
+                    "severity": severity,
+                    "category": category,
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "occurred_at": occurred_at.isoformat(),
+                })
+                rc.publish("pf9:live_events", payload)
+        except Exception:
+            logger.debug("event_bus: redis publish failed for %r", event_type, exc_info=True)
+
     except Exception:
         logger.debug("event_bus: failed to write event %r", event_type, exc_info=True)

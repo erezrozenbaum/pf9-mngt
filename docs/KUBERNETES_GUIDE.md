@@ -1267,3 +1267,59 @@ deploy cluster-level monitoring even if the cluster already has it.
 prefix before forwarding to Grafana, so Grafana's internal datasource calls (to Prometheus
 at ClusterIP) are unaffected. GF_SERVER_SERVE_FROM_SUB_PATH tells Grafana to set correct
 relative URLs for its static assets.
+
+---
+
+## v2.12.0 Notes
+
+### SSE Live Events — NetworkPolicy
+`GET /api/events/stream` keeps long-lived HTTP connections open (Server-Sent Events).
+Ensure your ingress proxy is configured to **not** buffer the response:
+
+```nginx
+proxy_buffering          off;
+proxy_cache              off;
+proxy_read_timeout       3600;
+```
+
+If Prometheus metrics are required (`api.prometheusUrl` set), the `pf9-api` NetworkPolicy
+already (v2.11.1+) includes a conditional egress rule to port 9090 in the `monitoring`
+namespace. No manual patching needed when deploying via Helm.
+
+### Node Logs — NetworkPolicy
+If `NODE_LOG_SOURCE=hostagent`, the API pods make direct HTTP calls to hypervisor nodes
+on `HOSTAGENT_PORT` (default 9080). Add a NetworkPolicy egress rule from `pf9-api` to
+the hypervisor node CIDR on port 9080:
+
+```yaml
+# Add to spec.egress in the pf9-api NetworkPolicy (values.yaml extension):
+- ports:
+  - port: 9080
+    protocol: TCP
+  to: []   # 0.0.0.0/0 — or restrict to your hypervisor CIDR
+```
+
+If `NODE_LOG_SOURCE=resmgr`, the API calls your PF9 DU URL (HTTPS, port 443) which is
+already covered by the existing HTTPS egress rule.
+
+### Multi-Region HA — Configuration
+Enable via Helm:
+
+```yaml
+# values.prod.yaml (private deploy repo)
+multiRegion:
+  enabled: true
+  dbReadReplicaUrl: "postgresql://pf9:SECRET@replica-host:5432/pf9_mgmt"
+```
+
+Or via environment variables:
+```bash
+ENABLE_MULTI_REGION=true
+DB_READ_REPLICA_URL=postgresql://pf9:SECRET@replica-host:5432/pf9_mgmt
+```
+
+The read replica should be a PostgreSQL streaming replica of the primary.
+PgBouncer is not required on the replica path but is supported.
+The runtime toggle in `⚙️ System Settings` allows enabling without a pod restart
+(persists in Redis for 24 h; make permanent via Helm).
+

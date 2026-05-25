@@ -1,5 +1,6 @@
-# Features Reference — Technical Deep Dive (v2.11)
+# Features Reference — Technical Deep Dive (v2.12)
 
+> **v2.12.0 NEW**: Real-time SSE event stream (`GET /api/events/stream`) + notification bell; Platform Health pod cards enhanced with CPU/RAM % bars (request + node) and restart badges; resource distribution donut charts (SVG); network section now shows bytes/s RX+TX; PF9 node log viewer API (`/api/admin/nodes/{id}/logs`); multi-region HA read replica routing (`get_read_connection()`, feature-flagged via `ENABLE_MULTI_REGION`).
 > **v2.11.2 FIX**: Platform Health blank-screen crash — `CanvasGradient.addColorStop()` cannot parse CSS `var()` strings; Sparkline now resolves CSS variables via `getComputedStyle` at draw time.
 > **v2.11.1 FIX**: NetworkPolicy egress rule for Prometheus port 9090 (`monitoring` ns) — pod metrics were blocked despite `PROMETHEUS_URL` being set; KPI summary tile alignment fixed on Platform Health and Automation pages.
 > **v2.11.0 NEW**: Enhanced Platform Health UI + Prometheus pod-metrics proxy — `GET /api/admin/platform/metrics` returns per-pod CPU/RAM sparklines (1h), PVC utilisation, and network receive rate sourced from `kube-prometheus-stack`; Platform Health admin page redesigned with KPI summary tiles, colour-coded infrastructure cards, canvas-based sparklines, and PVC usage bars. CLEA Automation tab redesigned with KPI summary row and inline-coloured mode/status badges. Both pages now match the Right-Sizing visual language. `PROMETHEUS_URL` + `K8S_NAMESPACE` env vars added; Helm chart updated.

@@ -140,6 +140,15 @@ from platform_health_routes import router as platform_health_router
 # CLEA — Closed-Loop Event Automation
 from clea_routes import router as clea_router
 
+# SSE — Server-Sent Events live event stream
+from sse_routes import router as sse_router
+
+# Node Logs — PF9 hypervisor node system log viewer
+from node_logs_routes import router as node_logs_router
+
+# System Config — admin runtime settings panel
+from system_config_routes import router as system_config_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -434,6 +443,9 @@ app.include_router(snapshot_chain_router)
 app.include_router(rightsizing_router)
 app.include_router(platform_health_router)
 app.include_router(clea_router)
+app.include_router(sse_router)
+app.include_router(node_logs_router)
+app.include_router(system_config_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode
 @app.get("/demo-mode")

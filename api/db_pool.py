@@ -114,3 +114,95 @@ def close_pool():
         _pool.closeall()
         _pool = None
         logger.info("Database connection pool closed")
+
+
+# ---------------------------------------------------------------------------
+# Read replica pool  (feature-flagged: ENABLE_MULTI_REGION=true)
+# ---------------------------------------------------------------------------
+# Set DB_READ_REPLICA_URL to a DSN like:
+#   postgresql://user:pass@replica-host:5432/pf9_mgmt
+#
+# When enabled, read-heavy queries can use get_read_connection() which
+# routes to the replica transparently, falling back to primary on error.
+
+_ENABLE_MULTI_REGION: bool = os.getenv("ENABLE_MULTI_REGION", "false").lower() in ("1", "true", "yes")
+_DB_READ_REPLICA_URL: str = os.getenv("DB_READ_REPLICA_URL", "")
+
+_read_pool: pool.ThreadedConnectionPool | None = None
+_read_pool_lock = threading.Lock()
+
+
+def _init_read_pool() -> None:
+    """Lazily create the read replica pool (no-op if feature-flag is off)."""
+    global _read_pool
+    if not _ENABLE_MULTI_REGION or not _DB_READ_REPLICA_URL:
+        return
+    if _read_pool is not None:
+        return
+    with _read_pool_lock:
+        if _read_pool is not None:
+            return
+        try:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(_DB_READ_REPLICA_URL)
+            params = dict(
+                host=parsed.hostname,
+                port=parsed.port or 5432,
+                dbname=(parsed.path or "/pf9_mgmt").lstrip("/"),
+                user=parsed.username,
+                password=parsed.password,
+                connect_timeout=10,
+            )
+            _read_pool = pool.ThreadedConnectionPool(POOL_MIN_CONN, POOL_MAX_CONN, **params)
+            logger.info(
+                "Read replica pool initialised  min=%d  max=%d  host=%s",
+                POOL_MIN_CONN, POOL_MAX_CONN, parsed.hostname,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Read replica pool init failed: %s — read queries will use primary", exc
+            )
+
+
+@contextmanager
+def get_read_connection():
+    """
+    Return a DB connection optimised for read-heavy queries.
+
+    Routing behaviour
+    -----------------
+    * ``ENABLE_MULTI_REGION=true`` **and** ``DB_READ_REPLICA_URL`` set:
+      uses the read replica pool.
+    * Otherwise: falls back to the primary pool transparently.
+
+    The yielded connection is auto-committed on clean exit and rolled back
+    on exception, just like ``get_connection()``.
+
+    Usage::
+
+        from db_pool import get_read_connection
+
+        with get_read_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT ...")
+    """
+    global _read_pool
+    # Attempt to use replica if configured
+    if _ENABLE_MULTI_REGION and _DB_READ_REPLICA_URL:
+        if _read_pool is None:
+            _init_read_pool()
+        if _read_pool is not None:
+            conn = _read_pool.getconn()
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                _read_pool.putconn(conn)
+            return
+
+    # Fallback: use primary pool
+    with get_connection() as conn:
+        yield conn

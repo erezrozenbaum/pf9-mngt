@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.0] - 2026-05-25
+
+### Added
+
+- **Real-time SSE event stream** (`api/sse_routes.py`): `GET /api/events/stream` — Server-Sent Events endpoint backed by Redis pub/sub (`pf9:live_events` channel). All operational events emitted via `event_bus.emit_event()` are now published to connected browser clients in real time. Heartbeat every 25 s. Auth via `require_authentication`.
+- **Notification bell** (`pf9-ui/src/App.tsx`): Live event notification bell in the app header. Shows unread count badge (red), a dropdown panel with last 50 events (severity colour-coded), and a clear button. Powered by the new `useEventStream` hook.
+- **`useEventStream` hook** (`pf9-ui/src/hooks/useEventStream.ts`): React `EventSource` wrapper with credential forwarding (`withCredentials: true`) and exponential back-off reconnect (1 s → 30 s cap, jitter).
+- **Platform Health — CPU/RAM % usage** (`PlatformHealthTab.tsx`): Each pod card now shows % of request and % of total node capacity for both CPU and RAM, displayed as compact mini progress bars below each sparkline.
+- **Platform Health — restart badge**: Pod cards show a restart-count badge (red) when the pod has restarted in the last hour (`restarts_1h` from `increase(kube_pod_container_status_restarts_total[1h])`).
+- **Platform Health — resource distribution donuts**: Two SVG donut charts (CPU share by pod, RAM share by pod) with legend showing top contributors. No external charting library required.
+- **Platform Health — network traffic bytes/s** (`PlatformHealthTab.tsx`): Network section replaced. Now shows Receive (RX) + Transmit (TX) sparklines with live bytes/s label. Previously showed packets/s with no explanation.
+- **PF9 Node Logs** (`api/node_logs_routes.py`): `GET /api/admin/nodes` and `GET /api/admin/nodes/{id}/logs` — fetches recent log lines from Platform9 hypervisor nodes via DU resmgr API (`NODE_LOG_SOURCE=resmgr`, default) or direct hostagent port 9080 (`NODE_LOG_SOURCE=hostagent`). Results cached in Redis for 5 minutes (`NODE_LOG_CACHE_TTL_S`). Returns structured lines with `ts`, `level`, `component`, `message` fields.
+- **Multi-region HA — read replica routing (feature-flagged)** (`api/db_pool.py`): New `get_read_connection()` context manager. Routes read-heavy queries to a PostgreSQL read replica when `ENABLE_MULTI_REGION=true` and `DB_READ_REPLICA_URL` is set. Falls back to primary pool transparently. Helm values: `multiRegion.enabled` (default `false`) + `multiRegion.dbReadReplicaUrl`. Disabled by default in all environments.
+
+---
+
 ## [2.11.2] - 2026-05-25
 
 ### Fixed

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import "./App.css";
 import { ThemeProvider, useTheme } from "./hooks/useTheme";
+import { useEventStream, type LiveEvent } from "./hooks/useEventStream";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { LandingDashboard } from "./components/LandingDashboard";
 import { GlobalHealthBar } from "./components/GlobalHealthBar";
@@ -15,6 +16,8 @@ import SnapshotRestoreAudit from "./components/SnapshotRestoreAudit";
 import "./styles/SnapshotRestoreAudit.css";
 import { APIMetricsTab } from "./components/APIMetricsTab";
 import { SystemLogsTab } from "./components/SystemLogsTab";
+import NodeLogsTab from "./components/NodeLogsTab";
+import AdminSettingsTab from "./components/AdminSettingsTab";
 import { API_BASE, MONITORING_BASE } from "./config";
 import SecurityGroupsTab from "./components/SecurityGroupsTab";
 import DriftDetection from "./components/DriftDetection";
@@ -423,7 +426,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "operational_timeline" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal" | "account_manager_dashboard" | "executive_dashboard" | "snapshot-chains" | "rightsizing" | "platform_health" | "clea_policies";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "node_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "insights" | "operational_timeline" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal" | "account_manager_dashboard" | "executive_dashboard" | "snapshot-chains" | "rightsizing" | "platform_health" | "clea_policies" | "admin_settings";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -492,7 +495,9 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "account_manager_dashboard", label: "📋 My Portfolio",       adminOnly: false, actionStyle: false },
   { id: "executive_dashboard",       label: "📊 Portfolio Health",   adminOnly: false, actionStyle: false },
   { id: "platform_health",           label: "💚 Platform Health",    adminOnly: true,  actionStyle: false },
-  { id: "clea_policies",             label: "⚡ Automation",          adminOnly: true,  actionStyle: false },
+  { id: "clea_policies",             label: "⚡ Automation",        adminOnly: true },
+  { id: "node_logs",                 label: "📋 Node Logs",          adminOnly: true },
+  { id: "admin_settings",            label: "⚙️ System Settings",    adminOnly: true },          adminOnly: true,  actionStyle: false },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1117,6 +1122,31 @@ const App: React.FC = () => {
       window.removeEventListener('pf9:connection:online', onOnline);
     };
   }, []);
+
+  // Live events — populated by SSE stream, shown in notification bell
+  const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifUnread, setNotifUnread] = useState(0);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  const handleLiveEvent = useCallback((ev: LiveEvent) => {
+    setLiveEvents(prev => [ev, ...prev].slice(0, 50)); // keep last 50
+    setNotifUnread(n => n + 1);
+  }, []);
+
+  useEventStream({ onEvent: handleLiveEvent, enabled: isAuthenticated });
+
+  // Close notification panel on outside click
+  useEffect(() => {
+    if (!notifOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [notifOpen]);
 
   // Navigation (3-layer visibility model)
   const {
@@ -3409,10 +3439,96 @@ const App: React.FC = () => {
             </h1>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               {authUser && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '8px' }}>
                   <span style={{ fontSize: '0.9rem', color: 'var(--color-text-secondary)' }}>
                     👤 {authUser.username} ({authUser.role})
                   </span>
+
+                  {/* ── Live event notification bell ── */}
+                  <div ref={notifRef} style={{ position: 'relative' }}>
+                    <button
+                      onClick={() => { setNotifOpen(o => !o); setNotifUnread(0); }}
+                      title="Live events"
+                      style={{
+                        position: 'relative',
+                        padding: '6px 10px',
+                        fontSize: '1.1rem',
+                        background: notifOpen ? 'var(--color-surface)' : 'transparent',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 'var(--radius-md)',
+                        cursor: 'pointer',
+                        lineHeight: 1,
+                      }}
+                    >
+                      🔔
+                      {notifUnread > 0 && (
+                        <span style={{
+                          position: 'absolute',
+                          top: -4, right: -4,
+                          background: 'var(--color-error)',
+                          color: '#fff',
+                          borderRadius: '50%',
+                          fontSize: '0.65rem',
+                          fontWeight: 700,
+                          minWidth: 16,
+                          height: 16,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: '0 3px',
+                          pointerEvents: 'none',
+                        }}>
+                          {notifUnread > 99 ? '99+' : notifUnread}
+                        </span>
+                      )}
+                    </button>
+
+                    {notifOpen && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '110%',
+                        right: 0,
+                        zIndex: 1000,
+                        width: 360,
+                        maxHeight: 480,
+                        overflowY: 'auto',
+                        background: 'var(--color-surface)',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 'var(--radius-lg)',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+                      }}>
+                        <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--color-border)', fontWeight: 600, fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>Live Events</span>
+                          {liveEvents.length > 0 && (
+                            <button onClick={() => setLiveEvents([])} style={{ fontSize: '0.75rem', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
+                              Clear
+                            </button>
+                          )}
+                        </div>
+                        {liveEvents.length === 0 ? (
+                          <div style={{ padding: '1.5rem 1rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+                            No events yet — they will appear here in real time
+                          </div>
+                        ) : (
+                          liveEvents.map((ev) => {
+                            const severityColor = ev.severity === 'critical' ? 'var(--color-error)' : ev.severity === 'warning' ? 'var(--color-warning)' : 'var(--color-success)';
+                            return (
+                              <div key={ev.id} style={{ padding: '0.65rem 1rem', borderBottom: '1px solid var(--color-border)', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                                <span style={{ marginTop: 2, width: 8, height: 8, borderRadius: '50%', background: severityColor, flexShrink: 0, display: 'inline-block' }} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: '0.82rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
+                                  <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 1 }}>
+                                    {ev.type} · {new Date(ev.occurred_at).toLocaleTimeString()}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <button
                     onClick={() => setShowMfaSettings(true)}
                     title="MFA Settings"
@@ -6572,6 +6688,16 @@ const App: React.FC = () => {
           {/* CLEA — Closed-Loop Event Automation */}
           {activeTab === "clea_policies" && (
             <CleaPoliciesTab userRole={authUser?.role || ""} />
+          )}
+
+          {/* Node Logs — PF9 Hypervisor Node Log Viewer */}
+          {activeTab === "node_logs" && (
+            <NodeLogsTab />
+          )}
+
+          {/* System Settings — Admin configuration panel */}
+          {activeTab === "admin_settings" && (
+            <AdminSettingsTab />
           )}
 
         </div>

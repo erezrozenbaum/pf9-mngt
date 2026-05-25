@@ -370,7 +370,40 @@ def get_platform_metrics(
     )
     pod_names: list[str] = sorted({r["metric"].get("pod", "") for r in pod_results if r["metric"].get("pod")})
 
-    # ── Per-pod CPU + RAM sparklines ─────────────────────────────────────────
+    # ── Per-pod CPU + RAM sparklines + request/restart metadata ────────────
+    # Build instant lookups for CPU requests, RAM requests, and restart counts
+    cpu_req_results = _prom_query_instant(
+        f'kube_pod_container_resource_requests{{namespace="{ns}",resource="cpu",container!="",container!="POD"}}'
+    )
+    ram_req_results = _prom_query_instant(
+        f'kube_pod_container_resource_requests{{namespace="{ns}",resource="memory",container!="",container!="POD"}}'
+    )
+    restart_results = _prom_query_instant(
+        f'increase(kube_pod_container_status_restarts_total{{namespace="{ns}",container!="",container!="POD"}}[1h])'
+    )
+
+    # Aggregate per pod (sum across containers)
+    cpu_req_map: dict[str, float] = {}
+    for r in cpu_req_results:
+        pod_name = r["metric"].get("pod", "")
+        cpu_req_map[pod_name] = cpu_req_map.get(pod_name, 0.0) + float(r["value"][1])
+
+    ram_req_map: dict[str, float] = {}
+    for r in ram_req_results:
+        pod_name = r["metric"].get("pod", "")
+        ram_req_map[pod_name] = ram_req_map.get(pod_name, 0.0) + float(r["value"][1])
+
+    restart_map: dict[str, float] = {}
+    for r in restart_results:
+        pod_name = r["metric"].get("pod", "")
+        restart_map[pod_name] = restart_map.get(pod_name, 0.0) + float(r["value"][1])
+
+    # Node allocatable capacity (sum across all nodes)
+    node_cpu_results = _prom_query_instant('sum(kube_node_status_allocatable{resource="cpu"})')
+    node_ram_results = _prom_query_instant('sum(kube_node_status_allocatable{resource="memory"})')
+    node_cpu_total = float(node_cpu_results[0]["value"][1]) if node_cpu_results else 0.0
+    node_ram_total = float(node_ram_results[0]["value"][1]) if node_ram_results else 0.0
+
     pods: list[dict[str, Any]] = []
     for pod in pod_names:
         cpu_series = _prom_query_range(
@@ -392,8 +425,11 @@ def get_platform_metrics(
         pods.append({
             "pod": pod,
             "short_name": short,
-            "cpu_series": cpu_series,     # [[ts, cores], ...]
-            "ram_series": ram_series,     # [[ts, bytes], ...]
+            "cpu_series": cpu_series,          # [[ts, cores], ...]
+            "ram_series": ram_series,           # [[ts, bytes], ...]
+            "cpu_request_cores": cpu_req_map.get(pod, 0.0),
+            "ram_request_bytes": ram_req_map.get(pod, 0.0),
+            "restarts_1h": round(restart_map.get(pod, 0.0)),
         })
 
     # ── PVC utilisation ──────────────────────────────────────────────────────
@@ -420,9 +456,13 @@ def get_platform_metrics(
         })
     pvcs.sort(key=lambda x: x["pct"], reverse=True)
 
-    # ── HTTP request rate (nginx-ingress or kube metrics) ────────────────────
-    http_rps_series = _prom_query_range(
-        f'sum(rate(container_network_receive_packets_total{{namespace="{ns}"}}[5m]))',
+    # ── Network traffic (bytes/s): inbound + outbound ───────────────────────
+    net_rx_series = _prom_query_range(
+        f'sum(rate(container_network_receive_bytes_total{{namespace="{ns}"}}[5m]))',
+        start, end, step,
+    )
+    net_tx_series = _prom_query_range(
+        f'sum(rate(container_network_transmit_bytes_total{{namespace="{ns}"}}[5m]))',
         start, end, step,
     )
 
@@ -431,7 +471,12 @@ def get_platform_metrics(
         "namespace": ns,
         "range_seconds": _METRICS_RANGE_S,
         "step_seconds": step,
+        "node_cpu_total_cores": node_cpu_total,
+        "node_ram_total_bytes": node_ram_total,
         "pods": pods,
         "pvcs": pvcs,
-        "http_rps_series": http_rps_series,
+        "net_rx_series": net_rx_series,
+        "net_tx_series": net_tx_series,
+        # Legacy field kept for backward compat (same as net_rx_series)
+        "http_rps_series": net_rx_series,
     }

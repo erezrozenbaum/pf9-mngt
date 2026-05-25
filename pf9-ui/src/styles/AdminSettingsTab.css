@@ -1,0 +1,236 @@
+/* AdminSettingsTab.css — System configuration panel (v2.12.0) */
+
+.admin-settings-container {
+  padding: 1.25rem 1.5rem;
+  max-width: 860px;
+  margin: 0 auto;
+  color: var(--color-text-primary);
+}
+
+.admin-settings-loading,
+.admin-settings-error {
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.admin-settings-error { color: var(--color-error); }
+
+/* ── Header ── */
+.admin-settings-header {
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid var(--color-border);
+}
+
+.admin-settings-header h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.admin-settings-subtitle {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.admin-settings-note {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border-left: 3px solid var(--color-warning);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+.admin-settings-note code {
+  background: var(--color-border);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+/* ── Save banner ── */
+.admin-settings-banner {
+  padding: 0.65rem 1rem;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  margin-bottom: 1rem;
+}
+
+.admin-settings-banner--ok  { background: color-mix(in srgb, var(--color-success) 12%, transparent); border: 1px solid var(--color-success); color: var(--color-success); }
+.admin-settings-banner--err { background: color-mix(in srgb, var(--color-error) 12%, transparent); border: 1px solid var(--color-error); color: var(--color-error); }
+
+/* ── Sections ── */
+.admin-settings-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  margin-bottom: 1.25rem;
+  overflow: hidden;
+}
+
+.admin-settings-section__title {
+  margin: 0;
+  padding: 0.7rem 1.25rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--color-border) 40%, transparent);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.admin-settings-section__body {
+  padding: 1rem 1.25rem;
+}
+
+/* ── Status pills ── */
+.admin-settings-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.admin-settings-pill--ok  { background: color-mix(in srgb, var(--color-success) 18%, transparent); color: var(--color-success); border: 1px solid var(--color-success); }
+.admin-settings-pill--off { background: var(--color-border); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+
+/* ── Grid for status items ── */
+.admin-settings-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin-bottom: 0.75rem;
+}
+
+.admin-settings-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+}
+
+.admin-settings-label {
+  color: var(--color-text-muted);
+  min-width: 120px;
+}
+
+.admin-settings-code {
+  font-family: monospace;
+  background: var(--color-border);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.82rem;
+}
+
+/* ── Form ── */
+.admin-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.admin-settings-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.admin-settings-form-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-settings-form-hint {
+  font-weight: 400;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.admin-settings-input {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  font-size: 0.88rem;
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  max-width: 520px;
+}
+
+.admin-settings-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Toggle switch */
+.admin-settings-toggle {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.admin-settings-toggle input { opacity: 0; width: 0; height: 0; }
+
+.admin-settings-toggle__slider {
+  position: absolute;
+  inset: 0;
+  background: var(--color-border);
+  border-radius: 22px;
+  transition: background 0.2s;
+}
+
+.admin-settings-toggle__slider::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  left: 3px;
+  top: 3px;
+  transition: transform 0.2s;
+}
+
+.admin-settings-toggle input:checked + .admin-settings-toggle__slider {
+  background: var(--color-success);
+}
+
+.admin-settings-toggle input:checked + .admin-settings-toggle__slider::before {
+  transform: translateX(20px);
+}
+
+.admin-settings-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.admin-settings-note--inline {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+/* ── Desc paragraphs ── */
+.admin-settings-desc {
+  font-size: 0.83rem;
+  color: var(--color-text-muted);
+  margin: 0.25rem 0 0;
+  line-height: 1.6;
+}
+
+.admin-settings-desc code {
+  background: var(--color-border);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}

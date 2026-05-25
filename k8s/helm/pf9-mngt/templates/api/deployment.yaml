@@ -312,6 +312,15 @@ spec:
             # --- PRODUCTION_MODE guard (JWT startup check) ---
             - name: PRODUCTION_MODE
               value: "true"
+            # --- Multi-region HA (feature-flagged) ---
+            {{- if .Values.multiRegion.enabled }}
+            - name: ENABLE_MULTI_REGION
+              value: "true"
+            {{- if .Values.multiRegion.dbReadReplicaUrl }}
+            - name: DB_READ_REPLICA_URL
+              value: {{ .Values.multiRegion.dbReadReplicaUrl | quote }}
+            {{- end }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
