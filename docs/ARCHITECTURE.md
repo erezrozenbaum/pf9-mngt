@@ -1936,6 +1936,14 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.12.7 Fixes
+
+### Node Logs — `Invalid Date` timestamp display
+`fmtTs(ts: string)` helper added to `pf9-ui/src/components/NodeLogsTab.tsx`. Extracts `HH:MM:SS` from the PF9 Python logging format (`2026-05-25 12:51:04,654`) via `/(\ d{2}:\ d{2}:\ d{2})/` regex. Falls back to `new Date(ts.replace(',', '.'))` for ISO-8601 strings. Replaces the broken `new Date(line.ts).toLocaleTimeString(...)` call that returned `Invalid Date` for all PF9-format timestamps.
+
+### Dependency graph — `aggregate` node type
+`_expand_host()` in `api/graph_routes.py` now also queries `host_aggregates WHERE raw_json->'hosts' @> to_jsonb(resmgr_id)`, where `resmgr_id` comes from `hypervisors.raw_json->'service'->>'host'` (exposed via the updated `_fetch_host()` SELECT). `_expand_aggregate()` expands back to all sibling hosts in the aggregate by iterating `raw_json->'hosts'` and querying by resmgr UUID. The `aggregate` type is added to `ROOT_TYPE_ALIAS`, `EXPANDERS`, `_fetch_*` dispatch, and all frontend constants (`NODE_COLORS`, `NODE_ICONS`, `ALL_NODE_TYPES`, `NODE_TYPE_TO_TAB`). BFS cycle safety: the `visited` set prevents the aggregate from being re-queued when sibling hosts try to expand back to it. All other graph root types are unaffected.
+
 ## v2.12.6 Fix
 
 ### Node log timestamp parsing

@@ -844,6 +844,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.12.7 — Node Logs timestamp display fix + dependency graph aggregate nodes
+
+- **Node Logs — `Invalid Date` timestamps** (`pf9-ui/src/components/NodeLogsTab.tsx`): The timestamp column called `new Date(line.ts)` on PF9's Python logging format (`2026-05-25 12:51:04,654`). JavaScript's `Date` constructor cannot parse comma-separated milliseconds, so every row displayed `Invalid Date`. Replaced with a `fmtTs()` helper that extracts `HH:MM:SS` via regex, with an ISO-8601 fallback. No backend or config changes required.
+- **Dependency graph — hypervisor shows no connections** (`api/graph_routes.py`, `pf9-ui/src/components/graph/DependencyGraph.tsx`): When viewing **Inventory → Hypervisors → View Dependencies** for a host with zero running VMs, the graph showed only the host node with no edges. Root cause: `_expand_host()` only queried `servers WHERE hypervisor_hostname = %s`. Added `aggregate` as a first-class graph node type. `_expand_host()` now also queries `host_aggregates WHERE raw_json->'hosts' @> to_jsonb(resmgr_id)` and attaches `member of` edges. `_expand_aggregate()` traverses back to all sibling hosts in the aggregate. Only affects hypervisor graphs — all other graph types are unchanged.
+
 ### v2.12.6 — Node log timestamp parsing fix
 
 - **`_parse_raw_log()` updated** (`api/node_logs_routes.py`): Added a dedicated regex for PF9's Python logging format (`YYYY-MM-DD HH:MM:SS,mmm - module.py LEVEL - message`). Previously all PF9 hostagent/ostackhost log lines fell through to the plain-text fallback, resulting in `ts: null` on every entry. Timestamps, log levels, and messages are now extracted correctly. The existing ISO/syslog pattern is retained as a secondary match. No configuration or migration changes required.

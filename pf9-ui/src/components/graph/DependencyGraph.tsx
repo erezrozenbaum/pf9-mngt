@@ -67,7 +67,8 @@ function getEdgeColors() {
 
 export type GraphRootType =
   | "vm" | "volume" | "snapshot" | "network" | "subnet" | "port"
-  | "floating_ip" | "security_group" | "tenant" | "host" | "image" | "domain";
+  | "floating_ip" | "security_group" | "tenant" | "host" | "image" | "domain"
+  | "aggregate";
 
 interface ApiNode {
   id: string;
@@ -149,35 +150,37 @@ type GraphMode = "topology" | "blast_radius" | "delete_impact";
 // ---------------------------------------------------------------------------
 
 const NODE_COLORS: Record<string, string> = {
-  vm:       "#0ea5e9",
-  volume:   "#f59e0b",
-  snapshot: "#10b981",
-  network:  "#8b5cf6",
-  subnet:   "#a78bfa",
-  port:     "#c4b5fd",
-  fip:      "#06b6d4",
-  sg:       "#ef4444",
-  tenant:   "#6366f1",
-  host:     "#64748b",
-  image:    "#ec4899",
-  domain:   "#334155",
-  disk:     "#d97706",
+  vm:        "#0ea5e9",
+  volume:    "#f59e0b",
+  snapshot:  "#10b981",
+  network:   "#8b5cf6",
+  subnet:    "#a78bfa",
+  port:      "#c4b5fd",
+  fip:       "#06b6d4",
+  sg:        "#ef4444",
+  tenant:    "#6366f1",
+  host:      "#64748b",
+  image:     "#ec4899",
+  domain:    "#334155",
+  disk:      "#d97706",
+  aggregate: "#0f766e",
 };
 
 const NODE_ICONS: Record<string, string> = {
-  vm:       "🖥️",
-  volume:   "💾",
-  snapshot: "📸",
-  network:  "🌐",
-  subnet:   "🔗",
-  port:     "🔌",
-  fip:      "🌊",
-  sg:       "🔒",
-  tenant:   "🏢",
-  host:     "🏗️",
-  image:    "📀",
-  domain:   "🌍",
-  disk:     "🖴️",
+  vm:        "🖥️",
+  volume:    "💾",
+  snapshot:  "📸",
+  network:   "🌐",
+  subnet:    "🔗",
+  port:      "🔌",
+  fip:       "🌊",
+  sg:        "🔒",
+  tenant:    "🏢",
+  host:      "🏗️",
+  image:     "📀",
+  domain:    "🌍",
+  disk:      "🖴️",
+  aggregate: "🏘️",
 };
 
 const BADGE_LABELS: Record<string, string> = {
@@ -537,7 +540,7 @@ function toFlowGraph(
 
 const ALL_NODE_TYPES = [
   "vm", "disk", "volume", "snapshot", "network", "subnet",
-  "port", "fip", "sg", "tenant", "host", "image", "domain",
+  "port", "fip", "sg", "tenant", "host", "image", "domain", "aggregate",
 ];
 
 // ---------------------------------------------------------------------------
@@ -568,18 +571,19 @@ interface Props {
 
 // Map graph node type → App.tsx ActiveTab id
 const NODE_TYPE_TO_TAB: Record<string, string> = {
-  vm:       "servers",
-  volume:   "volumes",
-  snapshot: "snapshots",
-  network:  "networks",
-  subnet:   "subnets",
-  port:     "ports",
-  fip:      "floatingips",
-  sg:       "security_groups",
-  tenant:   "projects",
-  host:     "hypervisors",
-  image:    "images",
-  domain:   "domains",
+  vm:        "servers",
+  volume:    "volumes",
+  snapshot:  "snapshots",
+  network:   "networks",
+  subnet:    "subnets",
+  port:      "ports",
+  fip:       "floatingips",
+  sg:        "security_groups",
+  tenant:    "projects",
+  host:      "hypervisors",
+  image:     "images",
+  domain:    "domains",
+  aggregate: "aggregates",
 };
 
 // Map short graph node type → API root_type value (only entries that differ)

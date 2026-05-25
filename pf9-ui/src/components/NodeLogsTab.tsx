@@ -70,6 +70,15 @@ const LEVEL_COLORS: Record<string, string> = {
   INFO:    'var(--color-text-primary)',
 };
 
+/** Extract HH:MM:SS from any timestamp string the backend may return.
+ *  Handles PF9 Python logging format ("2026-05-25 12:51:04,654") and ISO-8601. */
+function fmtTs(ts: string): string {
+  const m = ts.match(/(\d{2}:\d{2}:\d{2})/);
+  if (m) return m[1];
+  const d = new Date(ts.replace(',', '.'));
+  return isNaN(d.getTime()) ? ts : d.toLocaleTimeString('en-GB', { hour12: false });
+}
+
 const COMPONENTS = ['pf9-hostagent', 'pf9-comms', 'du-agent', 'pf9-kube'];
 const LINE_COUNT_OPTIONS = [50, 200, 500, 1000];
 
@@ -312,7 +321,7 @@ export default function NodeLogsTab() {
           )}
           {filteredLogs.map((line, i) => (
             <div key={i} className="node-logs-line">
-              <span className="node-logs-ts">{line.ts ? new Date(line.ts).toLocaleTimeString('en-GB', { hour12: false }) : '—'}</span>
+              <span className="node-logs-ts">{line.ts ? fmtTs(line.ts) : '—'}</span>
               <span className="node-logs-level" style={{ color: levelColor(line.level) }}>{(line.level || 'INFO').padEnd(7)}</span>
               <span className="node-logs-msg">{line.message}</span>
             </div>

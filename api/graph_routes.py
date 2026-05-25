@@ -89,6 +89,7 @@ ROOT_TYPE_ALIAS: Dict[str, str] = {
     "host":           "host",
     "image":          "image",
     "domain":         "domain",
+    "aggregate":      "aggregate",
 }
 
 # Map internal ntype → drift_events.resource_type string
@@ -234,6 +235,7 @@ def _fetch_host(cur, db_id: str) -> Optional[Dict]:
         "SELECT id, "
         "       COALESCE(raw_json->>'hypervisor_hostname', hostname) AS hostname, "
         "       state, status, "
+        "       raw_json->'service'->>'host'                         AS resmgr_id, "
         "       COALESCE((raw_json->>'vcpus')::integer, vcpus, 0)          AS vcpus, "
         "       COALESCE((raw_json->>'vcpus_used')::integer, 0)            AS vcpus_used, "
         "       COALESCE((raw_json->>'memory_mb')::bigint, memory_mb, 0)   AS memory_mb, "
@@ -247,6 +249,16 @@ def _fetch_host(cur, db_id: str) -> Optional[Dict]:
         "         ELSE COALESCE((raw_json->>'local_gb_used')::integer, 0) "
         "       END AS local_gb_used_calc "
         "FROM hypervisors WHERE id = %s",
+        (db_id,),
+    )
+    r = cur.fetchone()
+    return dict(r) if r else None
+
+
+def _fetch_aggregate(cur, db_id: str) -> Optional[Dict]:
+    cur.execute(
+        "SELECT id, name, availability_zone, host_count, raw_json "
+        "FROM host_aggregates WHERE id = %s",
         (db_id,),
     )
     r = cur.fetchone()
@@ -694,6 +706,45 @@ def _expand_host(
         for r in cur.fetchall():
             neighbors.append(("vm", dict(r), "runs VM"))
 
+    # Host → Host Aggregates it belongs to
+    resmgr_id = row.get("resmgr_id")
+    if resmgr_id:
+        cur.execute(
+            "SELECT id, name, availability_zone, host_count, raw_json "
+            "FROM host_aggregates "
+            "WHERE raw_json->'hosts' @> to_jsonb(%s::text)",
+            (resmgr_id,),
+        )
+        for r in cur.fetchall():
+            neighbors.append(("aggregate", dict(r), "member of"))
+
+    return neighbors
+
+
+def _expand_aggregate(
+    cur, row: Dict, domain_filter: Optional[str]
+) -> List[Tuple[str, Dict, str]]:
+    neighbors: List[Tuple[str, Dict, str]] = []
+    raw = row.get("raw_json") or {}
+    # Expand to every host in this aggregate
+    for resmgr_uuid in (raw.get("hosts") or []):
+        cur.execute(
+            "SELECT id, "
+            "       COALESCE(raw_json->>'hypervisor_hostname', hostname) AS hostname, "
+            "       state, status, "
+            "       raw_json->'service'->>'host'                         AS resmgr_id, "
+            "       COALESCE((raw_json->>'vcpus')::integer, vcpus, 0)   AS vcpus, "
+            "       COALESCE((raw_json->>'vcpus_used')::integer, 0)     AS vcpus_used, "
+            "       COALESCE((raw_json->>'memory_mb')::bigint, memory_mb, 0) AS memory_mb, "
+            "       COALESCE((raw_json->>'memory_mb_used')::bigint, 0)  AS memory_mb_used, "
+            "       COALESCE((raw_json->>'local_gb')::integer, local_gb, 0) AS local_gb, "
+            "       COALESCE((raw_json->>'local_gb_used')::integer, 0)  AS local_gb_used_calc "
+            "FROM hypervisors WHERE raw_json->'service'->>'host' = %s",
+            (resmgr_uuid,),
+        )
+        r = cur.fetchone()
+        if r:
+            neighbors.append(("host", dict(r), "member"))
     return neighbors
 
 
@@ -731,18 +782,19 @@ def _expand_domain(
 
 
 EXPANDERS: Dict[str, Any] = {
-    "vm":       _expand_vm,
-    "volume":   _expand_volume,
-    "snapshot": _expand_snapshot,
-    "network":  _expand_network,
-    "subnet":   _expand_subnet,
-    "port":     _expand_port,
-    "fip":      _expand_fip,
-    "sg":       _expand_sg,
-    "tenant":   _expand_tenant,
-    "host":     _expand_host,
-    "image":    _expand_image,
-    "domain":   _expand_domain,
+    "vm":        _expand_vm,
+    "volume":    _expand_volume,
+    "snapshot":  _expand_snapshot,
+    "network":   _expand_network,
+    "subnet":    _expand_subnet,
+    "port":      _expand_port,
+    "fip":       _expand_fip,
+    "sg":        _expand_sg,
+    "tenant":    _expand_tenant,
+    "host":      _expand_host,
+    "image":     _expand_image,
+    "domain":    _expand_domain,
+    "aggregate": _expand_aggregate,
 }
 
 

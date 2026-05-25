@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.7] - 2026-05-25
+
+### Fixed
+
+- **Node Logs — `Invalid Date` timestamps** (`pf9-ui/src/components/NodeLogsTab.tsx`): Timestamp column was calling `new Date(line.ts)` on PF9's Python logging format (`2026-05-25 12:51:04,654`), which JavaScript cannot parse, resulting in every row showing `Invalid Date`. Replaced with `fmtTs()` helper that extracts `HH:MM:SS` directly via regex, with ISO-8601 fallback.
+
+### Added
+
+- **Dependency graph — `aggregate` node type** (`api/graph_routes.py`, `pf9-ui/src/components/graph/DependencyGraph.tsx`): Hypervisors with zero running VMs showed an isolated graph with no edges. Host aggregates are now modelled as a first-class graph node type (teal `🏘️`). `_expand_host()` queries `host_aggregates WHERE raw_json->'hosts' @> to_jsonb(resmgr_id)` and adds `member of` edges. `_expand_aggregate()` connects back to all other hosts in the same aggregate. The frontend adds `aggregate` to `NODE_COLORS`, `NODE_ICONS`, `ALL_NODE_TYPES`, and `NODE_TYPE_TO_TAB` (`aggregates`).
+
+---
+
 ## [2.12.6] - 2026-05-25
 
 ### Fixed
