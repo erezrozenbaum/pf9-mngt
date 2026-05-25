@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.12.5 — NetworkPolicy SSH egress fix: port 22 egress added to `pf9-api` policy (conditional on `api.nodeLogSource=ssh`).
+> **Version**: v2.12.6 — Node log timestamp parsing fix: `_parse_raw_log()` now recognises PF9's Python logging format (`YYYY-MM-DD HH:MM:SS,mmm - module.py LEVEL - message`); `ts` field is now populated on all hostagent/ostackhost log lines.
+> Previous: v2.12.5 — NetworkPolicy SSH egress fix: port 22 egress added to `pf9-api` policy (conditional on `api.nodeLogSource=ssh`).
 > Previous: v2.12.4 — SSH-based Node Logs: `_fetch_via_ssh()` via paramiko (`cloud-kvm` user, `sudo tail /var/log/pf9/`); `NODE_LOG_SOURCE=ssh` env var; `pf9-ssh-credentials` secret; `_fetch_via_resmgr()` rewritten as diagnostic fallback.
 > Previous: v2.12.3 — Node Logs 404 fix: use resmgr UUID from `raw_json->'service'->>'host'` instead of PostgreSQL integer id.
 > Previous: v2.12.2 — Node Logs column fix (`hostname`), System Settings 403 fix, right panel fix, permissions seed.

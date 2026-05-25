@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.6] - 2026-05-25
+
+### Fixed
+
+- **Node log timestamp parsing** (`api/node_logs_routes.py`): `_parse_raw_log` now recognises PF9's Python logging format (`YYYY-MM-DD HH:MM:SS,mmm - module.py LEVEL - message`). Previously all PF9 hostagent log lines fell through to the `ts: null` fallback; timestamps are now parsed correctly.
+
+---
+
 ## [2.12.5] - 2026-05-25
 
 ### Fixed

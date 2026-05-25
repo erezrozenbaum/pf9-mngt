@@ -146,7 +146,7 @@ def _fetch_via_resmgr(host_id: str, component: str, lines: int) -> list[dict]:
         url,
         headers={"X-Auth-Token": token, "Accept": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=10) as resp:  # nosec B310 — URL constructed from DU_URL env var, not user input
         host = json.loads(resp.read())
 
     now_ts = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
@@ -274,7 +274,7 @@ def _fetch_via_hostagent(node_ip: str, component: str, lines: int) -> list[dict]
     params = urllib.parse.urlencode({"component": component, "lines": lines})
     url = f"http://{node_ip}:{_HOSTAGENT_PORT}/v1/logs?{params}"
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=8) as resp:
+    with urllib.request.urlopen(req, timeout=8) as resp:  # nosec B310 — URL constructed from node_ip (internal KVM node), not user input
         body = json.loads(resp.read())
 
     if isinstance(body, list):
@@ -314,10 +314,21 @@ def _fetch_via_ssh(node_ip: str, component: str, lines: int) -> list[dict]:
     if not node_ip:
         raise ValueError("Node has no ip_address in the hypervisor inventory")
 
+    # Validate component against whitelist to prevent shell injection (CWE-78)
+    if component not in _COMPONENT_LOG_FILES:
+        raise ValueError(
+            f"Unknown log component '{component}'. "
+            f"Allowed: {list(_COMPONENT_LOG_FILES.keys())}"
+        )
+    # Clamp lines to a safe integer range
+    lines = max(1, min(int(lines), 5000))
+
     log_path = _COMPONENT_LOG_FILES.get(component, f"/var/log/pf9/{component}.log")
 
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # WarningPolicy logs unknown host keys but does not auto-accept them silently.
+    # For production, populate known_hosts with node fingerprints and use RejectPolicy.
+    client.set_missing_host_key_policy(paramiko.WarningPolicy())  # nosec B507 — WarningPolicy; production hardening: use RejectPolicy with known_hosts
 
     connect_kwargs: dict = {
         "hostname": node_ip,
@@ -346,7 +357,7 @@ def _fetch_via_ssh(node_ip: str, component: str, lines: int) -> list[dict]:
                 f"[ -f {log_path} ] && sudo tail -n {lines} {log_path} "
                 f"|| echo 'LOG_FILE_NOT_FOUND:{log_path}'"
             )
-        _, stdout, _ = client.exec_command(cmd, timeout=15)
+        _, stdout, _ = client.exec_command(cmd, timeout=15)  # nosec B601 — component validated against _COMPONENT_LOG_FILES whitelist above; lines clamped to int
         output = stdout.read().decode("utf-8", errors="replace")
     finally:
         client.close()
@@ -365,21 +376,30 @@ def _parse_raw_log(raw: str, component: str) -> list[dict]:
     """
     Parse a plain-text log into structured lines.
 
-    Accepts syslog-style lines:
-      2026-05-25T10:30:00.000Z INFO pf9-hostagent: message here
+    Accepts:
+      PF9 Python logging format:
+        2026-05-25 12:51:04,654 - session.py INFO - message
+      ISO/syslog format:
+        2026-05-25T10:30:00.000Z INFO pf9-hostagent: message
     or just plain lines.
     """
     import re
     results: list[dict] = []
+    # PF9 hostagent format: TIMESTAMP - module.py LEVEL - message
+    _PF9_RE = re.compile(
+        r'^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+)'
+        r'\s+-\s+\S+\s+(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+(?P<rest>.+)$'
+    )
+    # Generic ISO/syslog format: TIMESTAMP LEVEL message
     _ISO_RE = re.compile(
-        r'^(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)'
-        r'\s+(?P<level>\w+)\s+(?P<rest>.+)$'
+        r'^(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:\d{2})?)'
+        r'\s+(?P<level>DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\s+(?P<rest>.+)$'
     )
     for line in raw.splitlines():
         line = line.strip()
         if not line:
             continue
-        m = _ISO_RE.match(line)
+        m = _PF9_RE.match(line) or _ISO_RE.match(line)
         if m:
             results.append({
                 "ts": m.group("ts"),

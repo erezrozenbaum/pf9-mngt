@@ -844,6 +844,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.12.6 — Node log timestamp parsing fix
+
+- **`_parse_raw_log()` updated** (`api/node_logs_routes.py`): Added a dedicated regex for PF9's Python logging format (`YYYY-MM-DD HH:MM:SS,mmm - module.py LEVEL - message`). Previously all PF9 hostagent/ostackhost log lines fell through to the plain-text fallback, resulting in `ts: null` on every entry. Timestamps, log levels, and messages are now extracted correctly. The existing ISO/syslog pattern is retained as a secondary match. No configuration or migration changes required.
+
 ### v2.12.5 — NetworkPolicy SSH egress fix
 
 - **NetworkPolicy — API pod blocked from SSH to KVM nodes** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): The `pf9-api` NetworkPolicy had no egress rule for port 22. All SSH connections from the API pod to KVM nodes timed out silently. Added a conditional egress rule on TCP port `PF9_SSH_PORT` (default 22) that is only rendered when `api.nodeLogSource=ssh` in Helm values. No credentials or application code changes required.

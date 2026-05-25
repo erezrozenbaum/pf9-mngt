@@ -1936,6 +1936,15 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.12.6 Fix
+
+### Node log timestamp parsing
+`_parse_raw_log(raw, component)` in `api/node_logs_routes.py` now applies two patterns in order:
+1. **PF9 Python logging**: `^YYYY-MM-DD HH:MM:SS,mmm - module.py LEVEL - message$` — matches all PF9 hostagent and ostackhost log lines.
+2. **ISO/syslog**: `^YYYY-MM-DDThh:mm:ss[.f]Z LEVEL message$` — generic fallback for other components.
+
+Lines matching neither pattern fall through to `{ts: null, level: "INFO"}` as before. No configuration or Helm changes required.
+
 ## v2.12.5 Fix
 
 ### NetworkPolicy — SSH egress
