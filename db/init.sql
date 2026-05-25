@@ -1337,7 +1337,13 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 -- superadmin: everything including approve & execute target prep
 ('superadmin', 'migration', 'read'),
 ('superadmin', 'migration', 'write'),
-('superadmin', 'migration', 'admin')
+('superadmin', 'migration', 'admin'),
+
+-- Admin-resource permissions — required by /api/admin/system/config and admin-scoped endpoints
+-- superadmin: full admin access to the 'admin' resource
+('superadmin', 'admin', 'admin'),
+-- admin role: read-only access to admin config (System Settings tab)
+('admin', 'admin', 'read')
 
 ON CONFLICT (role, resource, action) DO NOTHING;
 

@@ -3289,6 +3289,8 @@ const App: React.FC = () => {
     "operational_timeline",
     "platform_health",
     "clea_policies",
+    "node_logs",
+    "admin_settings",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------

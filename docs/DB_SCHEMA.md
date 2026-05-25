@@ -1715,6 +1715,29 @@ CREATE INDEX IF NOT EXISTS idx_clea_exec_created ON clea_executions (created_at 
 
 **Migration file**: `db/migrate_v2_9_0_clea.sql`
 
+---
+
+## Admin Resource Permissions (v2.12.2)
+
+No schema changes. Two permission rows added to `role_permissions` for the `admin` resource — required for the System Settings admin panel (`GET /api/admin/system/config`).
+
+**RBAC permissions added**:
+| role | resource | action | notes |
+|------|----------|--------|-------|
+| `superadmin` | `admin` | `admin` | Full access to admin-resource endpoints |
+| `admin` | `admin` | `read` | Read access to System Settings config endpoint |
+
+**Fresh installs**: rows included in `db/init.sql` seed.
+
+**Existing installs**: apply `db/migrate_v2_12_1_fixes.sql` (idempotent):
+```bash
+# Docker
+docker exec -i pf9_db psql -U pf9 -d pf9_mgmt < db/migrate_v2_12_1_fixes.sql
+# Kubernetes
+kubectl exec -n pf9-mngt pf9-db-0 -- psql -U pf9 -d pf9_mgmt \
+  -c "$(cat db/migrate_v2_12_1_fixes.sql)"
+```
+
 ## Tenant Notifications (v2.1.0)
 
 ### tenant_notification_prefs

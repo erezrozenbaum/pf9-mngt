@@ -27,7 +27,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from auth import require_permission
+from auth import require_authentication
 
 logger = logging.getLogger("pf9.system_config")
 
@@ -71,7 +71,7 @@ def _prometheus_ping() -> bool:
 
 @router.get("/config")
 def get_system_config(
-    _user=Depends(require_permission("admin", "read")),
+    current_user=Depends(require_authentication),
 ):
     """
     Return sanitised runtime configuration.
@@ -79,6 +79,8 @@ def get_system_config(
     Secret values (passwords, DSNs) are never returned — only boolean
     flags indicating whether they are set.
     """
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
     from db_pool import _ENABLE_MULTI_REGION, _DB_READ_REPLICA_URL
 
     # Check for runtime override in Redis
@@ -118,7 +120,7 @@ class MultiRegionPayload(BaseModel):
 @router.post("/config/multi-region")
 def update_multi_region(
     payload: MultiRegionPayload,
-    _user=Depends(require_permission("admin", "write")),
+    current_user=Depends(require_authentication),
 ):
     """
     Update multi-region HA settings at runtime.
@@ -130,6 +132,8 @@ def update_multi_region(
     If db_read_replica_url is provided it is stored in Redis (not logged).
     This is a convenience — the secure path is always via values.prod.yaml.
     """
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
     _set_runtime_override("multi_region_enabled", payload.enabled)
 
     if payload.db_read_replica_url:

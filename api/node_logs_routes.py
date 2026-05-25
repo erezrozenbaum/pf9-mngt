@@ -250,14 +250,13 @@ def _get_nodes() -> list[dict]:
                     """
                     SELECT
                         id,
-                        hypervisor_hostname          AS name,
+                        hostname                     AS name,
                         raw_json->>'host_ip'         AS ip_address,
-                        raw_json->>'state'           AS state,
-                        raw_json->>'status'          AS status,
-                        project_id                   AS cluster_project_id,
+                        state,
+                        status,
                         region_id
                     FROM hypervisors
-                    ORDER BY hypervisor_hostname
+                    ORDER BY hostname
                     """
                 )
                 return [dict(r) for r in cur.fetchall()]

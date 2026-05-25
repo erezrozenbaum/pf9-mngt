@@ -844,6 +844,19 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.12.2 — Node Logs column fix, System Settings 403 fix, right panel, permissions seed
+
+- **Node Logs — nodes not loading** (`api/node_logs_routes.py`): Column `hypervisor_hostname` corrected to `hostname` (actual `hypervisors` table column). All 4 nodes now appear in the dropdown.
+- **System Settings — 403** (`api/system_config_routes.py`): Replaced `require_permission("admin", "read")` with `require_authentication` + inline role check. The DB-based permission check failed under PgBouncer transaction-pool mode used in Kubernetes. No extra `role_permissions` row is needed for the endpoint.
+- **Right panel removed** (`pf9-ui/src/App.tsx`): `node_logs` and `admin_settings` added to `hideDetailsPanel` — the blank right-side detail column is no longer shown on those pages.
+- **DB seed fix** (`db/init.sql`): Added `('superadmin', 'admin', 'admin')` and `('admin', 'admin', 'read')` to the `role_permissions` seed. Apply to existing installs:
+  ```bash
+  # Docker
+  docker exec -i pf9_db psql -U pf9 -d pf9_mgmt < db/migrate_v2_12_1_fixes.sql
+  # Kubernetes
+  kubectl exec -n pf9-mngt pf9-db-0 -- psql -U pf9 -d pf9_mgmt -c "$(cat db/migrate_v2_12_1_fixes.sql)"
+  ```
+
 ### v2.12.1 — Platform Health layout fix, nav_items migration, CI fixes
 
 - **Responsive PercentBar** (`PlatformHealthTab.tsx`): Bar fill now uses `flex: 1; minWidth: 28px` — no more fixed 100 px overflow in narrow pod-card columns. Container is `width: 100%; overflow: hidden`.

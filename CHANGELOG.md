@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.2] - 2026-05-25
+
+### Fixed
+
+- **Node Logs — no nodes displayed** (`api/node_logs_routes.py`): `_get_nodes()` queried `hypervisors.hypervisor_hostname` which does not exist; the actual column is `hostname`. Also removed a non-existent `project_id` alias. Nodes now populate correctly in the 📋 Node Logs dropdown.
+- **System Settings — 403 on `GET /api/admin/system/config`** (`api/system_config_routes.py`): `require_permission("admin", "read")` performed a nested DB lookup through PgBouncer in transaction-pool mode, causing intermittent 403 responses even for superadmin users. Changed to `require_authentication` + inline `current_user.role` check (same pattern used throughout `main.py`). No DB permission row is required for this endpoint anymore.
+- **Node Logs / System Settings — blank right panel** (`pf9-ui/src/App.tsx`): `node_logs` and `admin_settings` tabs were missing from the `hideDetailsPanel` list, so the empty detail-panel column rendered on the right side of both pages. Both tabs added to the exclusion list.
+- **DB seed — `admin` resource permissions** (`db/init.sql`, `db/migrate_v2_12_1_fixes.sql`): Fresh-install seed and existing-install migration now include `('superadmin', 'admin', 'admin')` and `('admin', 'admin', 'read')` in `role_permissions`. This aligns the seed with the live DB state and supports any future use of `require_permission("admin", …)`.
+
+---
+
 ## [2.12.1] - 2026-05-25
 
 ### Fixed

@@ -1932,5 +1932,21 @@ Redis TTL cache (`NODE_LOG_CACHE_TTL_S`, default 300 s). `?refresh=true` bypasse
 The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/keyword filters, auto-refresh, and copy-to-clipboard.
 
 ### System Settings Admin Panel
-`api/system_config_routes.py` exposes `GET /api/admin/system/config` and `POST /api/admin/system/config/multi-region` (superadmin-only). Returns sanitised config (no secrets). Runtime overrides stored in Redis for 24 h.
+`api/system_config_routes.py` exposes `GET /api/admin/system/config` and `POST /api/admin/system/config/multi-region` (admin/superadmin only). Returns sanitised config (no secrets). Runtime overrides stored in Redis for 24 h.
+
+Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
+
+## v2.12.2 Fixes
+
+### Node Logs — hypervisors column name
+`_get_nodes()` in `api/node_logs_routes.py` referenced `hypervisors.hypervisor_hostname` (does not exist). Corrected to `hostname`. The `hypervisors` table schema is:
+`id, hostname, hypervisor_type, vcpus, memory_mb, local_gb, state, status, running_vms, raw_json, last_seen_at, region_id`.
+
+### System Settings auth pattern
+`GET /api/admin/system/config` and `POST /api/admin/system/config/multi-region` now use `require_authentication` + inline `current_user.role` check instead of `require_permission("admin", "read/write")`. Reason: `has_permission()` opens a DB connection inside an already-open request context; under PgBouncer in transaction-pool mode this can acquire a second slot from the pool and intermittently fail with a 403 even for valid superadmin sessions.
+
+The pattern is consistent with all other admin-scoped endpoints in `main.py`.
+
+### role_permissions seed
+Fresh-install `db/init.sql` and `db/migrate_v2_12_1_fixes.sql` add `('superadmin', 'admin', 'admin')` and `('admin', 'admin', 'read')` to `role_permissions` for completeness.
 

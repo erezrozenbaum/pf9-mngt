@@ -1323,3 +1323,18 @@ PgBouncer is not required on the replica path but is supported.
 The runtime toggle in `⚙️ System Settings` allows enabling without a pod restart
 (persists in Redis for 24 h; make permanent via Helm).
 
+## v2.12.2 Notes
+
+### System Settings 403 under PgBouncer
+The `GET /api/admin/system/config` endpoint previously used `require_permission("admin", "read")` which opens a nested DB connection to query `role_permissions`. Under PgBouncer in **transaction-pool mode** (the default in Kubernetes deployments) this second connection can fail, returning 403 even for valid superadmin sessions.
+
+Fixed in v2.12.2: endpoint now uses `require_authentication` + inline role check. No Helm or NetworkPolicy changes needed.
+
+### Applying the v2.12.2 migration
+Run on your K8s DB pod to add `admin` resource permission rows (no-op if already present):
+
+```bash
+kubectl exec -n pf9-mngt pf9-db-0 -- psql -U pf9 -d pf9_mgmt -c \
+  "INSERT INTO role_permissions (role, resource, action) VALUES ('superadmin','admin','admin'), ('admin','admin','read') ON CONFLICT DO NOTHING;"
+```
+
