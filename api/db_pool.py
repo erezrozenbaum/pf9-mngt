@@ -186,7 +186,6 @@ def get_read_connection():
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SELECT ...")
     """
-    global _read_pool
     # Attempt to use replica if configured
     if _ENABLE_MULTI_REGION and _DB_READ_REPLICA_URL:
         if _read_pool is None:
