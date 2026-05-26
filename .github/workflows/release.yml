@@ -2,11 +2,13 @@ name: Release
 
 # Triggers after the CI workflow completes successfully on master/main.
 # Flow: extract version → build & push Docker images → create GitHub release.
+# Can also be triggered manually via workflow_dispatch (Actions → Release → Run workflow).
 on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
     branches: [master, main]
+  workflow_dispatch:
 
 # ---------------------------------------------------------------------------
 # Workflow-level configuration variables.
@@ -26,8 +28,8 @@ jobs:
   # ---------------------------------------------------------------------------
   extract-version:
     name: Extract Version from CHANGELOG
-    # Only run when the CI workflow that triggered this actually succeeded
-    if: github.event.workflow_run.conclusion == 'success'
+    # Run when triggered by a successful CI run, or manually via workflow_dispatch
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.changelog.outputs.version }}
