@@ -844,6 +844,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.13.0 — Health score insight auto-resolve + richer Copilot context
+
+- **Health score insight auto-resolve** (`scheduler_worker/main.py`): `health_score_critical` and `health_score_low` insights are now automatically set to `resolved` when the tenant’s health score recovers above the hysteresis threshold (≥45 for critical, ≥65 for low). Resolution details are written to the insight’s `metadata` JSONB field (`resolved_by: auto`, `resolution_note: "Health score recovered to <N>/100"`).
+- **Richer Copilot context** (`api/copilot_context.py`): The AI Copilot now receives four additional context sections: **OPEN INSIGHTS** (top 10 by severity, count summary), **TENANT HEALTH SCORES** (worst 3 + tenants declining >10 pts in 30 days with trend arrows), **RECENT ANOMALIES (24h)**, and **SLA AT RISK** (capacity insights on projects with active SLA tiers + capacity runway). Each section is individually guarded with `try/except` so a DB failure in one never breaks the full context build.
+
 ### v2.12.8 — Auto-logout on session expiry + dependency graph label and IP fixes
 
 - **Auto-logout on session expiry** (`pf9-ui/src/App.tsx`, `pf9-ui/src/components/LandingDashboard.tsx`): When the session token expired the dashboard would show "Authentication required. Please login." but the sidebar remained visible in a broken state. Root cause: 401 handlers cleared `localStorage` but never updated React’s `isAuthenticated` state. Fixed by dispatching a `auth:session-expired` custom DOM event on any 401; `App.tsx` listens globally and resets all auth state immediately, redirecting to the login page.

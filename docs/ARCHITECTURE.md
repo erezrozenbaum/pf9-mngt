@@ -1936,6 +1936,19 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.13.0 Changes
+
+### Health score insight auto-resolve (`scheduler_worker/main.py`)
+After every 4-hour health score computation cycle, the scheduler now runs an auto-resolve sweep. For any open/acknowledged/snoozed `health_score_critical` or `health_score_low` operational insight whose project’s health score has recovered above the hysteresis threshold (≥45 or ≥65 respectively), the insight is set to `status='resolved'` and a structured note is stored in the `metadata` JSONB field. Uses `cur.rowcount` to avoid unnecessary commits when no rows are affected.
+
+### Richer Copilot context (`api/copilot_context.py`)
+`build_infra_context()` now appends four additional sections to the LLM system prompt:
+- **OPEN INSIGHTS** — count by severity + top 5 detail lines from `operational_insights WHERE status = 'open'`, sorted critical → low.
+- **TENANT HEALTH SCORES** — worst 3 tenants by current score + any whose score dropped >10 pts in the last 30 days (LATERAL join on `tenant_health_scores`). Shows `↓`/`↑` trend indicator.
+- **RECENT ANOMALIES (24h)** — `type LIKE 'anomaly%'` insights from the past 24 hours.
+- **SLA AT RISK** — capacity insights on projects with an active SLA commitment (joined via `sla_commitments`), showing SLA tier and capacity runway in days.
+Each section is independently wrapped in `try/except Exception: pass` so a missing table or schema mismatch never degrades the full context.
+
 ## v2.12.8 Fixes
 
 ### Auto-logout on 401 (`App.tsx`, `LandingDashboard.tsx`)

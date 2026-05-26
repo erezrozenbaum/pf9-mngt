@@ -948,6 +948,45 @@ def _compute_all_tenant_health_scores() -> None:
                         )
                         conn.commit()
 
+                # --- Auto-resolve insights when health score recovers ---
+                # Hysteresis: resolution thresholds are above trigger thresholds
+                # to prevent flapping (critical triggers at <40, resolves at >=45;
+                # low triggers at <60, resolves at >=65).
+                for rtype, recovery_threshold in [
+                    ("health_score_critical", 45),
+                    ("health_score_low", 65),
+                ]:
+                    if total_score >= recovery_threshold:
+                        cur.execute(
+                            """
+                            UPDATE operational_insights
+                               SET status      = 'resolved',
+                                   resolved_at = NOW(),
+                                   metadata    = metadata || %s::jsonb
+                             WHERE type        = %s
+                               AND entity_type = 'project'
+                               AND entity_id   = %s
+                               AND status IN ('open', 'acknowledged', 'snoozed')
+                            """,
+                            (
+                                json.dumps({
+                                    "resolved_by": "auto",
+                                    "resolution_note": (
+                                        f"Health score recovered to {total_score}/100"
+                                    ),
+                                }),
+                                rtype,
+                                project_id,
+                            ),
+                        )
+                        if cur.rowcount:
+                            conn.commit()
+                            log.info(
+                                "Health scores: auto-resolved %s insight for "
+                                "project=%s (score=%d)",
+                                rtype, project_id, total_score,
+                            )
+
             except Exception as exc:
                 log.warning("Health scores: failed for project %s: %s", project_id, exc)
                 try:

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.13.0] - 2026-05-27
+
+### Added
+
+- **Health score insight auto-resolve** (`scheduler_worker/main.py`): Operational insights of type `health_score_critical` and `health_score_low` are now automatically resolved when the health score recovers past hysteresis thresholds (≥45 for critical, ≥65 for low). The resolution is recorded in the insight's `metadata` JSONB with `resolved_by: auto` and a human-readable `resolution_note`. This eliminates stale open insights that previously required manual dismissal.
+- **Richer Copilot context** (`api/copilot_context.py`): The AI Copilot system prompt now includes four additional intelligence sections:
+  - **OPEN INSIGHTS** — top 10 by severity (critical → high → medium → low), count summary + top 5 detail lines.
+  - **TENANT HEALTH SCORES** — worst 3 tenants plus any with a score decline >10 points in 30 days (with ↓/↑ trend arrows).
+  - **RECENT ANOMALIES (24h)** — anomaly-type insights from the past 24 hours.
+  - **SLA AT RISK** — capacity insights on projects with active SLA commitments (capacity runway, tier).
+  All sections are individually guarded with `try/except` so a DB error in one section never breaks the entire context build.
+
+---
+
 ## [2.12.8] - 2026-05-26
 
 ### Fixed
