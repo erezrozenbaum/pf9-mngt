@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.8] - 2026-05-26
+
+### Fixed
+
+- **Auto-logout on session expiry** (`pf9-ui/src/App.tsx`, `pf9-ui/src/components/LandingDashboard.tsx`): When the API returned 401, the sidebar stayed visible in a broken state instead of redirecting to the login page. Root cause: 401 handlers cleared localStorage but did not update React state. Fixed by dispatching a `auth:session-expired` custom DOM event on any 401; `App.tsx` listens globally and immediately resets all auth state (`setIsAuthenticated(false)` etc.), showing the login page cleanly.
+- **Dependency graph — host node names invisible** (`pf9-ui/src/components/graph/DependencyGraph.tsx`): Host nodes with capacity-pressure data (`healthy`/`warning`/`critical`) received a near-transparent background tint (`#10b98118`). The label text was hardcoded to `#f1f5f9` (near-white), making it invisible on the light-tinted background. Fixed by using the node’s own type colour (dark) when a capacity-pressure tint is active.
+- **Dependency graph — host IP address not shown** (`api/graph_routes.py`): `_fetch_host()` and `_expand_aggregate()` did not select the host’s IP. Added `raw_json->>'host_ip' AS ip_address` to both queries so the `📍` IP line appears on all host nodes in the graph.
+
+---
+
 ## [2.12.7] - 2026-05-25
 
 ### Fixed

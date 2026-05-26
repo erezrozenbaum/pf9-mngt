@@ -249,7 +249,9 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
       setLastRVToolsRun(rvtoolsLastRun?.last_run ? rvtoolsLastRun : null);
     } catch (err) {
       if (err instanceof Error && err.message === 'AUTH_REQUIRED') {
-        setError('Authentication required. Please login.');
+        // Token expired — trigger global logout so the full app state resets
+        window.dispatchEvent(new CustomEvent('auth:session-expired'));
+        return;
       } else {
         setError(
           err instanceof Error ? err.message : 'Failed to load dashboard data'

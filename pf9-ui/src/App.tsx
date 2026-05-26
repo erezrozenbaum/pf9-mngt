@@ -507,10 +507,11 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'include' });
 
-  // On 401, clear session metadata so the login screen is shown
+  // On 401, clear session metadata and trigger global logout
   if (res.status === 401) {
     localStorage.removeItem('auth_user');
     localStorage.removeItem('token_expires_at');
+    window.dispatchEvent(new CustomEvent('auth:session-expired'));
   }
 
   if (!res.ok) {
@@ -1216,6 +1217,22 @@ const App: React.FC = () => {
     
     return () => clearInterval(intervalId);
   }, [isAuthenticated, tokenExpiresAt]);
+
+  // Global 401 handler — any component that gets a 401 dispatches 'auth:session-expired'
+  // which triggers a full logout so the broken-sidebar state is never shown
+  useEffect(() => {
+    const handler = () => {
+      localStorage.removeItem('auth_user');
+      localStorage.removeItem('token_expires_at');
+      setIsAuthenticated(false);
+      setAuthUser(null);
+      setAuthToken(null);
+      setTokenExpiresAt(null);
+      setLoginError('Your session has expired. Please login again.');
+    };
+    window.addEventListener('auth:session-expired', handler);
+    return () => window.removeEventListener('auth:session-expired', handler);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Login handler
   const handleLogin = async (username: string, password: string) => {

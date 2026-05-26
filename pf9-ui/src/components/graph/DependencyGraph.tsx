@@ -317,7 +317,9 @@ function ResourceNode({ data }: NodeProps) {
           <div
             style={{
               fontWeight: 600,
-              color: "#f1f5f9",
+              // capacity-pressure tint gives a near-white background — use the dark node
+              // colour for readability; otherwise keep the default near-white for dark bg
+              color: (capPressure && CAPACITY_COLORS[capPressure]) ? color : "#f1f5f9",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",

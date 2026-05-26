@@ -844,6 +844,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.12.8 — Auto-logout on session expiry + dependency graph label and IP fixes
+
+- **Auto-logout on session expiry** (`pf9-ui/src/App.tsx`, `pf9-ui/src/components/LandingDashboard.tsx`): When the session token expired the dashboard would show "Authentication required. Please login." but the sidebar remained visible in a broken state. Root cause: 401 handlers cleared `localStorage` but never updated React’s `isAuthenticated` state. Fixed by dispatching a `auth:session-expired` custom DOM event on any 401; `App.tsx` listens globally and resets all auth state immediately, redirecting to the login page.
+- **Dependency graph — host node names invisible** (`pf9-ui/src/components/graph/DependencyGraph.tsx`): Host nodes with a `healthy`/`warning`/`critical` capacity-pressure rating received a near-transparent background tint. The label text was hardcoded white (`#f1f5f9`), making it invisible against the light tinted background. Fixed by using the node’s own type colour (which is always dark) when a capacity-pressure tint is active.
+- **Dependency graph — host IP address missing** (`api/graph_routes.py`): `_fetch_host()` and `_expand_aggregate()` did not select any IP field. Added `raw_json->>'host_ip' AS ip_address` to both queries so the `📍` IP line now appears on all host nodes.
+
 ### v2.12.7 — Node Logs timestamp display fix + dependency graph aggregate nodes
 
 - **Node Logs — `Invalid Date` timestamps** (`pf9-ui/src/components/NodeLogsTab.tsx`): The timestamp column called `new Date(line.ts)` on PF9's Python logging format (`2026-05-25 12:51:04,654`). JavaScript's `Date` constructor cannot parse comma-separated milliseconds, so every row displayed `Invalid Date`. Replaced with a `fmtTs()` helper that extracts `HH:MM:SS` via regex, with an ISO-8601 fallback. No backend or config changes required.

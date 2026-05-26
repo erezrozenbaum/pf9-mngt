@@ -1936,6 +1936,17 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.12.8 Fixes
+
+### Auto-logout on 401 (`App.tsx`, `LandingDashboard.tsx`)
+Any component that receives a 401 now calls `window.dispatchEvent(new CustomEvent('auth:session-expired'))`. A `useEffect` in the root `App` component listens for this event and calls the full auth state reset (`setIsAuthenticated(false)`, `setAuthUser(null)`, etc.) without a page reload. Previously, clearing `localStorage` did not update React state, so the sidebar remained rendered in a broken state until manual logout.
+
+### Dependency graph — host label text colour (`DependencyGraph.tsx`)
+Host nodes with a capacity-pressure rating (`healthy`/`warning`/`critical`) use `CAPACITY_COLORS` to set a near-transparent background tint (e.g. `#10b98118`). The label `color` was hardcoded `#f1f5f9` (near-white), invisible on the light tint. Fixed: when `capPressure && CAPACITY_COLORS[capPressure]` is truthy, the label colour is switched to the node’s own type colour (dark, always readable on the tinted background).
+
+### Dependency graph — host IP address (`api/graph_routes.py`)
+`raw_json->>'host_ip' AS ip_address` added to the SELECT in both `_fetch_host()` and `_expand_aggregate()`. The field is propagated into `extra` by the BFS `add_node()` helper and surfaced as the `📍` IP line in `ResourceNode`.
+
 ## v2.12.7 Fixes
 
 ### Node Logs — `Invalid Date` timestamp display
