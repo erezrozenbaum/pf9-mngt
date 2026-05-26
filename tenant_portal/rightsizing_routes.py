@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
 
@@ -100,6 +100,10 @@ class TenantRightsizingSummary(BaseModel):
 class TenantStatusUpdate(BaseModel):
     status: str = Field(..., pattern="^(snoozed|dismissed)$")
     snooze_until: Optional[str] = None
+
+
+class ResizeRequestBody(BaseModel):
+    notes: Optional[str] = Field(None, max_length=500, description="Optional notes from the tenant about the resize request")
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +292,7 @@ async def update_tenant_recommendation(
 @router.post("/tenant/rightsizing/{rec_id}/request-change", status_code=200)
 async def request_rightsizing_change(
     rec_id: int,
+    body: ResizeRequestBody = Body(default_factory=ResizeRequestBody),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     """
@@ -373,6 +378,7 @@ async def request_rightsizing_change(
         f"CPU p95 (7d): {rec.get('cpu_p95_7d') or '—'}%  |  "
         f"RAM p95 (7d): {rec.get('ram_p95_7d') or '—'}%\n"
         f"Estimated Monthly Saving: {savings_str}"
+        + (f"\n\nTenant Notes: {body.notes}" if body.notes else "")
     )
 
     # Template context for the department notification email

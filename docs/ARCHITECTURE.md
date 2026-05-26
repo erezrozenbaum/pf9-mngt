@@ -1936,6 +1936,14 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.14.0 Changes
+
+### CLEA condition DSL (`api/clea_routes.py`)
+`_CONDITION_SCHEMA` defines six supported top-level keys (`severity`, `entity_type`, `entity_id`, `project_id`, `region_id`, `category`) with their allowed operators (`eq`, `neq`, `in`). Keys prefixed `metadata.` are dot-paths into the event's `metadata` JSONB and support an additional `contains` operator. `_validate_condition_expr(expr)` returns a list of error strings (empty = valid) and is called in both `POST /api/admin/clea/policies` and `PUT /api/admin/clea/policies/{id}` — invalid expressions raise `422`. `_condition_matches()` was updated to parse the `{"op": ..., "value": ...}` operator format alongside the existing shorthand (plain scalar = implicit `eq`). `GET /api/admin/clea/condition-schema` returns the full schema dict plus an annotated example.
+
+### Tenant resize request notes (`tenant_portal/rightsizing_routes.py`, `tenant-ui/`)
+`POST /tenant/rightsizing/{rec_id}/request-change` now accepts an optional `ResizeRequestBody` JSON body with a `notes: str | null` field (max 500 chars). Notes are appended to the ticket description generated via the internal `/internal/tickets/auto` endpoint. The tenant UI `CostOptimization.tsx` was updated: the "Request Resize" button opens a modal with a notes textarea; on success the card remains visible with the button replaced by a disabled "Requested ✓" badge (previously the card was removed from the list immediately). `apiRightsizingRequestChange` in `api.ts` updated to accept `notes?: string`.
+
 ## v2.13.0 Changes
 
 ### Health score insight auto-resolve (`scheduler_worker/main.py`)

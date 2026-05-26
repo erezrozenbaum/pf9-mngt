@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.14.0] - 2026-05-28
+
+### Added
+
+- **CLEA condition DSL & validation** (`api/clea_routes.py`): The Closed-Loop Event Automation (CLEA) condition expression format now supports a rich operator syntax. Policies can express conditions using `eq`, `neq`, `in` (list membership), and `contains` (substring). Conditions may reference top-level event keys (`severity`, `entity_type`, `entity_id`, `project_id`, `region_id`, `category`) or any arbitrary metadata dot-path (`metadata.<key>`). Backward-compatible: existing plain-value shorthand (`{"severity": "critical"}`) continues to work as an implicit `eq`. Validation is enforced on `POST /api/admin/clea/policies` and `PUT /api/admin/clea/policies/{id}` — invalid expressions return `422` with a detailed error list. New endpoint `GET /api/admin/clea/condition-schema` exposes the full schema (keys, operators, descriptions) and an annotated example for use by the admin UI.
+- **Tenant resize request — notes field** (`tenant_portal/rightsizing_routes.py`, `tenant-ui/`): Tenants can now attach optional notes (up to 500 characters) when submitting a rightsizing resize request. A modal dialog opens on "Request Resize" click, shows the current → recommended flavor, and provides a text area for notes. Notes are appended to the support ticket description opened in the admin portal. The "Request Resize" button transitions to a disabled "Requested ✓" state after submission, keeping the recommendation card visible so tenants can still see their request was received.
+
+---
+
 ## [2.13.0] - 2026-05-27
 
 ### Added

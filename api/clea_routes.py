@@ -43,6 +43,69 @@ logger = logging.getLogger("pf9.clea")
 
 _VALID_APPROVAL_MODES = {"auto", "single_approval", "disabled"}
 
+# ---------------------------------------------------------------------------
+# Condition expression schema
+# ---------------------------------------------------------------------------
+
+#: Supported top-level keys and the operators allowed for each.
+_CONDITION_SCHEMA: dict[str, dict] = {
+    "severity":    {"operators": ["eq", "neq", "in"],            "description": "Event/insight severity (critical|high|medium|low)"},
+    "entity_type": {"operators": ["eq", "neq", "in"],            "description": "Entity type (vm|volume|project|host|…)"},
+    "entity_id":   {"operators": ["eq", "neq", "in"],            "description": "Entity UUID"},
+    "project_id":  {"operators": ["eq", "neq", "in"],            "description": "OpenStack project UUID"},
+    "region_id":   {"operators": ["eq", "neq", "in"],            "description": "Region identifier"},
+    "category":    {"operators": ["eq", "neq", "in"],            "description": "Event category string"},
+    # metadata.* dot-paths support an extra 'contains' operator
+    "__metadata_dot_path__": {
+        "operators": ["eq", "neq", "in", "contains"],
+        "description": "Dot-path into event metadata (e.g. metadata.runway_days)",
+    },
+}
+
+_TOP_LEVEL_KEYS: frozenset[str] = frozenset(_CONDITION_SCHEMA.keys()) - {"__metadata_dot_path__"}
+_ALL_OPS: frozenset[str] = frozenset({"eq", "neq", "in", "contains"})
+
+
+def _validate_condition_expr(expr: dict) -> list[str]:
+    """Return a list of validation error strings. Empty list = valid."""
+    if not isinstance(expr, dict):
+        return ["condition_expr must be a JSON object"]
+    errors: list[str] = []
+    for key, value in expr.items():
+        if key in _TOP_LEVEL_KEYS:
+            allowed_ops = set(_CONDITION_SCHEMA[key]["operators"])
+        elif isinstance(key, str) and key.startswith("metadata.") and len(key) > 9:
+            allowed_ops = set(_CONDITION_SCHEMA["__metadata_dot_path__"]["operators"])
+        else:
+            errors.append(
+                f"Unknown condition key '{key}'. "
+                f"Supported: {sorted(_TOP_LEVEL_KEYS)} and metadata.* dot-paths"
+            )
+            continue
+
+        if isinstance(value, dict):
+            op = value.get("op")
+            val = value.get("value")
+            if op is None:
+                errors.append(f"Key '{key}': dict value must have an 'op' field")
+                continue
+            if op not in _ALL_OPS:
+                errors.append(f"Key '{key}': unknown operator '{op}'. Supported: {sorted(_ALL_OPS)}")
+                continue
+            if op not in allowed_ops:
+                errors.append(
+                    f"Key '{key}': operator '{op}' not allowed for this key. "
+                    f"Allowed: {sorted(allowed_ops)}"
+                )
+                continue
+            if op == "in" and not isinstance(val, list):
+                errors.append(f"Key '{key}': operator 'in' requires value to be a list")
+            if op == "contains" and not isinstance(val, str):
+                errors.append(f"Key '{key}': operator 'contains' requires value to be a string")
+        # else: shorthand scalar = implicit "eq" — always allowed
+
+    return errors
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -62,6 +125,27 @@ class CleaPolicyUpdate(BaseModel):
     runbook_name: Optional[str] = None
     approval_mode: Optional[str] = None
     enabled: Optional[bool] = None
+
+
+# ---------------------------------------------------------------------------
+# Condition schema (public to any clea reader)
+# ---------------------------------------------------------------------------
+
+@router.get("/condition-schema")
+async def get_condition_schema(
+    _: Any = Depends(require_permission("clea", "read")),
+):
+    """Return the supported condition keys, their allowed operators, and descriptions."""
+    schema = {}
+    for key, meta in _CONDITION_SCHEMA.items():
+        if key == "__metadata_dot_path__":
+            schema["metadata.*"] = meta
+        else:
+            schema[key] = meta
+    return {"schema": schema, "example": {
+        "severity": {"op": "in", "value": ["critical", "high"]},
+        "metadata.project_id": {"op": "eq", "value": "<project-uuid>"},
+    }}
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +169,11 @@ async def create_policy(
 ):
     if body.approval_mode not in _VALID_APPROVAL_MODES:
         raise HTTPException(400, f"approval_mode must be one of {sorted(_VALID_APPROVAL_MODES)}")
+
+    if body.condition_expr:
+        errs = _validate_condition_expr(body.condition_expr)
+        if errs:
+            raise HTTPException(422, {"detail": "Invalid condition_expr", "errors": errs})
 
     username = _get_username(current_user)
 
@@ -127,6 +216,11 @@ async def update_policy(
         raise HTTPException(400, "No fields to update")
     if "approval_mode" in updates and updates["approval_mode"] not in _VALID_APPROVAL_MODES:
         raise HTTPException(400, f"approval_mode must be one of {sorted(_VALID_APPROVAL_MODES)}")
+
+    if "condition_expr" in updates and updates["condition_expr"]:
+        errs = _validate_condition_expr(updates["condition_expr"])
+        if errs:
+            raise HTTPException(422, {"detail": "Invalid condition_expr", "errors": errs})
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -342,11 +436,49 @@ def _do_evaluate(event_id: Optional[int], event_type: str, metadata: dict) -> No
 
 
 def _condition_matches(condition_expr: dict, metadata: dict) -> bool:
-    """Simple key-equality filter against event metadata. Empty dict = match all."""
+    """
+    Match condition_expr against event metadata.
+
+    Supports:
+      - Shorthand: {"severity": "critical"} → implicit eq
+      - Full: {"severity": {"op": "eq", "value": "critical"}}
+      - Operators: eq, neq, in (list), contains (substring)
+      - metadata.* dot-path keys: {"metadata.runway_days": {"op": "eq", "value": 3}}
+    Empty condition_expr = match all.
+    """
     if not condition_expr:
         return True
     for key, expected in condition_expr.items():
-        if metadata.get(key) != expected:
+        # Resolve actual value from metadata
+        if isinstance(key, str) and key.startswith("metadata."):
+            dot_key = key[len("metadata."):]
+            actual = metadata.get(dot_key)
+        else:
+            actual = metadata.get(key)
+
+        # Parse operator and target value
+        if isinstance(expected, dict):
+            op = expected.get("op", "eq")
+            target = expected.get("value")
+        else:
+            op = "eq"
+            target = expected
+
+        # Apply operator
+        if op == "eq":
+            if actual != target:
+                return False
+        elif op == "neq":
+            if actual == target:
+                return False
+        elif op == "in":
+            if not isinstance(target, list) or actual not in target:
+                return False
+        elif op == "contains":
+            if not isinstance(actual, str) or not isinstance(target, str) or target not in actual:
+                return False
+        else:
+            # Unknown operator — fail safe
             return False
     return True
 

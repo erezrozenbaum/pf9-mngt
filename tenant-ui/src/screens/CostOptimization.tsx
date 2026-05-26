@@ -58,6 +58,9 @@ export function CostOptimization() {
   const [pending, setPending] = useState<number | null>(null);
   const [showDismissed, setShowDismissed] = useState(false);
   const [requestSent, setRequestSent] = useState<Set<number>>(new Set());
+  // Notes modal state
+  const [notesRec, setNotesRec] = useState<RightsizingRecommendation | null>(null);
+  const [notesText, setNotesText] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,12 +99,13 @@ export function CostOptimization() {
     }
   };
 
-  const handleRequestChange = async (id: number) => {
+  const handleRequestChange = async (id: number, notes: string) => {
     setPending(id);
+    setNotesRec(null);
+    setNotesText("");
     try {
-      await apiRightsizingRequestChange(id);
+      await apiRightsizingRequestChange(id, notes.trim() || undefined);
       setRequestSent((prev) => new Set(prev).add(id));
-      setRecs((prev) => prev.filter((r) => r.id !== id));
       setSummary((s) =>
         s ? { ...s, total_open: Math.max(0, s.total_open - 1) } : s,
       );
@@ -502,17 +506,27 @@ export function CostOptimization() {
                       marginLeft: "auto",
                     }}
                   >
-                    <button
-                      className="btn btn-sm btn-primary"
-                      disabled={pending === r.id}
-                      onClick={() => handleRequestChange(r.id)}
-                      style={{ fontSize: "0.8rem", minWidth: "110px" }}
-                    >
-                      Request Resize
-                    </button>
+                    {requestSent.has(r.id) ? (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        disabled
+                        style={{ fontSize: "0.8rem", minWidth: "110px", opacity: 0.65 }}
+                      >
+                        Requested ✓
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        disabled={pending === r.id}
+                        onClick={() => { setNotesRec(r); setNotesText(""); }}
+                        style={{ fontSize: "0.8rem", minWidth: "110px" }}
+                      >
+                        Request Resize
+                      </button>
+                    )}
                     <button
                       className="btn btn-sm btn-secondary"
-                      disabled={pending === r.id}
+                      disabled={pending === r.id || requestSent.has(r.id)}
                       onClick={() => handleAction(r.id, "snoozed")}
                       style={{ fontSize: "0.8rem", minWidth: "110px" }}
                     >
@@ -520,7 +534,7 @@ export function CostOptimization() {
                     </button>
                     <button
                       className="btn btn-sm btn-ghost"
-                      disabled={pending === r.id}
+                      disabled={pending === r.id || requestSent.has(r.id)}
                       onClick={() => handleAction(r.id, "dismissed")}
                       style={{
                         fontSize: "0.8rem",
@@ -535,6 +549,68 @@ export function CostOptimization() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Notes modal */}
+      {notesRec && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 1000,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setNotesRec(null); setNotesText(""); } }}
+        >
+          <div
+            className="card"
+            style={{
+              background: "var(--color-surface)", borderRadius: "10px",
+              padding: "1.5rem", width: "100%", maxWidth: "420px",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.25)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 0.25rem", fontSize: "1rem", fontWeight: 700 }}>
+              Request Resize
+            </h3>
+            <p style={{ margin: "0 0 1rem", fontSize: "0.85rem", color: "var(--color-text-secondary)" }}>
+              {notesRec.vm_name || notesRec.vm_id} — {notesRec.current_flavor || "—"} → {notesRec.recommended_flavor || "—"}
+            </p>
+            <label style={{ fontSize: "0.85rem", fontWeight: 500, display: "block", marginBottom: "0.35rem" }}>
+              Notes <span style={{ color: "var(--color-text-secondary)", fontWeight: 400 }}>(optional)</span>
+            </label>
+            <textarea
+              value={notesText}
+              onChange={(e) => setNotesText(e.target.value)}
+              maxLength={500}
+              rows={3}
+              placeholder="Any context for the support team…"
+              style={{
+                width: "100%", boxSizing: "border-box", resize: "vertical",
+                padding: "0.5rem 0.6rem", borderRadius: "6px",
+                border: "1px solid var(--color-border, #d1d5db)",
+                background: "var(--color-bg)", color: "var(--color-text)",
+                fontSize: "0.85rem", marginBottom: "0.75rem",
+              }}
+            />
+            <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => { setNotesRec(null); setNotesText(""); }}
+                style={{ fontSize: "0.85rem" }}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={pending === notesRec.id}
+                onClick={() => handleRequestChange(notesRec.id, notesText)}
+                style={{ fontSize: "0.85rem" }}
+              >
+                {pending === notesRec.id ? "Submitting…" : "Submit Request"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

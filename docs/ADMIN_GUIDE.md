@@ -844,6 +844,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **Docker**: Both `api/Dockerfile` and `tenant_portal/Dockerfile` include `COPY shared/ ./shared/` so the package is available at `/app/shared/` inside each container.
 - **No database changes** — pure code refactoring; no migration file required.
 
+### v2.14.0 — CLEA condition DSL + tenant resize request notes
+
+- **CLEA condition DSL & validation** (`api/clea_routes.py`): Policy `condition_expr` now supports a rich operator format. Top-level keys (`severity`, `entity_type`, `entity_id`, `project_id`, `region_id`, `category`) accept `eq`, `neq`, and `in` (list) operators. Arbitrary `metadata.*` dot-path keys additionally support `contains` (substring check). Example: `{"severity": {"op": "in", "value": ["critical", "high"]}, "metadata.runway_days": {"op": "eq", "value": 3}}`. Backward-compatible: plain shorthand (`{"severity": "critical"}`) continues to work. Validation is enforced on create/update — invalid expressions return `422` with a per-key error list. New `GET /api/admin/clea/condition-schema` endpoint exposes the full schema for the UI.
+- **Tenant resize request notes** (`tenant_portal/rightsizing_routes.py`, `tenant-ui/`): The "Request Resize" button in the tenant Cost Optimisation view now opens a modal where tenants can attach optional notes (up to 500 chars) for the support team. Notes are appended to the ticket description auto-created in the admin portal. After submission the button transitions to a disabled "Requested ✓" state and the recommendation card remains visible (previously it disappeared immediately).
+
 ### v2.13.0 — Health score insight auto-resolve + richer Copilot context
 
 - **Health score insight auto-resolve** (`scheduler_worker/main.py`): `health_score_critical` and `health_score_low` insights are now automatically set to `resolved` when the tenant’s health score recovers above the hysteresis threshold (≥45 for critical, ≥65 for low). Resolution details are written to the insight’s `metadata` JSONB field (`resolved_by: auto`, `resolution_note: "Health score recovered to <N>/100"`).

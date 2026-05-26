@@ -1375,9 +1375,10 @@ export async function apiRightsizingUpdate(
   });
 }
 
-export async function apiRightsizingRequestChange(id: number): Promise<void> {
-  await tenantFetch(`/tenant/rightsizing/${id}/request-change`, {
+export async function apiRightsizingRequestChange(id: number, notes?: string): Promise<{ message: string; ticket_ref: string | null }> {
+  return tenantFetch(`/tenant/rightsizing/${id}/request-change`, {
     method: "POST",
+    body: JSON.stringify({ notes: notes ?? null }),
   });
 }
 
