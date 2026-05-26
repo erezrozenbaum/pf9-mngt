@@ -1,4 +1,4 @@
-fastapi>=0.116.0,<1.0.0
+fastapi>=0.116.0,!=0.136.3,<1.0.0
 uvicorn[standard]==0.30.0
 gunicorn==22.0.0
 psycopg2-binary==2.9.7
