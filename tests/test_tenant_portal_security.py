@@ -142,7 +142,7 @@ class TestPublicBrandingEndpoint:
         importlib.reload(branding_routes)
         branding_routes._CACHE.clear()
         with patch("branding_routes.get_tenant_connection", side_effect=RuntimeError("db down")):
-            result = asyncio.get_event_loop().run_until_complete(branding_routes.get_branding())
+            result = asyncio.run(branding_routes.get_branding())
         assert result["company_name"] == "Cloud Portal"
         assert result["primary_color"] == "#1A73E8"
 
@@ -161,7 +161,7 @@ class TestPublicBrandingEndpoint:
         mock_conn.__exit__  = MagicMock(return_value=False)
         mock_conn.cursor    = MagicMock(return_value=mock_cur)
         with patch("branding_routes.get_tenant_connection", return_value=mock_conn):
-            result = asyncio.get_event_loop().run_until_complete(branding_routes.get_branding())
+            result = asyncio.run(branding_routes.get_branding())
         assert result["company_name"] == "Cloud Portal"
 
     def test_s04_branding_result_cached(self):
@@ -184,8 +184,8 @@ class TestPublicBrandingEndpoint:
         mock_conn.__exit__  = MagicMock(return_value=False)
         mock_conn.cursor    = MagicMock(return_value=mock_cur)
         with patch("branding_routes.get_tenant_connection", return_value=mock_conn) as mock_get:
-            asyncio.get_event_loop().run_until_complete(branding_routes.get_branding())
-            asyncio.get_event_loop().run_until_complete(branding_routes.get_branding())
+            asyncio.run(branding_routes.get_branding())
+            asyncio.run(branding_routes.get_branding())
         assert mock_get.call_count == 1, "DB should only be queried once within TTL"
 
 
@@ -448,7 +448,7 @@ class TestMFAIntegrity:
 
         with patch("tenant_portal_routes.get_connection", return_value=mock_conn):
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     mod.admin_reset_mfa("cp-1", "user-x", mock_request, admin_user)
                 )
         assert exc_info.value.status_code == 404
@@ -473,7 +473,7 @@ class TestMFAIntegrity:
 
         with patch("tenant_portal_routes.get_connection", return_value=mock_conn):
             with patch.object(mod.logger, "info") as mock_log:
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     mod.admin_reset_mfa("cp-1", "user-x", mock_request, admin_user)
                 )
         # At least one log.info call mentioning the user and admin
@@ -564,7 +564,7 @@ class TestAuditTrail:
 
         with patch("tenant_portal_routes.get_connection", return_value=mock_conn):
             with patch.object(mod.logger, "info") as mock_log:
-                asyncio.get_event_loop().run_until_complete(
+                asyncio.run(
                     mod.upsert_branding("cp-1", body, mock_request, current_user=admin_user)
                 )
         logged_messages = " ".join(str(c) for c in mock_log.call_args_list)
@@ -599,7 +599,7 @@ class TestAuditTrail:
         admin_user = type("U", (), {"username": "admin", "role": "admin"})()
 
         with patch("tenant_portal_routes.get_connection", return_value=mock_conn):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 mod.get_audit_log("cp-1", limit=50, offset=0,
                                   keystone_user_id=None, current_user=admin_user)
             )
