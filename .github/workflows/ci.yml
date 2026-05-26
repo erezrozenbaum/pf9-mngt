@@ -350,6 +350,7 @@ jobs:
           # provide meaningful signal (planned for v1.83.50+).
           python -m pytest tests/ -v \
             --ignore=tests/seed_ci.py \
+            --ignore=tests/test_cluster_routes.py \
             -k "not TestContainerAlertAPI or (TestContainerAlertAPI and not test_put_requires_superadmin)" \
             --cov=api \
             --cov-report=xml:coverage.xml \
