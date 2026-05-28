@@ -1936,6 +1936,14 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.16.1 Changes
+
+### Dashboard SLA defense control surface (`pf9-ui/`)
+The dashboard layer now consumes the existing SLA defense admin API beyond summary counts. `ExecutiveDashboard` and `AccountManagerDashboard` each fetch open alerts (`GET /api/admin/sla/defense/alerts?status=open&limit=8`) and render a compact table for project/threat/severity/time context, with in-line resolve/dismiss operator actions (`POST /api/admin/sla/defense/alerts/{id}/resolve|dismiss`). This keeps alert triage in the same workflow where SLA posture is reviewed.
+
+### Portfolio layout and readability refinements (`pf9-ui/src/App.tsx`, `ExecutiveDashboard.tsx`)
+The portfolio tabs (`account_manager_dashboard`, `executive_dashboard`) are now included in `hideDetailsPanel`, removing the previously empty right column and reclaiming horizontal space. The SLA Fleet Health legend chip styling was updated to improve label contrast and readability in light-theme deployments.
+
 ## v2.16.0 Changes
 
 ### Proactive SLA defense engine (`intelligence_worker/engines/sla_defense.py`)

@@ -3303,6 +3303,8 @@ const App: React.FC = () => {
     "migration_planner",
     "cluster_management",
     "tenant_portal",
+    "account_manager_dashboard",
+    "executive_dashboard",
     "operational_timeline",
     "platform_health",
     "clea_policies",

@@ -78,6 +78,21 @@ interface SlaDefenseSummaryResponse {
   total_open: number;
 }
 
+interface SlaDefenseAlertItem {
+  id: number;
+  project_id: string;
+  project_name: string | null;
+  threat_type: string;
+  severity: "warning" | "critical";
+  status: "open" | "resolved" | "dismissed";
+  triggered_at: string;
+}
+
+interface SlaDefenseAlertsResponse {
+  items: SlaDefenseAlertItem[];
+  count: number;
+}
+
 type SortKey = "name" | "tier" | "status" | "quota_vcpu" | "quota_ram" | "vcpu_growth" | "cost" | "critical" | "health_score";
 
 interface Props {
@@ -151,6 +166,8 @@ function currentMonthValue(): string {
 export default function AccountManagerDashboard({ userRole: _userRole }: Props) {
   const [data, setData] = useState<PortfolioSummaryResponse | null>(null);
   const [slaDefense, setSlaDefense] = useState<SlaDefenseSummaryResponse | null>(null);
+  const [slaDefenseAlerts, setSlaDefenseAlerts] = useState<SlaDefenseAlertItem[]>([]);
+  const [actionBusyId, setActionBusyId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "breached" | "at_risk" | "ok" | "not_configured">("all");
@@ -167,18 +184,35 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
       const params = new URLSearchParams();
       params.set("month", selectedMonth);
       if (selectedDomain) params.set("domain", selectedDomain);
-      const [resp, slaDefenseResp] = await Promise.all([
+      const [resp, slaDefenseResp, slaDefenseAlertsResp] = await Promise.all([
         apiFetch<PortfolioSummaryResponse>(`/api/sla/portfolio/summary?${params}`),
         apiFetch<SlaDefenseSummaryResponse>("/api/admin/sla/defense/alerts/summary"),
+        apiFetch<SlaDefenseAlertsResponse>("/api/admin/sla/defense/alerts?status=open&limit=8"),
       ]);
       setData(resp);
       setSlaDefense(slaDefenseResp);
+      setSlaDefenseAlerts(slaDefenseAlertsResp.items ?? []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load portfolio");
     } finally {
       setLoading(false);
     }
   }, [selectedMonth, selectedDomain]);
+
+  const handleSlaDefenseAction = useCallback(async (alertId: number, action: "resolve" | "dismiss") => {
+    setActionBusyId(alertId);
+    try {
+      await apiFetch(`/api/admin/sla/defense/alerts/${alertId}/${action}`, {
+        method: "POST",
+        body: JSON.stringify({ note: `${action}d from My Portfolio dashboard` }),
+      });
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : `Failed to ${action} alert`);
+    } finally {
+      setActionBusyId(null);
+    }
+  }, [load]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -384,6 +418,81 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
           </div>
         </section>
       )}
+
+      {slaDefense && slaDefense.total_open === 0 && (
+        <section
+          style={{
+            background: "var(--pf9-card-bg, #1e293b)",
+            borderRadius: "8px",
+            padding: "0.7rem 1rem",
+            borderLeft: "4px solid #22c55e",
+            marginBottom: "1rem",
+          }}
+        >
+          <div style={{ fontSize: "0.85rem", color: "#cbd5e1" }}>
+            🛡️ SLA Defense: no active proactive alerts right now.
+          </div>
+        </section>
+      )}
+
+      <section
+        style={{
+          background: "var(--pf9-card-bg, #1e293b)",
+          borderRadius: "8px",
+          padding: "0.9rem 1rem",
+          marginBottom: "1rem",
+        }}
+      >
+        <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.45rem" }}>🛡️ SLA Defense Open Alerts</div>
+        {slaDefenseAlerts.length === 0 ? (
+          <div style={{ fontSize: "0.84rem", color: "#94a3b8" }}>No open proactive SLA defense alerts.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="pf9-table" style={{ marginBottom: 0 }}>
+              <thead>
+                <tr>
+                  <th>Project</th>
+                  <th>Threat</th>
+                  <th>Severity</th>
+                  <th>Triggered</th>
+                  <th style={{ textAlign: "right" }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {slaDefenseAlerts.map((a) => (
+                  <tr key={a.id}>
+                    <td>{a.project_name ?? a.project_id}</td>
+                    <td>{a.threat_type}</td>
+                    <td>
+                      <span className={`pf9-badge ${a.severity === "critical" ? "badge-critical" : "badge-warning"}`}>
+                        {a.severity}
+                      </span>
+                    </td>
+                    <td>{a.triggered_at?.replace("T", " ").slice(0, 16) ?? "—"}</td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button
+                        className="pf9-btn pf9-btn-sm"
+                        onClick={() => handleSlaDefenseAction(a.id, "resolve")}
+                        disabled={actionBusyId === a.id}
+                        style={{ marginRight: "0.35rem" }}
+                      >
+                        Resolve
+                      </button>
+                      <button
+                        className="pf9-btn pf9-btn-sm"
+                        onClick={() => handleSlaDefenseAction(a.id, "dismiss")}
+                        disabled={actionBusyId === a.id}
+                      >
+                        Dismiss
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* Filter + search bar */}
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem", flexWrap: "wrap", alignItems: "center" }}>

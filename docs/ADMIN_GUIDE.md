@@ -849,6 +849,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **CLEA condition DSL & validation** (`api/clea_routes.py`): Policy `condition_expr` now supports a rich operator format. Top-level keys (`severity`, `entity_type`, `entity_id`, `project_id`, `region_id`, `category`) accept `eq`, `neq`, and `in` (list) operators. Arbitrary `metadata.*` dot-path keys additionally support `contains` (substring check). Example: `{"severity": {"op": "in", "value": ["critical", "high"]}, "metadata.runway_days": {"op": "eq", "value": 3}}`. Backward-compatible: plain shorthand (`{"severity": "critical"}`) continues to work. Validation is enforced on create/update — invalid expressions return `422` with a per-key error list. New `GET /api/admin/clea/condition-schema` endpoint exposes the full schema for the UI.
 - **Tenant resize request notes** (`tenant_portal/rightsizing_routes.py`, `tenant-ui/`): The "Request Resize" button in the tenant Cost Optimisation view now opens a modal where tenants can attach optional notes (up to 500 chars) for the support team. Notes are appended to the ticket description auto-created in the admin portal. After submission the button transitions to a disabled "Requested ✓" state and the recommendation card remains visible (previously it disappeared immediately).
 
+### v2.16.1 — SLA defense dashboard drill-down and UX polish
+
+- **Dashboard operations**: Both `Portfolio Health` and `My Portfolio` now include an `SLA Defense Open Alerts` table with open-alert details and in-line `Resolve` / `Dismiss` actions. This lets operators close the loop directly from dashboard context without switching to separate admin endpoints.
+- **Healthy-state clarity**: When open alert count is zero, each dashboard now displays an explicit "no active proactive alerts" SLA Defense message instead of silently showing only a zero KPI.
+- **Layout cleanup**: The unused right-side details pane is now hidden for both portfolio dashboards, so the content area uses the full width.
+- **Readability fix**: The SLA Fleet Health legend labels (`Healthy`, `Not Configured`) were restyled for better contrast on light themes.
+
 ### v2.16.0 — Proactive SLA defense alerts
 
 - **What it does**: The intelligence worker now creates proactive SLA defense alerts when an open capacity, risk, or anomaly insight threatens a tenant with an active SLA commitment. The feature is designed to surface likely breach precursors before they become customer-visible incidents.

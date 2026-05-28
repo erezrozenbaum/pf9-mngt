@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.16.1] - 2026-05-28
+
+### Added
+
+- **SLA defense alert drill-down with operator actions** (`pf9-ui/src/components/ExecutiveDashboard.tsx`, `pf9-ui/src/components/AccountManagerDashboard.tsx`): Both Portfolio Health and My Portfolio views now include an "SLA Defense Open Alerts" table that lists current open alerts (`project`, `threat`, `severity`, `triggered`) and exposes one-click `Resolve` / `Dismiss` actions wired to `/api/admin/sla/defense/alerts/{id}/resolve|dismiss`.
+- **Healthy-state SLA defense visibility** (`pf9-ui/src/components/ExecutiveDashboard.tsx`, `pf9-ui/src/components/AccountManagerDashboard.tsx`): When there are zero open alerts, both dashboards now render an explicit "no active proactive alerts" message so the SLA Defense feature remains visible even in green-state environments.
+
+### Changed
+
+- **Dashboard layout cleanup** (`pf9-ui/src/App.tsx`): Removed the unused right details panel on both `My Portfolio` and `Portfolio Health` tabs by adding `account_manager_dashboard` and `executive_dashboard` to the `hideDetailsPanel` tab set.
+- **SLA Fleet Health readability** (`pf9-ui/src/components/ExecutiveDashboard.tsx`): Improved legend contrast for `Healthy` / `Not Configured` labels by using pill styling with border and theme-aware text color, making counts readable in light and dark themes.
+
 ## [2.16.0] - 2026-05-28
 
 ### Added

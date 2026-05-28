@@ -90,6 +90,22 @@ interface SlaDefenseSummaryResponse {
   total_open: number;
 }
 
+interface SlaDefenseAlertItem {
+  id: number;
+  project_id: string;
+  project_name: string | null;
+  threat_type: string;
+  severity: "warning" | "critical";
+  status: "open" | "resolved" | "dismissed";
+  triggered_at: string;
+  resolution_note: string | null;
+}
+
+interface SlaDefenseAlertsResponse {
+  items: SlaDefenseAlertItem[];
+  count: number;
+}
+
 interface Props {
   userRole: string;
 }
@@ -194,9 +210,23 @@ function SlaDonut({ summary }: { summary: ExecutiveSummary }) {
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem" }}>
         {segments.map((s) => (
-          <span key={s.label} style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "0.82rem" }}>
+          <span
+            key={s.label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "0.82rem",
+              color: "var(--color-text-primary, #1f2937)",
+              background: "var(--pf9-card-bg, #1e293b)",
+              border: "1px solid var(--color-border, #334155)",
+              borderRadius: "999px",
+              padding: "0.2rem 0.55rem",
+              fontWeight: 600,
+            }}
+          >
             <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: s.color }} />
-            <span style={{ color: "#e2e8f0" }}>{s.label}: {s.count}</span>
+            <span>{s.label}: {s.count}</span>
           </span>
         ))}
       </div>
@@ -272,6 +302,8 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
   const [data, setData]         = useState<ExecutiveSummaryResponse | null>(null);
   const [metering, setMetering] = useState<FleetMeteringResponse | null>(null);
   const [slaDefense, setSlaDefense] = useState<SlaDefenseSummaryResponse | null>(null);
+  const [slaDefenseAlerts, setSlaDefenseAlerts] = useState<SlaDefenseAlertItem[]>([]);
+  const [actionBusyId, setActionBusyId] = useState<number | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
   const [period, setPeriod]     = useState<Period>("6m");
@@ -284,20 +316,37 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
       const params = new URLSearchParams();
       if (pd.days)   params.set("days",   String(pd.days));
       else           params.set("months", String(pd.months));
-      const [summaryResp, meteringResp, slaDefenseResp] = await Promise.all([
+      const [summaryResp, meteringResp, slaDefenseResp, slaDefenseAlertsResp] = await Promise.all([
         apiFetch<ExecutiveSummaryResponse>("/api/sla/portfolio/executive-summary"),
         apiFetch<FleetMeteringResponse>(`/api/sla/portfolio/fleet-metering?${params}`),
         apiFetch<SlaDefenseSummaryResponse>("/api/admin/sla/defense/alerts/summary"),
+        apiFetch<SlaDefenseAlertsResponse>("/api/admin/sla/defense/alerts?status=open&limit=8"),
       ]);
       setData(summaryResp);
       setMetering(meteringResp);
       setSlaDefense(slaDefenseResp);
+      setSlaDefenseAlerts(slaDefenseAlertsResp.items ?? []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load executive summary");
     } finally {
       setLoading(false);
     }
   }, [period]);
+
+  const handleSlaDefenseAction = useCallback(async (alertId: number, action: "resolve" | "dismiss") => {
+    setActionBusyId(alertId);
+    try {
+      await apiFetch(`/api/admin/sla/defense/alerts/${alertId}/${action}`, {
+        method: "POST",
+        body: JSON.stringify({ note: `${action}d from Portfolio Health dashboard` }),
+      });
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : `Failed to ${action} alert`);
+    } finally {
+      setActionBusyId(null);
+    }
+  }, [load]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -646,6 +695,81 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
               </p>
             </section>
           )}
+
+          {slaDefense && slaDefense.total_open === 0 && (
+            <section
+              style={{
+                background: "var(--pf9-card-bg, #1e293b)",
+                borderRadius: "8px",
+                padding: "0.75rem 1.2rem",
+                borderLeft: "4px solid #22c55e",
+                marginBottom: "1rem",
+              }}
+            >
+              <p style={{ margin: 0, fontSize: "0.88rem", color: "#cbd5e1" }}>
+                🛡️ SLA Defense is active: no open proactive alerts right now.
+              </p>
+            </section>
+          )}
+
+          <section
+            style={{
+              background: "var(--pf9-card-bg, #1e293b)",
+              borderRadius: "8px",
+              padding: "0.9rem 1rem",
+              marginBottom: "1rem",
+            }}
+          >
+            <h3 style={{ margin: "0 0 0.6rem", fontSize: "0.95rem" }}>🛡️ SLA Defense Open Alerts</h3>
+            {slaDefenseAlerts.length === 0 ? (
+              <div style={{ fontSize: "0.84rem", color: "#94a3b8" }}>No open proactive SLA defense alerts.</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="pf9-table" style={{ marginBottom: 0 }}>
+                  <thead>
+                    <tr>
+                      <th>Project</th>
+                      <th>Threat</th>
+                      <th>Severity</th>
+                      <th>Triggered</th>
+                      <th style={{ textAlign: "right" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {slaDefenseAlerts.map((a) => (
+                      <tr key={a.id}>
+                        <td>{a.project_name ?? a.project_id}</td>
+                        <td>{a.threat_type}</td>
+                        <td>
+                          <span className={`pf9-badge ${a.severity === "critical" ? "badge-critical" : "badge-warning"}`}>
+                            {a.severity}
+                          </span>
+                        </td>
+                        <td>{a.triggered_at?.replace("T", " ").slice(0, 16) ?? "—"}</td>
+                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button
+                            className="pf9-btn pf9-btn-sm"
+                            onClick={() => handleSlaDefenseAction(a.id, "resolve")}
+                            disabled={actionBusyId === a.id}
+                            style={{ marginRight: "0.35rem" }}
+                          >
+                            Resolve
+                          </button>
+                          <button
+                            className="pf9-btn pf9-btn-sm"
+                            onClick={() => handleSlaDefenseAction(a.id, "dismiss")}
+                            disabled={actionBusyId === a.id}
+                          >
+                            Dismiss
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
 
           {/* MTTR compliance note */}
           {s.avg_mttr_hours !== null && s.avg_mttr_commitment_hours !== null && (
