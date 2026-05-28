@@ -10,7 +10,11 @@ import json
 import logging
 from typing import Any
 
-import psycopg2.extras
+try:
+    # Some tests stub psycopg2 as a plain module without `extras` attr.
+    from psycopg2.extras import RealDictCursor
+except Exception:  # pragma: no cover - test-stub fallback
+    RealDictCursor = None
 
 from .base import BaseEngine
 
@@ -134,7 +138,7 @@ class SlaDefenseEngine(BaseEngine):
         return True
 
     def run(self) -> None:
-        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
                 WITH active_sla AS (
@@ -189,7 +193,7 @@ class SlaDefenseEngine(BaseEngine):
             self._process_candidate_row(row, triggered_keys)
 
         # Resolve stale open alerts (condition no longer true).
-        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
                 SELECT id, project_id, threat_type
