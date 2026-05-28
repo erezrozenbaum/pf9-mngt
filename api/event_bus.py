@@ -34,11 +34,20 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger("pf9.event_bus")
+
+_REALTIME_ANOMALY_ENABLED = os.getenv("REALTIME_ANOMALY_ENABLED", "true").lower() in ("true", "1", "yes")
+_REALTIME_SUPPORTED_TYPES = {
+    "vm.cpu_spike": "anomaly_realtime_vm_cpu_spike",
+    "vm.ram_spike": "anomaly_realtime_vm_ram_spike",
+    "quota.sudden_jump": "anomaly_realtime_quota_sudden_jump",
+}
+_REALTIME_STATS_TTL_SECONDS = 12 * 60 * 60
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +214,21 @@ def _write_event(
             except Exception:
                 logger.debug("event_bus: clea evaluation failed for %r", event_type, exc_info=True)
 
+            # Realtime anomaly fast-path: evaluate only supported signal events
+            # against precomputed Redis stats and upsert an insight immediately.
+            try:
+                _quick_anomaly_check(
+                    event_type=event_type,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    entity_name=entity_name,
+                    project_id=project_id,
+                    project_name=project_name,
+                    metadata=metadata,
+                )
+            except Exception:
+                logger.debug("event_bus: realtime anomaly quick-check failed for %r", event_type, exc_info=True)
+
         # Publish to SSE channel so connected browser clients see the event
         # in real time.  Redis unavailability is silently ignored.
         try:
@@ -227,3 +251,172 @@ def _write_event(
 
     except Exception:
         logger.debug("event_bus: failed to write event %r", event_type, exc_info=True)
+
+
+def _extract_metric_value(metadata: dict) -> Optional[float]:
+    for key in ("metric_value", "value", "current_value", "usage", "used"):
+        val = metadata.get(key)
+        if val is None:
+            continue
+        try:
+            return float(val)
+        except Exception:
+            continue
+    return None
+
+
+def _get_realtime_stats(entity_type: str, entity_id: str) -> Optional[dict[str, float]]:
+    try:
+        from cache import _get_client as _redis_client
+
+        rc = _redis_client()
+        if rc is None:
+            return None
+
+        key = f"pf9:stats:{entity_type}:{entity_id}"
+        raw = rc.get(key)
+        if not raw:
+            return None
+        payload = json.loads(raw)
+
+        mean = payload.get("mean")
+        stddev = payload.get("stddev")
+        if mean is None or stddev is None:
+            return None
+        return {"mean": float(mean), "stddev": float(stddev)}
+    except Exception:
+        return None
+
+
+def _upsert_realtime_anomaly_insight(
+    *,
+    insight_type: str,
+    severity: str,
+    entity_type: str,
+    entity_id: str,
+    entity_name: str,
+    title: str,
+    message: str,
+    metadata: dict[str, Any],
+) -> bool:
+    try:
+        from db_pool import get_connection
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Hard query budget for quick-path writes.
+                cur.execute("SET LOCAL statement_timeout = '200ms'")
+                cur.execute(
+                    """
+                    INSERT INTO operational_insights
+                        (type, severity, entity_type, entity_id, entity_name,
+                         title, message, metadata, status, detected_at, last_seen_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, 'open', NOW(), NOW())
+                    ON CONFLICT (type, entity_type, entity_id)
+                        WHERE status IN ('open','acknowledged','snoozed')
+                    DO UPDATE SET
+                        severity = EXCLUDED.severity,
+                        entity_name = EXCLUDED.entity_name,
+                        title = EXCLUDED.title,
+                        message = EXCLUDED.message,
+                        metadata = EXCLUDED.metadata,
+                        last_seen_at = NOW()
+                    """,
+                    (
+                        insight_type,
+                        severity,
+                        entity_type,
+                        entity_id,
+                        entity_name,
+                        title,
+                        message,
+                        json.dumps(metadata),
+                    ),
+                )
+            conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def _quick_anomaly_check(
+    *,
+    event_type: str,
+    entity_type: str,
+    entity_id: str,
+    entity_name: Optional[str],
+    project_id: Optional[str],
+    project_name: Optional[str],
+    metadata: dict,
+) -> None:
+    if not _REALTIME_ANOMALY_ENABLED:
+        return
+
+    insight_type = _REALTIME_SUPPORTED_TYPES.get(event_type)
+    if not insight_type:
+        return
+
+    metric_value = _extract_metric_value(metadata)
+    if metric_value is None:
+        return
+
+    stats = _get_realtime_stats(entity_type, entity_id)
+    if not stats:
+        return
+
+    mean = float(stats.get("mean", 0.0))
+    stddev = float(stats.get("stddev", 0.0))
+    if stddev <= 0:
+        return
+
+    sigma = abs(metric_value - mean) / stddev
+    if sigma < 3.0:
+        return
+
+    severity = "critical" if sigma >= 5.0 else "high"
+    resolved_entity_name = entity_name or entity_id
+    title = f"Realtime anomaly detected: {event_type} on {resolved_entity_name}"
+    message = (
+        f"Signal {event_type!r} on {resolved_entity_name!r} deviates by "
+        f"{sigma:.2f} sigma from baseline (value={metric_value:.4g}, mean={mean:.4g}, stddev={stddev:.4g})."
+    )
+    anomaly_meta = {
+        "trigger_event_type": event_type,
+        "metric_value": metric_value,
+        "baseline_mean": mean,
+        "baseline_stddev": stddev,
+        "sigma": round(sigma, 3),
+        "project_id": project_id,
+        "project_name": project_name,
+        "stats_ttl_seconds": _REALTIME_STATS_TTL_SECONDS,
+        **(metadata or {}),
+    }
+
+    ok = _upsert_realtime_anomaly_insight(
+        insight_type=insight_type,
+        severity=severity,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_name=resolved_entity_name,
+        title=title,
+        message=message,
+        metadata=anomaly_meta,
+    )
+    if not ok:
+        return
+
+    emit_event(
+        event_type="anomaly.realtime",
+        category="intelligence",
+        severity=severity,
+        title=title,
+        description=message,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_name=resolved_entity_name,
+        project_id=project_id,
+        project_name=project_name,
+        source="realtime_anomaly",
+        source_id=f"{insight_type}:{entity_id}:{int(metric_value)}",
+        metadata=anomaly_meta,
+    )

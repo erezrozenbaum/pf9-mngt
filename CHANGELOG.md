@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.15.0] - 2026-05-28
+
+### Added
+
+- **Smart query LLM fallback** (`api/smart_queries.py`, `api/search.py`): `GET /api/search/smart` now supports a semantic fallback path when no regex template matches. New `_llm_classify_query()` sends the user question plus available query IDs/descriptions to the configured Copilot backend and selects a single `query_id` response. The fallback is guarded behind `COPILOT_ENABLED=true`, requires a non-`builtin` backend, and enforces a 2-second timeout so search latency remains bounded. Responses now include `matched_via` (`regex` or `llm`) for observability.
+- **Real-time anomaly fast path** (`api/event_bus.py`): Event-bus writes now run a lightweight `_quick_anomaly_check()` for supported signal types (`vm.cpu_spike`, `vm.ram_spike`, `quota.sudden_jump`). The quick path reads cached rolling baseline stats from Redis key `pf9:stats:{entity_type}:{entity_id}`, applies a 3-sigma threshold test, upserts `operational_insights` realtime anomaly records with a strict `SET LOCAL statement_timeout = '200ms'`, and emits an `anomaly.realtime` event for live consumers. Feature toggle: `REALTIME_ANOMALY_ENABLED` (default `true`).
+
+### Tests
+
+- Added **`tests/test_smart_queries.py`** covering regex match precedence, LLM fallback selection, no-match behavior, and disabled Copilot gate.
+- Added **`tests/test_event_bus_realtime_anomaly.py`** covering unsupported-event skip, cache-miss skip, anomaly detection+emit path, and below-threshold skip.
+
 ## [2.14.0] - 2026-05-28
 
 ### Added

@@ -1936,6 +1936,14 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.15.0 Changes
+
+### Smart query semantic fallback (`api/smart_queries.py`)
+`execute_smart_query()` remains regex-first, but now adds an LLM fallback when no template regex matches. `_llm_classify_query()` builds a minimal classifier prompt from the current smart-query registry (`query_id + description`) and asks the configured Copilot backend to return exactly one `query_id` or `null`. Runtime guards prevent unintended external calls: fallback only runs when `COPILOT_ENABLED=true`, backend is not `builtin`, and provider credentials are present for external backends. A thread-based 2-second timeout bounds latency on the search path. Response cards now include `matched_via` (`regex` or `llm`) to make route selection explicit.
+
+### Realtime anomaly quick-check (`api/event_bus.py`)
+`_write_event()` now invokes `_quick_anomaly_check()` after CLEA evaluation. The quick path is intentionally narrow and only handles three single-metric event types: `vm.cpu_spike`, `vm.ram_spike`, and `quota.sudden_jump`. It extracts the metric value from event metadata, loads precomputed baseline stats from Redis (`pf9:stats:{entity_type}:{entity_id}`), and performs a 3-sigma deviation check. On anomaly, it upserts a realtime anomaly record into `operational_insights` and emits a follow-up `anomaly.realtime` event for live subscribers. To preserve responsiveness, insight writes are wrapped with `SET LOCAL statement_timeout = '200ms'`, and the full feature is gateable via `REALTIME_ANOMALY_ENABLED`.
+
 ## v2.14.0 Changes
 
 ### CLEA condition DSL (`api/clea_routes.py`)

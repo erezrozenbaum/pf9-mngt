@@ -27,13 +27,24 @@ Query categories
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from psycopg2.extras import RealDictCursor
 
+from copilot_llm import ask_llm
+
 logger = logging.getLogger("pf9.smart_queries")
+
+_LLM_CLASSIFIER_TIMEOUT_SECONDS = 2.0
+_LLM_CLASSIFIER_PROMPT = (
+    "You are a classifier. "
+    "Given a user question and available smart query templates, "
+    "return ONLY one exact query_id from the provided list, or null. "
+    "Return no prose, no explanation, no JSON."
+)
 
 
 # ── Types ────────────────────────────────────────────────────
@@ -126,6 +137,136 @@ SMART_QUERIES: List[SmartQuery] = []
 def _register(sq: SmartQuery):
     SMART_QUERIES.append(sq)
     return sq
+
+
+def _get_copilot_runtime_config(conn) -> Dict[str, Any]:
+    """
+    Resolve Copilot runtime config used for LLM smart-query fallback.
+
+    Environment values are defaults and may be overridden by copilot_config.
+    """
+    cfg: Dict[str, Any] = {
+        "enabled": os.getenv("COPILOT_ENABLED", "false").lower() in ("true", "1", "yes"),
+        "backend": os.getenv("COPILOT_BACKEND", "builtin"),
+        "ollama_url": os.getenv("COPILOT_OLLAMA_URL", "http://localhost:11434"),
+        "ollama_model": os.getenv("COPILOT_OLLAMA_MODEL", "llama3"),
+        "openai_api_key": os.getenv("COPILOT_OPENAI_API_KEY", ""),
+        "openai_model": os.getenv("COPILOT_OPENAI_MODEL", "gpt-4o-mini"),
+        "anthropic_api_key": os.getenv("COPILOT_ANTHROPIC_API_KEY", ""),
+        "anthropic_model": os.getenv("COPILOT_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+    }
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT backend, ollama_url, ollama_model,
+                       openai_api_key, openai_model,
+                       anthropic_api_key, anthropic_model
+                FROM copilot_config
+                WHERE id = 1
+            """)
+            row = cur.fetchone()
+            if row:
+                # Prefer runtime DB settings when present.
+                for key in (
+                    "backend", "ollama_url", "ollama_model",
+                    "openai_api_key", "openai_model",
+                    "anthropic_api_key", "anthropic_model",
+                ):
+                    if row.get(key) is not None:
+                        cfg[key] = row.get(key)
+    except Exception:
+        # copilot_config might not exist in minimal/test setups.
+        pass
+
+    return cfg
+
+
+def _llm_classify_query(
+    question: str,
+    smart_queries: List[SmartQuery],
+    conn,
+) -> Optional[str]:
+    """
+    Classify unmatched smart query text via LLM.
+
+    Returns a query_id from `smart_queries`, or None when classification is
+    unavailable/invalid/timed out.
+    """
+    cfg = _get_copilot_runtime_config(conn)
+    if not cfg.get("enabled", False):
+        return None
+
+    backend = str(cfg.get("backend") or "builtin").strip().lower()
+    if backend in ("", "builtin"):
+        return None
+    if backend == "openai" and not str(cfg.get("openai_api_key") or "").strip():
+        return None
+    if backend == "anthropic" and not str(cfg.get("anthropic_api_key") or "").strip():
+        return None
+
+    candidates = [
+        {"id": sq.id, "description": sq.description or sq.title}
+        for sq in smart_queries
+    ]
+    candidate_ids = {c["id"] for c in candidates}
+
+    query_index = "\n".join(f"- {c['id']}: {c['description']}" for c in candidates)
+    classifier_question = (
+        f"Question: {question}\n\n"
+        f"Available query templates:\n{query_index}\n\n"
+        "Return only one query_id or null."
+    )
+
+    try:
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(
+                ask_llm,
+                backend,
+                classifier_question,
+                "",
+                _LLM_CLASSIFIER_PROMPT,
+                ollama_url=str(cfg.get("ollama_url") or "http://localhost:11434"),
+                ollama_model=str(cfg.get("ollama_model") or "llama3"),
+                openai_api_key=str(cfg.get("openai_api_key") or ""),
+                openai_model=str(cfg.get("openai_model") or "gpt-4o-mini"),
+                anthropic_api_key=str(cfg.get("anthropic_api_key") or ""),
+                anthropic_model=str(cfg.get("anthropic_model") or "claude-sonnet-4-20250514"),
+            )
+            answer, backend_used, _tokens, _ext = fut.result(timeout=_LLM_CLASSIFIER_TIMEOUT_SECONDS)
+
+        raw = (answer or "").strip().strip('"').strip("'")
+        if not raw:
+            return None
+        lowered = raw.lower()
+        if lowered in ("null", "none", "no_match", "no match"):
+            return None
+
+        if raw in candidate_ids:
+            logger.info("smart_query_llm_hit backend=%s query_id=%s", backend_used, raw)
+            return raw
+
+        # Tolerate slight LLM verbosity by extracting the first valid ID token.
+        for token in re.findall(r"[A-Za-z0-9_\-]+", raw):
+            if token in candidate_ids:
+                logger.info("smart_query_llm_hit backend=%s query_id=%s", backend_used, token)
+                return token
+
+        return None
+    except Exception as exc:
+        logger.debug("Smart query LLM classify failed: %s", exc, exc_info=True)
+        return None
+
+
+def _extract_params(match: re.Match, sq: SmartQuery) -> Dict[str, Any]:
+    params: Dict[str, Any] = {}
+    for key in sq.param_keys:
+        val = match.group(key)
+        if val:
+            params[key] = f"%{val.strip()}%"
+    return params
 
 
 # ┌──────────────────────────────────────────────────────────┐
@@ -1175,48 +1316,65 @@ def execute_smart_query(
 
     Returns None if no pattern matches.
     """
+    matched_sq: Optional[SmartQuery] = None
+    match_obj: Optional[re.Match] = None
+    matched_via = "regex"
+
     for sq in SMART_QUERIES:
         m = sq.pattern.search(question)
-        if not m:
-            continue
+        if m:
+            matched_sq = sq
+            match_obj = m
+            break
 
-        # Extract named groups as SQL params
-        params: Dict[str, Any] = {}
-        for key in sq.param_keys:
-            val = m.group(key)
-            if val:
-                # Wrap in % for LIKE matching
-                params[key] = f"%{val.strip()}%"
+    if matched_sq is None:
+        llm_query_id = _llm_classify_query(question, SMART_QUERIES, conn)
+        if llm_query_id:
+            matched_sq = next((sq for sq in SMART_QUERIES if sq.id == llm_query_id), None)
+            matched_via = "llm"
 
-        # Inject scope params (always present — NULL = no filter)
-        params["scope_tenant"] = scope_tenant or None
-        params["scope_domain"] = scope_domain or None
+    if matched_sq is None:
+        return None
 
-        logger.info("Smart query matched: %s (id=%s, params=%s)", sq.title, sq.id, params)
+    params = _extract_params(match_obj, matched_sq) if match_obj else {}
 
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(sq.sql, params)
-                rows = [dict(r) for r in cur.fetchall()]
+    # Inject scope params (always present — NULL = no filter)
+    params["scope_tenant"] = scope_tenant or None
+    params["scope_domain"] = scope_domain or None
 
-            result = sq.formatter(rows, {k: v.strip('%') if isinstance(v, str) else v for k, v in params.items()})
-            result["query_id"] = sq.id
-            result["query_title"] = sq.title
-            result["description"] = sq.description
-            result["category"] = sq.category
-            result["matched"] = True
-            return result
+    logger.info(
+        "Smart query matched: %s (id=%s, via=%s, params=%s)",
+        matched_sq.title,
+        matched_sq.id,
+        matched_via,
+        params,
+    )
 
-        except Exception as exc:
-            logger.error("Smart query %s failed: %s", sq.id, exc, exc_info=True)
-            return {
-                "matched": True,
-                "query_id": sq.id,
-                "query_title": sq.title,
-                "card_type": "error",
-                "summary": f"Query failed: {exc}",
-                "error": str(exc),
-            }
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(matched_sq.sql, params)
+            rows = [dict(r) for r in cur.fetchall()]
+
+        result = matched_sq.formatter(rows, {k: v.strip('%') if isinstance(v, str) else v for k, v in params.items()})
+        result["query_id"] = matched_sq.id
+        result["query_title"] = matched_sq.title
+        result["description"] = matched_sq.description
+        result["category"] = matched_sq.category
+        result["matched"] = True
+        result["matched_via"] = matched_via
+        return result
+
+    except Exception as exc:
+        logger.error("Smart query %s failed: %s", matched_sq.id, exc, exc_info=True)
+        return {
+            "matched": True,
+            "query_id": matched_sq.id,
+            "query_title": matched_sq.title,
+            "card_type": "error",
+            "summary": f"Query failed: {exc}",
+            "error": str(exc),
+            "matched_via": matched_via,
+        }
 
     return None
 

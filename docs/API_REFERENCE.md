@@ -1,7 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.14.0 — CLEA condition DSL (eq/neq/in/contains operators + metadata.* dot-paths, validation on POST/PUT, `GET /condition-schema`); tenant rightsizing request-change accepts optional `notes` body field; "Request Resize" modal in tenant UI with "Requested ✓" state.
-> Previous: v2.13.0 — Health score insights auto-resolve on recovery; richer Copilot context (open insights, tenant health scores, recent anomalies, SLA-at-risk sections).
+> **Version**: v2.15.0 — Smart query LLM fallback for `GET /api/search/smart` when regex templates do not match (`matched_via: regex|llm`, 2s timeout, `COPILOT_ENABLED` gate); event-bus realtime anomaly quick-check for `vm.cpu_spike`/`vm.ram_spike`/`quota.sudden_jump` with Redis baseline stats (`pf9:stats:{entity_type}:{entity_id}`), 3-sigma threshold detection, `anomaly.realtime` event emission, and `REALTIME_ANOMALY_ENABLED` toggle.
+> Previous: v2.14.0 — CLEA condition DSL (eq/neq/in/contains operators + metadata.* dot-paths, validation on POST/PUT, `GET /condition-schema`); tenant rightsizing request-change accepts optional `notes` body field; "Request Resize" modal in tenant UI with "Requested ✓" state.
 > Previous: v2.12.7 — Node Logs `Invalid Date` fix: `fmtTs()` helper in `NodeLogsTab.tsx` extracts `HH:MM:SS` directly from PF9 timestamp strings; dependency graph `aggregate` node type added — hypervisors with zero running VMs now connect to their host aggregates.
 > Previous: v2.12.5 — NetworkPolicy SSH egress fix: port 22 egress added to `pf9-api` policy (conditional on `api.nodeLogSource=ssh`).
 > Previous: v2.12.4 — SSH-based Node Logs: `_fetch_via_ssh()` via paramiko (`cloud-kvm` user, `sudo tail /var/log/pf9/`); `NODE_LOG_SOURCE=ssh` env var; `pf9-ssh-credentials` secret; `_fetch_via_resmgr()` rewritten as diagnostic fallback.
