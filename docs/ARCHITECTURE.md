@@ -1936,6 +1936,14 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.16.2 Changes
+
+### Drift auto-ticket suppression rules (`db_writer.py`)
+Drift ticketing now includes a policy-aware suppression pass before creating support tickets. `_auto_ticket_for_drift()` loads ignore rules from `system_settings` key `drift.auto_ticket.ignore_rules` (JSON list) and merges them with a safe built-in default that suppresses expected automation snapshot deletions (`snapshots.status -> deleted` for `resource_name` matching `^auto-`). Matching uses multi-attribute predicates (`severity`, `resource_type`, `field_changed`, `old_value`, `new_value`, `description_contains`, `resource_name_regex`). Invalid operator-provided regex values are treated as non-matching to preserve worker stability.
+
+### Inventory panel visibility cleanup (`pf9-ui/src/App.tsx`)
+The shared `hideDetailsPanel` tab set now includes inventory tabs (`projects`, `ports`, `images`, `flavors`, `keypairs`, `aggregates`, `volume_types`, `server_groups`, `quotas`), removing the otherwise empty right-side panel and allowing full-width data views.
+
 ## v2.16.1 Changes
 
 ### Dashboard SLA defense control surface (`pf9-ui/`)

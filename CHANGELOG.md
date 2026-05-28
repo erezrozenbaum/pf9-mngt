@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.16.2] - 2026-05-28
+
+### Added
+
+- **Expected-drift auto-ticket suppression with configurable rules** (`db_writer.py`): Auto-ticket creation for drift now supports ignore rules that suppress expected operational changes. A safe default ignores snapshot lifecycle deletions for automation-named snapshots (`resource_type=snapshots`, `field_changed=status`, `new_value=deleted`, `resource_name` matching `^auto-`). Additional rules can be configured in `system_settings` via key `drift.auto_ticket.ignore_rules` (JSON array of rule objects).
+- **Filter regression tests for drift ticket suppression** (`tests/test_drift_auto_ticket_filters.py`): Added targeted tests covering default suppression behavior and custom rule matching/non-matching scenarios.
+
+### Changed
+
+- **Inventory layout cleanup** (`pf9-ui/src/App.tsx`): Added inventory tabs (`projects`, `ports`, `images`, `flavors`, `keypairs`, `aggregates`, `volume_types`, `server_groups`, `quotas`) to `hideDetailsPanel`, removing the unused right-side details pane on those screens.
+
 ## [2.16.1] - 2026-05-28
 
 ### Added

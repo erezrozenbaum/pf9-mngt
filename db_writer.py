@@ -6,6 +6,7 @@ Handles all database operations for storing inventory data
 import os
 import html
 import json
+import re
 import hashlib
 import logging
 import smtplib
@@ -323,6 +324,80 @@ def _load_drift_rules(cur, resource_type: str) -> List[Dict[str, Any]]:
         return []
 
 
+_DEFAULT_DRIFT_TICKET_IGNORE_RULES: List[Dict[str, str]] = [
+    {
+        # Retention/automation-created snapshots being deleted is expected.
+        "resource_type": "snapshots",
+        "field_changed": "status",
+        "new_value": "deleted",
+        "resource_name_regex": r"^auto-",
+    }
+]
+
+
+def _load_drift_ticket_ignore_rules(conn) -> List[Dict[str, Any]]:
+    """Load drift ticket ignore rules from system_settings (JSON), plus defaults."""
+    rules: List[Dict[str, Any]] = list(_DEFAULT_DRIFT_TICKET_IGNORE_RULES)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SAVEPOINT before_drift_ticket_rules_read")
+            try:
+                cur.execute(
+                    "SELECT value FROM system_settings WHERE key = %s LIMIT 1",
+                    ("drift.auto_ticket.ignore_rules",),
+                )
+                row = cur.fetchone()
+                cur.execute("RELEASE SAVEPOINT before_drift_ticket_rules_read")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT before_drift_ticket_rules_read")
+                row = None
+
+        if row and row[0]:
+            parsed = json.loads(row[0])
+            if isinstance(parsed, list):
+                rules.extend([r for r in parsed if isinstance(r, dict)])
+    except Exception as exc:
+        logger.warning("Failed to load drift auto-ticket ignore rules: %s", exc)
+    return rules
+
+
+def _is_expected_drift_change(
+    *,
+    severity: str,
+    resource_type: str,
+    field_changed: str,
+    old_value: Optional[str],
+    new_value: Optional[str],
+    description: str,
+    resource_name: str,
+    ignore_rules: Optional[List[Dict[str, Any]]] = None,
+) -> bool:
+    """Return True when drift change matches an ignore rule and should not open a ticket."""
+    rules = ignore_rules or _DEFAULT_DRIFT_TICKET_IGNORE_RULES
+    for rule in rules:
+        if rule.get("severity") and rule.get("severity") != severity:
+            continue
+        if rule.get("resource_type") and rule.get("resource_type") != resource_type:
+            continue
+        if rule.get("field_changed") and rule.get("field_changed") != field_changed:
+            continue
+        if rule.get("old_value") is not None and str(rule.get("old_value")) != str(old_value):
+            continue
+        if rule.get("new_value") is not None and str(rule.get("new_value")) != str(new_value):
+            continue
+        if rule.get("description_contains") and rule.get("description_contains") not in (description or ""):
+            continue
+        if rule.get("resource_name_regex"):
+            try:
+                if not re.search(str(rule.get("resource_name_regex")), resource_name or ""):
+                    continue
+            except re.error:
+                # Invalid operator-entered regex should not crash ticketing.
+                continue
+        return True
+    return False
+
+
 def _auto_ticket_for_drift(
     conn,
     severity: str,
@@ -332,6 +407,8 @@ def _auto_ticket_for_drift(
     project_id: Optional[str],
     project_name: Optional[str],
     field_changed: str,
+    old_value: Optional[str],
+    new_value: Optional[str],
     description: str,
 ) -> None:
     """
@@ -351,6 +428,26 @@ def _auto_ticket_for_drift(
     try:
         _conn = db_connect()
         try:
+            ignore_rules = _load_drift_ticket_ignore_rules(_conn)
+            if _is_expected_drift_change(
+                severity=severity,
+                resource_type=resource_type,
+                field_changed=field_changed,
+                old_value=old_value,
+                new_value=new_value,
+                description=description,
+                resource_name=resource_name,
+                ignore_rules=ignore_rules,
+            ):
+                logger.debug(
+                    "_auto_ticket_for_drift: suppressed expected change (%s %s %s->%s)",
+                    resource_type,
+                    field_changed,
+                    old_value,
+                    new_value,
+                )
+                return
+
             with _conn.cursor(cursor_factory=RealDictCursor) as _cur:
                 # Dedup: skip if an open ticket already exists for this drift source
                 _cur.execute("""
@@ -487,6 +584,8 @@ def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],
             project_id=new_record.get("project_id") or old_row.get("project_id"),
             project_name=new_record.get("project_name") or old_row.get("project_name"),
             field_changed=field,
+            old_value=old_val,
+            new_value=new_val,
             description=rule["description"],
         )
 
@@ -701,6 +800,8 @@ def _upsert_with_history(
                         project_id=missing_row.get("project_id"),
                         project_name=missing_row.get("project_name"),
                         field_changed="status",
+                        old_value="active",
+                        new_value="deleted",
                         description=f"{table_name[:-1]} '{missing_row.get('name') or missing_id}' was deleted from OpenStack",
                     )
     
