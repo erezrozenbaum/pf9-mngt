@@ -9,18 +9,40 @@ if ROOT not in sys.path:
 
 # db_writer imports psycopg2 at module import time. Stub it so these logic-only
 # tests can run in lightweight environments without DB drivers installed.
-if "psycopg2" not in sys.modules:
-    psycopg2_stub = types.ModuleType("psycopg2")
-    extras_stub = types.ModuleType("psycopg2.extras")
-    extras_stub.execute_values = lambda *args, **kwargs: None
+def _ensure_psycopg2_extras_symbols() -> None:
+    try:
+        from psycopg2.extras import execute_values, RealDictCursor  # type: ignore
 
-    class _RealDictCursor:  # pragma: no cover - placeholder for import only
+        _ = (execute_values, RealDictCursor)
+        return
+    except Exception:
         pass
 
-    extras_stub.RealDictCursor = _RealDictCursor
-    psycopg2_stub.extras = extras_stub
-    sys.modules["psycopg2"] = psycopg2_stub
-    sys.modules["psycopg2.extras"] = extras_stub
+    psycopg2_mod = sys.modules.get("psycopg2")
+    if psycopg2_mod is None:
+        psycopg2_mod = types.ModuleType("psycopg2")
+        sys.modules["psycopg2"] = psycopg2_mod
+
+    extras_mod = sys.modules.get("psycopg2.extras")
+    if extras_mod is None:
+        extras_mod = getattr(psycopg2_mod, "extras", None)
+    if extras_mod is None:
+        extras_mod = types.ModuleType("psycopg2.extras")
+
+    if not hasattr(extras_mod, "execute_values"):
+        extras_mod.execute_values = lambda *args, **kwargs: None
+
+    if not hasattr(extras_mod, "RealDictCursor"):
+        class _RealDictCursor:  # pragma: no cover - import placeholder only
+            pass
+
+        extras_mod.RealDictCursor = _RealDictCursor
+
+    psycopg2_mod.extras = extras_mod
+    sys.modules["psycopg2.extras"] = extras_mod
+
+
+_ensure_psycopg2_extras_symbols()
 
 from db_writer import _is_expected_drift_change
 
