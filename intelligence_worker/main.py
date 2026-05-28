@@ -36,6 +36,7 @@ from engines.cross_region import CrossRegionEngine
 from engines.anomaly import AnomalyEngine
 from engines.leakage import LeakageEngine
 from engines.rightsizing import RightsizingEngine
+from engines.sla_defense import SlaDefenseEngine
 from engines.timeline_harvester import TimelineHarvester
 
 # ---------------------------------------------------------------------------
@@ -169,7 +170,17 @@ def get_conn_with_cb():
 # Main loop
 # ---------------------------------------------------------------------------
 
-ENGINES = [CapacityEngine, WasteEngine, RiskEngine, CrossRegionEngine, AnomalyEngine, LeakageEngine, RightsizingEngine, TimelineHarvester]
+ENGINES = [
+    CapacityEngine,
+    WasteEngine,
+    RiskEngine,
+    CrossRegionEngine,
+    AnomalyEngine,
+    LeakageEngine,
+    RightsizingEngine,
+    SlaDefenseEngine,
+    TimelineHarvester,
+]
 
 
 def run_once(conn) -> None:

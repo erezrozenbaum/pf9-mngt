@@ -118,6 +118,7 @@ from tenant_portal_routes import router as tenant_portal_admin_router
 
 # SLA Compliance Tracking
 from sla_routes import router as sla_router
+from sla_defense_routes import router as sla_defense_router
 
 # Operational Intelligence Feed
 from intelligence_routes import router as intelligence_router, setup_intelligence_internal_routes
@@ -434,6 +435,7 @@ app.include_router(ldap_sync_router)
 app.include_router(docs_router)
 app.include_router(tenant_portal_admin_router)
 app.include_router(sla_router)
+app.include_router(sla_defense_router)
 app.include_router(intelligence_router)
 app.include_router(timeline_router)
 app.include_router(qbr_router)

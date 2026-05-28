@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.16.0] - 2026-05-28
+
+### Added
+
+- **Proactive SLA defense engine** (`intelligence_worker/engines/sla_defense.py`, `intelligence_worker/main.py`): A new intelligence engine now cross-references active SLA commitments with open project-level capacity, risk, and anomaly insights to raise early-warning `sla_defense_alerts` before a contractual breach occurs. Threat scoring combines insight confidence with SLA urgency, emits `sla.defense_alert` timeline events, upserts one open alert per `(project_id, threat_type)`, and auto-resolves stale alerts when the triggering condition disappears.
+- **SLA defense admin API** (`api/sla_defense_routes.py`, `api/main.py`): Added admin endpoints under `/api/admin/sla/defense` for listing alerts, summarising open warning/critical counts, and operator actions (`dismiss`, `resolve`). The summary endpoint powers the admin dashboards and returns `{open:{warning,critical}, total_open}`.
+- **SLA defense schema** (`db/init.sql`, `db/migrate_v2_16_0_sla_defense.sql`): Fresh installs and existing environments now create `sla_defense_alerts` with a partial unique index for one open alert per project/threat type, plus status/timestamp and project lookup indexes.
+- **Admin dashboard visibility** (`pf9-ui/src/components/ExecutiveDashboard.tsx`, `pf9-ui/src/components/AccountManagerDashboard.tsx`): Both executive and account-manager dashboards now surface SLA Defense open-alert counts, severity mix, and a compact callout block so the feature is visible without leaving the portfolio views.
+
+### Tests
+
+- Added **`tests/test_sla_defense_engine.py`** covering threat scoring, alert creation/update, and stale-alert auto-resolution behavior.
+- Added **`tests/test_sla_defense_routes.py`** covering alert summary aggregation and dismiss/resolve route behavior with isolated auth/DB stubs.
+
 ## [2.15.0] - 2026-05-28
 
 ### Added

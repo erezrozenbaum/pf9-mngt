@@ -82,6 +82,14 @@ interface FleetMeteringResponse {
   top_growing_tenants: GrowthTenant[];
 }
 
+interface SlaDefenseSummaryResponse {
+  open: {
+    warning: number;
+    critical: number;
+  };
+  total_open: number;
+}
+
 interface Props {
   userRole: string;
 }
@@ -263,6 +271,7 @@ const PERIOD_OPTIONS: { key: Period; label: string; days?: number; months?: numb
 export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
   const [data, setData]         = useState<ExecutiveSummaryResponse | null>(null);
   const [metering, setMetering] = useState<FleetMeteringResponse | null>(null);
+  const [slaDefense, setSlaDefense] = useState<SlaDefenseSummaryResponse | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
   const [period, setPeriod]     = useState<Period>("6m");
@@ -275,12 +284,14 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
       const params = new URLSearchParams();
       if (pd.days)   params.set("days",   String(pd.days));
       else           params.set("months", String(pd.months));
-      const [summaryResp, meteringResp] = await Promise.all([
+      const [summaryResp, meteringResp, slaDefenseResp] = await Promise.all([
         apiFetch<ExecutiveSummaryResponse>("/api/sla/portfolio/executive-summary"),
         apiFetch<FleetMeteringResponse>(`/api/sla/portfolio/fleet-metering?${params}`),
+        apiFetch<SlaDefenseSummaryResponse>("/api/admin/sla/defense/alerts/summary"),
       ]);
       setData(summaryResp);
       setMetering(meteringResp);
+      setSlaDefense(slaDefenseResp);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load executive summary");
     } finally {
@@ -408,6 +419,12 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
               value={s.open_critical_insights}
               accent={s.open_critical_insights === 0 ? "#22c55e" : "#dc2626"}
               sub="Across all clients"
+            />
+            <KpiCard
+              label="SLA Defense Alerts"
+              value={slaDefense?.total_open ?? 0}
+              accent={(slaDefense?.open.critical ?? 0) > 0 ? "#ef4444" : (slaDefense?.open.warning ?? 0) > 0 ? "#f59e0b" : "#22c55e"}
+              sub={`${slaDefense?.open.critical ?? 0} critical · ${slaDefense?.open.warning ?? 0} warning`}
             />
             <KpiCard
               label="Est. Revenue Leakage"
@@ -607,6 +624,25 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
                 {s.revenue_leakage_monthly === null && (
                   <span className="pf9-muted"> Dollar estimates require unit_price on contract entitlements.</span>
                 )}
+              </p>
+            </section>
+          )}
+
+          {slaDefense && slaDefense.total_open > 0 && (
+            <section
+              style={{
+                background: "var(--pf9-card-bg, #1e293b)",
+                borderRadius: "8px",
+                padding: "1rem 1.2rem",
+                borderLeft: `4px solid ${(slaDefense.open.critical ?? 0) > 0 ? "#ef4444" : "#f59e0b"}`,
+                marginBottom: "1rem",
+              }}
+            >
+              <h3 style={{ margin: "0 0 0.4rem", fontSize: "0.95rem" }}>🛡️ SLA Defense</h3>
+              <p style={{ margin: 0, fontSize: "0.88rem", color: "#cbd5e1" }}>
+                <strong>{slaDefense.total_open}</strong> proactive SLA defense alert{slaDefense.total_open !== 1 ? "s" : ""} open across the fleet.
+                {" "}<strong style={{ color: "#ef4444" }}>{slaDefense.open.critical}</strong> critical and
+                {" "}<strong style={{ color: "#f59e0b" }}>{slaDefense.open.warning}</strong> warning.
               </p>
             </section>
           )}

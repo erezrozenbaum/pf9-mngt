@@ -1936,6 +1936,14 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.16.0 Changes
+
+### Proactive SLA defense engine (`intelligence_worker/engines/sla_defense.py`)
+The intelligence worker now runs `SlaDefenseEngine` alongside the existing engines. On each cycle it joins active `sla_commitments` with open project-level operational insights (`capacity%`, `risk%`, `anomaly%`) that carry numeric `runway_days` metadata. Threat scoring combines insight confidence with SLA urgency derived from `rto_hours`, then raises or refreshes a single open record in `sla_defense_alerts` per `(project_id, threat_type)`. The engine also emits an `operational_events` row of type `sla.defense_alert` so downstream timelines and consumers can render the alert without polling the alerts table.
+
+### SLA defense admin surface (`api/sla_defense_routes.py`, `pf9-ui/`)
+The admin API adds `/api/admin/sla/defense/alerts`, `/alerts/summary`, `/alerts/{id}/dismiss`, and `/alerts/{id}/resolve`. The summary endpoint is intentionally tiny and returns only open warning/critical counts so the React dashboards can display SLA Defense state with minimal fetch overhead. The Executive and Account Manager dashboards call the summary endpoint during their existing data-load flow and render the result as a KPI card plus an alert callout when open items exist.
+
 ## v2.15.0 Changes
 
 ### Smart query semantic fallback (`api/smart_queries.py`)

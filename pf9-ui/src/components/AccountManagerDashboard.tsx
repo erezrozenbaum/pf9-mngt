@@ -70,6 +70,14 @@ interface PortfolioSummaryResponse {
   domains: string[];
 }
 
+interface SlaDefenseSummaryResponse {
+  open: {
+    warning: number;
+    critical: number;
+  };
+  total_open: number;
+}
+
 type SortKey = "name" | "tier" | "status" | "quota_vcpu" | "quota_ram" | "vcpu_growth" | "cost" | "critical" | "health_score";
 
 interface Props {
@@ -142,6 +150,7 @@ function currentMonthValue(): string {
 
 export default function AccountManagerDashboard({ userRole: _userRole }: Props) {
   const [data, setData] = useState<PortfolioSummaryResponse | null>(null);
+  const [slaDefense, setSlaDefense] = useState<SlaDefenseSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "breached" | "at_risk" | "ok" | "not_configured">("all");
@@ -158,8 +167,12 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
       const params = new URLSearchParams();
       params.set("month", selectedMonth);
       if (selectedDomain) params.set("domain", selectedDomain);
-      const resp = await apiFetch<PortfolioSummaryResponse>(`/api/sla/portfolio/summary?${params}`);
+      const [resp, slaDefenseResp] = await Promise.all([
+        apiFetch<PortfolioSummaryResponse>(`/api/sla/portfolio/summary?${params}`),
+        apiFetch<SlaDefenseSummaryResponse>("/api/admin/sla/defense/alerts/summary"),
+      ]);
       setData(resp);
+      setSlaDefense(slaDefenseResp);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load portfolio");
     } finally {
@@ -327,6 +340,15 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
               : "#94a3b8",
           },
           {
+            label: "SLA Defense Alerts",
+            value: slaDefense?.total_open ?? 0,
+            accent: (slaDefense?.open.critical ?? 0) > 0
+              ? "#ef4444"
+              : (slaDefense?.open.warning ?? 0) > 0
+                ? "#f59e0b"
+                : "#22c55e",
+          },
+          {
             label: "Est. Fleet Cost (mo.)",
             value: counts.totalCost > 0
               ? `$${counts.totalCost.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
@@ -344,6 +366,24 @@ export default function AccountManagerDashboard({ userRole: _userRole }: Props) 
           </div>
         ))}
       </div>
+
+      {slaDefense && slaDefense.total_open > 0 && (
+        <section
+          style={{
+            background: "var(--pf9-card-bg, #1e293b)",
+            borderRadius: "8px",
+            padding: "0.9rem 1rem",
+            borderLeft: `4px solid ${(slaDefense.open.critical ?? 0) > 0 ? "#ef4444" : "#f59e0b"}`,
+            marginBottom: "1rem",
+          }}
+        >
+          <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.3rem" }}>🛡️ SLA Defense</div>
+          <div style={{ fontSize: "0.85rem", color: "#cbd5e1" }}>
+            {slaDefense.total_open} open proactive SLA defense alert{slaDefense.total_open !== 1 ? "s" : ""}
+            {" "}({slaDefense.open.critical} critical, {slaDefense.open.warning} warning).
+          </div>
+        </section>
+      )}
 
       {/* Filter + search bar */}
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem", flexWrap: "wrap", alignItems: "center" }}>

@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.15.0 — Smart query LLM fallback for `GET /api/search/smart` when regex templates do not match (`matched_via: regex|llm`, 2s timeout, `COPILOT_ENABLED` gate); event-bus realtime anomaly quick-check for `vm.cpu_spike`/`vm.ram_spike`/`quota.sudden_jump` with Redis baseline stats (`pf9:stats:{entity_type}:{entity_id}`), 3-sigma threshold detection, `anomaly.realtime` event emission, and `REALTIME_ANOMALY_ENABLED` toggle.
+> **Version**: v2.16.0 — Proactive SLA defense engine generates `sla_defense_alerts` from active SLA commitments plus open capacity/risk/anomaly insights; new admin endpoints under `/api/admin/sla/defense` support list/summary/dismiss/resolve flows; executive and account-manager dashboards now surface open SLA defense alerts.
+> Previous: v2.15.0 — Smart query LLM fallback for `GET /api/search/smart` when regex templates do not match (`matched_via: regex|llm`, 2s timeout, `COPILOT_ENABLED` gate); event-bus realtime anomaly quick-check for `vm.cpu_spike`/`vm.ram_spike`/`quota.sudden_jump` with Redis baseline stats (`pf9:stats:{entity_type}:{entity_id}`), 3-sigma threshold detection, `anomaly.realtime` event emission, and `REALTIME_ANOMALY_ENABLED` toggle.
 > Previous: v2.14.0 — CLEA condition DSL (eq/neq/in/contains operators + metadata.* dot-paths, validation on POST/PUT, `GET /condition-schema`); tenant rightsizing request-change accepts optional `notes` body field; "Request Resize" modal in tenant UI with "Requested ✓" state.
 > Previous: v2.12.7 — Node Logs `Invalid Date` fix: `fmtTs()` helper in `NodeLogsTab.tsx` extracts `HH:MM:SS` directly from PF9 timestamp strings; dependency graph `aggregate` node type added — hypervisors with zero running VMs now connect to their host aggregates.
 > Previous: v2.12.5 — NetworkPolicy SSH egress fix: port 22 egress added to `pf9-api` policy (conditional on `api.nodeLogSource=ssh`).
@@ -6005,6 +6006,10 @@ All endpoints require a valid Bearer token. Read endpoints: Viewer+. Write endpo
 | `POST` | `/api/sla/generate-report/{tenant_id}` | Generate SLA PDF report for tenant. Returns `application/pdf`. |
 | `GET` | `/api/sla/portfolio/summary` | *(v1.92.0)* Per-tenant portfolio for account managers. Returns `{portfolio:[{tenant_id, tenant_name, sla_status, contracted_vcpu, used_vcpu, contract_usage_pct, open_critical_count, open_total_count, leakage_insight_count}], month, total}`. RBAC: `sla:read`. |
 | `GET` | `/api/sla/portfolio/executive-summary` | *(v1.92.0)* Fleet-level aggregation for executives. Returns `{summary:{total_clients, sla_healthy, sla_at_risk, sla_breached, sla_not_configured, sla_health_pct, revenue_leakage_monthly, leakage_client_count, open_critical_insights, avg_mttr_hours, avg_mttr_commitment_hours}, month}`. `revenue_leakage_monthly` is `null` when no `unit_price` configured. RBAC: `sla:read`. |
+| `GET` | `/api/admin/sla/defense/alerts` | *(v2.16.0)* List SLA defense alerts. Query: `status`, `project_id`, `limit`, `offset`. Returns `{items:[{id, project_id, project_name, sla_id, insight_id, threat_type, threat_detail, severity, status, triggered_at, resolved_at, resolution_note}], limit, offset, count}`. RBAC: `sla:read`. |
+| `GET` | `/api/admin/sla/defense/alerts/summary` | *(v2.16.0)* Dashboard summary of open SLA defense alerts. Returns `{open:{warning, critical}, total_open}`. RBAC: `sla:read`. |
+| `POST` | `/api/admin/sla/defense/alerts/{alert_id}/dismiss` | *(v2.16.0)* Dismiss an open SLA defense alert. Body: `{"note": "optional operator note"}`. Returns `{ok, id, status:"dismissed"}`. RBAC: `sla:write`. |
+| `POST` | `/api/admin/sla/defense/alerts/{alert_id}/resolve` | *(v2.16.0)* Resolve an SLA defense alert. Body: `{"note": "optional operator note"}`. Returns `{ok, id, status:"resolved"}`. RBAC: `sla:write`. |
 
 ---
 
