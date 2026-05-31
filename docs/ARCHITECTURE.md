@@ -1936,6 +1936,14 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.18.1 Changes
+
+### Frontend visibility for AI triage (`pf9-ui/src/hooks/useEventStream.ts`, `pf9-ui/src/App.tsx`)
+The UI now explicitly consumes SSE `incident_brief` events and renders them in the header notification bell as AI brief entries. This makes proactive triage outcomes visible without requiring users to query Copilot manually.
+
+### Copilot triage controls in UI (`pf9-ui/src/components/CopilotPanel.tsx`)
+The Copilot settings panel now includes first-class AI triage controls for enablement, severity threshold, per-hour limits, and optional email notifications. Operators can tune triage behavior directly from the product interface.
+
 ## v2.18.0 Changes
 
 ### AI incident triage pipeline (`api/ai_triage.py`, `api/event_bus.py`, `api/ai_triage_routes.py`)

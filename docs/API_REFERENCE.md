@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.18.0 — AI Incident Triage: proactive brief generation pipeline (`evaluate_ai_triage`), new Copilot brief endpoints (`/api/copilot/briefs*`), SSE `incident_brief` events, and QBR AI intervention metrics (`ai_triage_count`, `ai_executed_count`).
+> **Version**: v2.18.1 — AI triage visibility release: notification bell now shows explicit AI incident brief entries from SSE `incident_brief` events, and Copilot settings now expose triage controls (`ai_triage_enabled`, `ai_triage_min_severity`, `ai_triage_max_per_hour`, `ai_triage_notify_email`).
+> Previous: v2.18.0 — AI Incident Triage: proactive brief generation pipeline (`evaluate_ai_triage`), new Copilot brief endpoints (`/api/copilot/briefs*`), SSE `incident_brief` events, and QBR AI intervention metrics (`ai_triage_count`, `ai_executed_count`).
 > Previous: v2.17.1 — Scheduler image hotfix: `shared/` package is now included in the scheduler-worker container image to prevent startup crashes (`ModuleNotFoundError: shared`).
 > Previous: v2.17.0 — PSA bi-directional sync: inbound webhook (`POST /api/psa/inbound/{config_id}`), inbound token rotation (`GET /api/psa/configs/{id}/inbound-token`), status mapping (`status_map`), and returned PSA `ticket_id` linkage into insight metadata.
 > Previous: v2.16.5 — Metrics collector now preserves last known good cache on empty scrape cycles (stale-cache fallback + metadata), and Helm security tests enforce that exporter ports `9177`/`9388` are allowed only on `pf9-scheduler-worker` egress.

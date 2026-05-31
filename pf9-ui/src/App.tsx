@@ -3528,7 +3528,7 @@ const App: React.FC = () => {
                         boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
                       }}>
                         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--color-border)', fontWeight: 600, fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>Live Events</span>
+                          <span>Live Events + AI Briefs</span>
                           {liveEvents.length > 0 && (
                             <button onClick={() => setLiveEvents([])} style={{ fontSize: '0.75rem', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
                               Clear
@@ -3547,8 +3547,13 @@ const App: React.FC = () => {
                                 <span style={{ marginTop: 2, width: 8, height: 8, borderRadius: '50%', background: severityColor, flexShrink: 0, display: 'inline-block' }} />
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ fontSize: '0.82rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
+                                  {ev.source === 'incident_brief' && (
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {ev.runbook_name ? `Suggested runbook: ${ev.runbook_name}` : ev.recommendation || 'AI generated incident brief available'}
+                                    </div>
+                                  )}
                                   <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 1 }}>
-                                    {ev.type} · {new Date(ev.occurred_at).toLocaleTimeString()}
+                                    {ev.source === 'incident_brief' ? 'AI incident brief' : ev.type} · {new Date(ev.occurred_at).toLocaleTimeString()}
                                   </div>
                                 </div>
                               </div>

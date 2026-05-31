@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.18.1] - 2026-05-31
+
+### Changed
+
+- **AI triage visibility in notification bell** (`pf9-ui/src/hooks/useEventStream.ts`, `pf9-ui/src/App.tsx`): Frontend now listens for SSE `incident_brief` events and renders them as explicit "AI incident brief" entries in the header notification panel with runbook/recommendation context.
+- **Copilot settings UI for triage controls** (`pf9-ui/src/components/CopilotPanel.tsx`): Added editable controls for `ai_triage_enabled`, `ai_triage_min_severity`, `ai_triage_max_per_hour`, and `ai_triage_notify_email` so operators can discover and tune triage behavior directly from the UI.
+
 ## [2.18.0] - 2026-05-31
 
 ### Added

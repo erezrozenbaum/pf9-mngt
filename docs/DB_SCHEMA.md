@@ -1446,7 +1446,7 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v2.18.0** (May 2026) — AI Incident Triage schema: `incident_briefs` table + indexes, and `copilot_config` triage controls (`ai_triage_enabled`, `ai_triage_min_severity`, `ai_triage_max_per_hour`, `ai_triage_notify_email`) via `migrate_v2_18_0_incident_briefs.sql` and `migrate_v2_18_0_copilot_triage_config.sql`.
+Current schema version: **v2.18.0** (May 2026) — AI Incident Triage schema: `incident_briefs` table + indexes, and `copilot_config` triage controls (`ai_triage_enabled`, `ai_triage_min_severity`, `ai_triage_max_per_hour`, `ai_triage_notify_email`) via `migrate_v2_18_0_incident_briefs.sql` and `migrate_v2_18_0_copilot_triage_config.sql`. Application release **v2.18.1** is code/docs only (no additional schema changes).
 
 ## Health Score Configuration (v2.3.0)
 

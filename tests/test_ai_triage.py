@@ -22,15 +22,28 @@ copilot_context_stub.build_infra_context = lambda redact=True: "CTX"
 copilot_llm_stub = types.ModuleType("copilot_llm")
 copilot_llm_stub.ask_llm = lambda *args, **kwargs: ("", "builtin", None, False)
 
+db_pool_stub = types.ModuleType("db_pool")
+db_pool_stub.get_connection = lambda: None
+
+psycopg2_stub = types.ModuleType("psycopg2")
+psycopg2_extras_stub = types.ModuleType("psycopg2.extras")
+psycopg2_extras_stub.RealDictCursor = object
+
 _prev_auth = sys.modules.get("auth")
 _prev_cache = sys.modules.get("cache")
 _prev_ctx = sys.modules.get("copilot_context")
 _prev_llm = sys.modules.get("copilot_llm")
+_prev_db_pool = sys.modules.get("db_pool")
+_prev_psycopg2 = sys.modules.get("psycopg2")
+_prev_psycopg2_extras = sys.modules.get("psycopg2.extras")
 
 sys.modules["auth"] = auth_stub
 sys.modules["cache"] = cache_stub
 sys.modules["copilot_context"] = copilot_context_stub
 sys.modules["copilot_llm"] = copilot_llm_stub
+sys.modules["db_pool"] = db_pool_stub
+sys.modules["psycopg2"] = psycopg2_stub
+sys.modules["psycopg2.extras"] = psycopg2_extras_stub
 
 import ai_triage  # noqa: E402
 import ai_triage_routes as routes  # noqa: E402
@@ -54,6 +67,21 @@ if _prev_llm is None:
     del sys.modules["copilot_llm"]
 else:
     sys.modules["copilot_llm"] = _prev_llm
+
+if _prev_db_pool is None:
+    del sys.modules["db_pool"]
+else:
+    sys.modules["db_pool"] = _prev_db_pool
+
+if _prev_psycopg2 is None:
+    del sys.modules["psycopg2"]
+else:
+    sys.modules["psycopg2"] = _prev_psycopg2
+
+if _prev_psycopg2_extras is None:
+    del sys.modules["psycopg2.extras"]
+else:
+    sys.modules["psycopg2.extras"] = _prev_psycopg2_extras
 
 
 class _FakeCursor:

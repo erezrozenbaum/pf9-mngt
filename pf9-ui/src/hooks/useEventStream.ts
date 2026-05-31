@@ -19,7 +19,25 @@ export interface LiveEvent {
   entity_type: string;
   entity_id: string;
   occurred_at: string;
+  source?: 'live_event' | 'incident_brief';
+  analysis?: string;
+  recommendation?: string;
+  runbook_name?: string;
+  risk_level?: string;
 }
+
+type IncidentBriefPayload = {
+  id?: number;
+  event_id?: number;
+  event_type?: string;
+  severity?: string;
+  risk_level?: string;
+  entity_name?: string;
+  analysis?: string;
+  recommendation?: string;
+  runbook_name?: string | null;
+  generated_at?: string;
+};
 
 interface Options {
   /** Invoked for every event received from the stream. */
@@ -30,6 +48,50 @@ interface Options {
 
 const _API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 const _MAX_BACKOFF_MS = 30_000;
+
+function _normalizeLiveEvent(raw: unknown): LiveEvent | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+
+  if (typeof data.type === 'string' && data.type !== 'incident_brief') {
+    return {
+      id: typeof data.id === 'number' ? data.id : Date.now(),
+      type: String(data.type || 'event'),
+      title: String(data.title || data.type || 'Event'),
+      severity:
+        data.severity === 'critical'
+          ? 'critical'
+          : data.severity === 'warning'
+          ? 'warning'
+          : 'info',
+      category: String(data.category || 'operational'),
+      entity_type: String(data.entity_type || 'resource'),
+      entity_id: String(data.entity_id || ''),
+      occurred_at: String(data.occurred_at || new Date().toISOString()),
+      source: 'live_event',
+    };
+  }
+
+  const brief = data as IncidentBriefPayload;
+  const risk = String(brief.risk_level || brief.severity || 'info').toLowerCase();
+  const sev = risk === 'critical' ? 'critical' : risk === 'high' || risk === 'warning' ? 'warning' : 'info';
+  const title = brief.event_type ? `AI Brief: ${brief.event_type}` : 'AI Incident Brief';
+  return {
+    id: typeof brief.id === 'number' ? brief.id : Date.now(),
+    type: 'incident_brief',
+    title,
+    severity: sev,
+    category: 'copilot',
+    entity_type: brief.entity_name ? 'entity' : 'incident',
+    entity_id: String(brief.event_id || brief.id || ''),
+    occurred_at: String(brief.generated_at || new Date().toISOString()),
+    source: 'incident_brief',
+    analysis: brief.analysis,
+    recommendation: brief.recommendation,
+    runbook_name: brief.runbook_name || undefined,
+    risk_level: risk,
+  };
+}
 
 export function useEventStream({ onEvent, enabled = true }: Options): void {
   const esRef = useRef<EventSource | null>(null);
@@ -54,7 +116,8 @@ export function useEventStream({ onEvent, enabled = true }: Options): void {
 
     es.onmessage = (e: MessageEvent) => {
       try {
-        const event: LiveEvent = JSON.parse(e.data as string);
+        const event = _normalizeLiveEvent(JSON.parse(e.data as string));
+        if (!event) return;
         if (event.type === 'system') return; // internal/diagnostic events
         onEventRef.current(event);
         backoffRef.current = 1_000; // reset back-off on successful message
@@ -62,6 +125,18 @@ export function useEventStream({ onEvent, enabled = true }: Options): void {
         // Ignore malformed JSON
       }
     };
+
+    es.addEventListener('incident_brief', (e: Event) => {
+      try {
+        const msg = e as MessageEvent;
+        const event = _normalizeLiveEvent(JSON.parse(msg.data as string));
+        if (!event) return;
+        onEventRef.current(event);
+        backoffRef.current = 1_000;
+      } catch {
+        // Ignore malformed JSON
+      }
+    });
 
     es.onerror = () => {
       es.close();

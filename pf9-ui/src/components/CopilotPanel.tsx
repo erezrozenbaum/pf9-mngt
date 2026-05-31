@@ -65,6 +65,10 @@ interface CopilotConfig {
   anthropic_model: string;
   redact_sensitive: boolean;
   system_prompt: string;
+  ai_triage_enabled: boolean;
+  ai_triage_min_severity: string;
+  ai_triage_max_per_hour: number;
+  ai_triage_notify_email: boolean;
   [key: string]: unknown;
 }
 
@@ -806,6 +810,62 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
                   />
                 </>
               )}
+
+              <hr style={{ margin: "14px 0", border: "none", borderTop: "1px solid var(--color-border)" }} />
+              <h4 style={{ margin: "0 0 10px 0" }}>AI Incident Triage</h4>
+
+              <div className="copilot-settings-row" style={{ marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  id="copilot-ai-triage-enabled"
+                  checked={(editConfig.ai_triage_enabled ?? config?.ai_triage_enabled) || false}
+                  onChange={(e) =>
+                    setEditConfig((p) => ({ ...p, ai_triage_enabled: e.target.checked }))
+                  }
+                />
+                <label htmlFor="copilot-ai-triage-enabled" style={{ margin: 0 }}>
+                  Enable proactive AI incident triage briefs
+                </label>
+              </div>
+
+              <label style={{ marginTop: 10 }}>Minimum Severity</label>
+              <select
+                value={(editConfig.ai_triage_min_severity ?? config?.ai_triage_min_severity ?? "critical") as string}
+                onChange={(e) => setEditConfig((p) => ({ ...p, ai_triage_min_severity: e.target.value }))}
+              >
+                <option value="info">Info</option>
+                <option value="warning">Warning</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+
+              <label>Max Briefs Per Hour</label>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                value={Number(editConfig.ai_triage_max_per_hour ?? config?.ai_triage_max_per_hour ?? 10)}
+                onChange={(e) =>
+                  setEditConfig((p) => ({
+                    ...p,
+                    ai_triage_max_per_hour: Math.max(1, Math.min(200, Number(e.target.value || 10))),
+                  }))
+                }
+              />
+
+              <div className="copilot-settings-row" style={{ marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  id="copilot-ai-triage-email"
+                  checked={(editConfig.ai_triage_notify_email ?? config?.ai_triage_notify_email) || false}
+                  onChange={(e) =>
+                    setEditConfig((p) => ({ ...p, ai_triage_notify_email: e.target.checked }))
+                  }
+                />
+                <label htmlFor="copilot-ai-triage-email" style={{ margin: 0 }}>
+                  Send email notifications for generated briefs
+                </label>
+              </div>
 
               <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
                 <button className="copilot-btn" onClick={saveConfig} disabled={saving}>

@@ -834,6 +834,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v2.18.1 — AI triage visibility and controls in UI
+
+- **Notification bell AI brief rendering** (`pf9-ui/src/hooks/useEventStream.ts`, `pf9-ui/src/App.tsx`): SSE `incident_brief` events are now surfaced as explicit "AI incident brief" notifications with recommendation/runbook context in the header panel.
+- **Copilot triage settings controls** (`pf9-ui/src/components/CopilotPanel.tsx`): Added UI controls for `ai_triage_enabled`, `ai_triage_min_severity`, `ai_triage_max_per_hour`, and `ai_triage_notify_email` so triage can be configured from the interface.
+
 ### v2.18.0 — AI incident triage + QBR AI intervention reporting
 
 - **Proactive AI brief generation** (`api/ai_triage.py`, `api/event_bus.py`): high-severity operational events can now trigger an automatic AI incident brief (analysis, recommendation, risk, optional runbook suggestion) when Copilot triage is enabled.
