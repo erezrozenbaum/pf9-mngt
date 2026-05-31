@@ -203,7 +203,7 @@ def test_execute_intent_requires_confirmed_true():
     import asyncio
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             copilot.execute_intent(FakeBody(), FakeRequest())
         )
     assert exc_info.value.status_code == 400
@@ -232,7 +232,7 @@ def test_execute_intent_agentic_disabled():
 
     with patch.object(copilot, "_get_agentic_setting", return_value="false"):
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 copilot.execute_intent(FakeBody(), FakeRequest())
             )
     assert exc_info.value.status_code == 403
@@ -263,7 +263,7 @@ def test_execute_intent_quota_exceeded():
          patch.object(copilot, "_count_hourly_executions", return_value=10):
         # Default quota is 10; used=10 → should be rejected
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 copilot.execute_intent(FakeBody(), FakeRequest())
             )
     assert exc_info.value.status_code == 429
@@ -287,7 +287,7 @@ def test_agentic_status_default():
 
     with patch.object(copilot, "_get_agentic_setting", side_effect=_setting), \
          patch.object(copilot, "_count_hourly_executions", return_value=3):
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             copilot.agentic_status(FakeRequest())
         )
 
@@ -363,7 +363,7 @@ def test_security_confirmed_not_injectable():
         parameters = {}
 
     with pytest.raises(Exception) as exc_info:
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             copilot.execute_intent(FakeBadBody(), FakeRequest())
         )
     assert getattr(exc_info.value, "status_code", None) == 400, "confirmed=False must yield HTTP 400"

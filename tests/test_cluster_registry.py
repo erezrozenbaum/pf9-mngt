@@ -304,7 +304,7 @@ class TestMergeFunctions(unittest.TestCase):
 class TestMultiClusterQuery(unittest.TestCase):
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_gather_all_success(self):
         """All regions succeed — results list has one entry per region."""
