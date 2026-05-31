@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.16.4] - 2026-05-31
+
+### Fixed
+
+- **Scheduler policy placement hotfix** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): Added PF9 exporter egress ports (`9177`, `9388`) to the correct `pf9-scheduler-worker` NetworkPolicy block. This resolves scheduler collector timeouts caused by missing egress to hypervisor exporter endpoints in live Kubernetes policy.
+
 ## [2.16.3] - 2026-05-31
 
 ### Fixed

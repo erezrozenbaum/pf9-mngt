@@ -1936,6 +1936,11 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.16.4 Changes
+
+### Scheduler NetworkPolicy placement correction (`k8s/helm/pf9-mngt/templates/network-policies.yaml`)
+The scheduler worker egress allow-list for PF9 hypervisor exporter ports (`9177`, `9388`) is now defined in the `pf9-scheduler-worker` policy block itself. This ensures the rendered live policy grants the intended exporter connectivity path used by the scheduler-hosted metrics collector.
+
 ## v2.16.3 Changes
 
 ### Scheduler exporter connectivity in Kubernetes (`k8s/helm/pf9-mngt/templates/network-policies.yaml`)

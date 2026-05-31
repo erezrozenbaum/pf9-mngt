@@ -676,6 +676,14 @@ spec:
           protocol: TCP
         - port: 5000
           protocol: TCP
+    # PF9 hypervisor Prometheus exporters (libvirt-exporter :9177, node-exporter :9388)
+    # These are external IPs on the PF9 compute nodes — allow any destination.
+    - to: []
+      ports:
+        - port: 9177
+          protocol: TCP
+        - port: 9388
+          protocol: TCP
     - to:
         - namespaceSelector:
             matchLabels:
@@ -926,6 +934,14 @@ spec:
         - port: 443
           protocol: TCP
         - port: 5000
+          protocol: TCP
+    # PF9 hypervisor Prometheus exporters (libvirt-exporter :9177, node-exporter :9388)
+    # These are external IPs on the PF9 compute nodes — allow any destination.
+    - to: []
+      ports:
+        - port: 9177
+          protocol: TCP
+        - port: 9388
           protocol: TCP
     - to:
         - namespaceSelector:
