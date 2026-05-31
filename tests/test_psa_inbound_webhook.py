@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import types
+import importlib
 
 
 # Ensure api/ directory is importable
@@ -191,9 +192,16 @@ else:
 sys.modules.setdefault("db_pool", _make_stub("db_pool", get_connection=lambda: None))
 sys.modules.setdefault("crypto_helper", _make_stub("crypto_helper", fernet_encrypt=lambda *_args, **_kwargs: "enc", fernet_decrypt=lambda *_args, **_kwargs: "token-ok"))
 sys.modules.setdefault("event_bus", _make_stub("event_bus", emit_event=lambda **kwargs: None))
-sys.modules.setdefault("rate_limit", _make_stub("rate_limit", limiter=_Limiter()))
 
-import psa_routes as psa  # noqa: E402
+# Force a clean import so prior tests cannot leave psa_routes decorated with mocks.
+_prev_rate_limit_mod = sys.modules.get("rate_limit")
+sys.modules["rate_limit"] = _make_stub("rate_limit", limiter=_Limiter())
+sys.modules.pop("psa_routes", None)
+psa = importlib.import_module("psa_routes")  # noqa: E402
+if _prev_rate_limit_mod is None:
+    del sys.modules["rate_limit"]
+else:
+    sys.modules["rate_limit"] = _prev_rate_limit_mod
 
 
 def test_map_inbound_status_from_status_map():
