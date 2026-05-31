@@ -73,6 +73,7 @@ class _APIRouter:
 
     get = _decorator
     post = _decorator
+    put = _decorator
     patch = _decorator
     delete = _decorator
 
@@ -122,7 +123,16 @@ sys.modules.setdefault("pydantic", _make_stub("pydantic", BaseModel=_BaseModel, 
 sys.modules.setdefault("psycopg2", _make_stub("psycopg2"))
 sys.modules.setdefault("psycopg2.extras", _make_stub("psycopg2.extras", RealDictCursor=object))
 
-sys.modules.setdefault("auth", _make_stub("auth", User=dict, require_authentication=lambda: {"role": "admin"}))
+# Some other tests preload a minimal auth stub without User/require_authentication.
+_auth_mod = sys.modules.get("auth")
+if _auth_mod is None:
+    sys.modules["auth"] = _make_stub("auth", User=dict, require_authentication=lambda: {"role": "admin"})
+else:
+    if not hasattr(_auth_mod, "User"):
+        setattr(_auth_mod, "User", dict)
+    if not hasattr(_auth_mod, "require_authentication"):
+        setattr(_auth_mod, "require_authentication", lambda: {"role": "admin"})
+
 sys.modules.setdefault("db_pool", _make_stub("db_pool", get_connection=lambda: None))
 sys.modules.setdefault("cache", _make_stub("cache", _get_client=lambda: None))
 

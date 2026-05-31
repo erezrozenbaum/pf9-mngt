@@ -106,9 +106,9 @@ class _Conn:
 
 
 # Stub dependencies before import
-sys.modules.setdefault(
-    "fastapi",
-    _make_stub(
+_fastapi_mod = sys.modules.get("fastapi")
+if _fastapi_mod is None:
+    _fastapi_mod = _make_stub(
         "fastapi",
         APIRouter=_APIRouter,
         Depends=lambda x: x,
@@ -125,21 +125,69 @@ sys.modules.setdefault(
             HTTP_404_NOT_FOUND=404,
             HTTP_422_UNPROCESSABLE_ENTITY=422,
         ),
-    ),
-)
+    )
+    sys.modules["fastapi"] = _fastapi_mod
+else:
+    if not hasattr(_fastapi_mod, "APIRouter"):
+        setattr(_fastapi_mod, "APIRouter", _APIRouter)
+    if not hasattr(_fastapi_mod, "Depends"):
+        setattr(_fastapi_mod, "Depends", lambda x: x)
+    if not hasattr(_fastapi_mod, "Header"):
+        setattr(_fastapi_mod, "Header", lambda default=None, alias=None: default)
+    if not hasattr(_fastapi_mod, "HTTPException"):
+        setattr(_fastapi_mod, "HTTPException", _HTTPException)
+    if not hasattr(_fastapi_mod, "Request"):
+        setattr(_fastapi_mod, "Request", object)
+    if not hasattr(_fastapi_mod, "status"):
+        setattr(_fastapi_mod, "status", _make_stub("status"))
+
+    _status = getattr(_fastapi_mod, "status")
+    if not hasattr(_status, "HTTP_200_OK"):
+        setattr(_status, "HTTP_200_OK", 200)
+    if not hasattr(_status, "HTTP_201_CREATED"):
+        setattr(_status, "HTTP_201_CREATED", 201)
+    if not hasattr(_status, "HTTP_204_NO_CONTENT"):
+        setattr(_status, "HTTP_204_NO_CONTENT", 204)
+    if not hasattr(_status, "HTTP_401_UNAUTHORIZED"):
+        setattr(_status, "HTTP_401_UNAUTHORIZED", 401)
+    if not hasattr(_status, "HTTP_403_FORBIDDEN"):
+        setattr(_status, "HTTP_403_FORBIDDEN", 403)
+    if not hasattr(_status, "HTTP_404_NOT_FOUND"):
+        setattr(_status, "HTTP_404_NOT_FOUND", 404)
+    if not hasattr(_status, "HTTP_422_UNPROCESSABLE_ENTITY"):
+        setattr(_status, "HTTP_422_UNPROCESSABLE_ENTITY", 422)
+
 sys.modules.setdefault("fastapi.responses", _make_stub("fastapi.responses", JSONResponse=lambda *args, **kwargs: None))
-sys.modules.setdefault("pydantic", _make_stub("pydantic", BaseModel=_BaseModel, Field=_Field, field_validator=_field_validator))
+_pydantic_mod = sys.modules.get("pydantic")
+if _pydantic_mod is None:
+    sys.modules["pydantic"] = _make_stub("pydantic", BaseModel=_BaseModel, Field=_Field, field_validator=_field_validator)
+else:
+    if not hasattr(_pydantic_mod, "BaseModel"):
+        setattr(_pydantic_mod, "BaseModel", _BaseModel)
+    if not hasattr(_pydantic_mod, "Field"):
+        setattr(_pydantic_mod, "Field", _Field)
+    if not hasattr(_pydantic_mod, "field_validator"):
+        setattr(_pydantic_mod, "field_validator", _field_validator)
+
 sys.modules.setdefault("psycopg2", _make_stub("psycopg2"))
 sys.modules.setdefault("psycopg2.extras", _make_stub("psycopg2.extras", RealDictCursor=object))
-sys.modules.setdefault(
-    "auth",
-    _make_stub(
+# Some tests preload a partial auth stub; add missing symbols for deterministic import.
+_auth_mod = sys.modules.get("auth")
+if _auth_mod is None:
+    sys.modules["auth"] = _make_stub(
         "auth",
         User=dict,
         require_permission=lambda *_args, **_kwargs: {"username": "admin"},
         require_authentication=lambda: {"role": "admin", "username": "admin"},
-    ),
-)
+    )
+else:
+    if not hasattr(_auth_mod, "User"):
+        setattr(_auth_mod, "User", dict)
+    if not hasattr(_auth_mod, "require_permission"):
+        setattr(_auth_mod, "require_permission", lambda *_args, **_kwargs: {"username": "admin"})
+    if not hasattr(_auth_mod, "require_authentication"):
+        setattr(_auth_mod, "require_authentication", lambda: {"role": "admin", "username": "admin"})
+
 sys.modules.setdefault("db_pool", _make_stub("db_pool", get_connection=lambda: None))
 sys.modules.setdefault("crypto_helper", _make_stub("crypto_helper", fernet_encrypt=lambda *_args, **_kwargs: "enc", fernet_decrypt=lambda *_args, **_kwargs: "token-ok"))
 sys.modules.setdefault("event_bus", _make_stub("event_bus", emit_event=lambda **kwargs: None))
@@ -170,8 +218,8 @@ def test_psa_inbound_rejects_invalid_token(monkeypatch):
             x_psa_token="wrong-token",
         )
         assert False, "Expected HTTPException"
-    except _HTTPException as exc:
-        assert exc.status_code == 401
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 401
 
 
 def test_psa_inbound_returns_unmatched_for_unknown_ticket(monkeypatch):
