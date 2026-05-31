@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the scheduler entrypoint
 COPY scheduler_worker/main.py ./
 
+# Shared helper modules used by scheduler worker
+COPY shared/ ./shared/
+
 # Copy root-level scripts that this worker executes
 COPY pf9_rvtools.py p9_common.py db_writer.py host_metrics_collector.py ./
 
