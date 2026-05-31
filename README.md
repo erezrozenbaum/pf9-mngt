@@ -35,6 +35,7 @@
 • **✅ 626 passing tests** — comprehensive test coverage ([see tests/](tests/))  
 • **🔒 Kubernetes-native** — Helm charts + ArgoCD GitOps  
 • **🎮 Demo mode** — full product experience without Platform9  
+• **🤖 AI Incident Triage** — proactive AI-generated briefs surface high-severity incidents before operators notice them  
 
 [![Version](https://img.shields.io/badge/version-2.18.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
@@ -77,7 +78,7 @@ Everything in pf9-mngt is built around four operational concerns:
 | 🔍 **Visibility** | Cross-tenant, multi-region inventory with drift detection, dependency graph, and historical tracking — metadata owned by you, not the platform |
 | 🔄 **Recovery** | Snapshot automation and full VM restore orchestration — two modes, dry-run validation, SLA compliance, not natively addressed in OpenStack |
 | ⚙️ **Operations** | Ticketing, 25 built-in runbooks, metering, chargeback, standardized governance workflows, and tenant self-service portal |
-| 🧠 **Intelligence** | AI Ops Copilot (plain-language queries against live infrastructure), Operational Intelligence Feed (capacity, waste, risk and anomaly engines), **Workload Right-Sizing** (idle + over-provisioned VM detection with flavor recommendations and savings estimates), SLA compliance tracking, QBR PDF generator, Account Manager Portfolio and Executive Health dashboards, revenue leakage detection |
+| 🧠 **Intelligence** | **AI Incident Triage** (proactive AI-generated incident briefs pushed to operators the moment a qualifying event fires — analysis, risk level, runbook suggestion, and dismiss/execute actions), AI Ops Copilot (plain-language queries against live infrastructure), Operational Intelligence Feed (capacity, waste, risk and anomaly engines), **Workload Right-Sizing** (idle + over-provisioned VM detection with flavor recommendations and savings estimates), SLA compliance tracking, QBR PDF generator with AI intervention metrics, Account Manager Portfolio and Executive Health dashboards, revenue leakage detection |
 
 > Everything else in the system — LDAP, multi-region, Kubernetes, export reports — supports one of these four pillars.
 
@@ -278,6 +279,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 | **Migration Risk** | $25-100K+ in failed migration costs | End-to-end VMware migration planner with risk scoring |
 | **Billing Disputes** | Hours/month of manual reconciliation | Multi-currency chargeback system with audit trails |
 | **Executive Reporting** | Manual QBR preparation (4-8 hours/client) | Automated QBR PDF generation per customer |
+| **Incident Response Lag** | 15-30 min mean time to triage a critical event | AI Incident Triage generates analysis + runbook suggestion in seconds, before an engineer opens a ticket |
 
 **Typical MSP ROI:** 300-500% within 6 months through reduced operational overhead and eliminated revenue leakage.
 
@@ -286,6 +288,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v2.18** — **AI Incident Triage**: high-severity operational events now automatically trigger an AI-generated incident brief — structured analysis, risk level, runbook suggestion, and operator actions (dismiss or execute). Briefs are delivered in real time via SSE to the notification bell, surfaced in the Copilot settings panel, and factored into QBR AI intervention metrics. Proactive, not reactive. (May 2026)
 - **v2.12** — **KVM Node Log Viewer**: SSH-based log fetching from KVM nodes (`/var/log/pf9/`) via paramiko; `NODE_LOG_SOURCE=ssh` env var; credentials from `pf9-ssh-credentials` K8s secret; NetworkPolicy egress for port 22; PF9 hostagent log format timestamp parsing. (May 2026)
 - **v2.11** — **Platform Health & Prometheus Integration**: per-pod CPU/RAM sparklines, PVC utilisation bars, network receive rate via `GET /api/admin/platform/metrics`; KPI summary tiles; CLEA Automation page redesign. (May 2026)
 - **v2.10** — **Shared Internal Library**: `secret_helper`, `crypto_helper`, and `request_helpers` extracted into `shared/` package shared across `api/` and `tenant_portal/`; `secret_helper` security hardening for file permission checks. (May 2026)
