@@ -834,6 +834,19 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v2.17.0 — PSA bi-directional sync + release parity
+
+- **PSA inbound status sync** (`api/psa_routes.py`): Added `POST /api/psa/inbound/{config_id}` to receive PSA lifecycle callbacks (`ticket_id`, `status`, optional resolution metadata), validate `X-PSA-Token`, map external status via per-config `status_map`, and update the matching `operational_insights` row by `metadata->>'psa_ticket_id'`.
+- **Inbound token rotation** (`api/psa_routes.py`): Added `GET /api/psa/configs/{id}/inbound-token` to generate/rotate encrypted inbound tokens and enable inbound sync per config. `GET /api/psa/configs` now includes `inbound_enabled`, `status_map`, and computed `inbound_webhook_url`.
+- **Outbound-to-inbound linkage** (`intelligence_worker/engines/base.py`, `api/psa_routes.py`): Outbound webhook responses are parsed for ticket IDs and persisted as `metadata.psa_ticket_id` on insights to support deterministic sync-back matching.
+- **Migration parity** (`deployment.ps1`): Windows deployment migration list now includes `db/migrate_v2_17_0_maintenance_health.sql` and `db/migrate_v2_17_1_psa_inbound.sql` to match Linux `run_migration.py` rollout behavior.
+
+### v2.17.0 — Maintenance suppression + security posture scoring
+
+- **Operational maintenance windows** (`api/maintenance_routes.py`, `db/init.sql`, `db/migrate_v2_17_0_maintenance_health.sql`): Added `ops_maintenance_windows` with scope-aware suppression flags and admin CRUD/list/active endpoints under `/api/admin/maintenance/windows`.
+- **CLEA/SLA maintenance suppression hooks** (`api/clea_routes.py`, `intelligence_worker/engines/sla_defense.py`): CLEA evaluation and SLA defense alert creation now short-circuit when an active maintenance window covers the target scope.
+- **Six-component tenant health score** (`api/tenant_health_routes.py`, `scheduler_worker/main.py`, `shared/health_scoring.py`): Added `security_posture` component (MFA coverage, exposed SSH/RDP surface, OS image recency), updated default weights to 22/18/18/17/10/15, and persisted the new column in `tenant_health_scores` and latest-score view.
+
 ### v2.10.0 — Shared Internal Library
 
 - **`shared/` package** (repo root): Single source of truth for helpers shared across all pf9-mngt services.

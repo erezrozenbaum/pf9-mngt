@@ -410,6 +410,29 @@ def evaluate_clea_policies(
 
 
 def _do_evaluate(event_id: Optional[int], event_type: str, metadata: dict) -> None:
+    project_id = metadata.get("project_id")
+    region_id = metadata.get("region_id") or metadata.get("entity_region")
+
+    try:
+        from maintenance_routes import get_active_maintenance_window  # lazy import
+
+        active_window = get_active_maintenance_window(
+            project_id,
+            region_id,
+            suppress_for="clea",
+        )
+        if active_window:
+            logger.info(
+                "clea: suppressed due to maintenance window id=%s title=%r project=%r region=%r",
+                active_window.get("id"),
+                active_window.get("title"),
+                project_id,
+                region_id,
+            )
+            return
+    except Exception:
+        logger.debug("clea: maintenance check failed; continuing evaluation", exc_info=True)
+
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(

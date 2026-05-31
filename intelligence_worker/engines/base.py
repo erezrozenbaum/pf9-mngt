@@ -110,16 +110,37 @@ def _fire_psa_webhooks(conn, insight: dict) -> None:
             log.warning("PSA: skipping config id=%d — could not decrypt auth_header", cfg["id"])
             continue
 
-        _send_webhook(cfg["webhook_url"], auth_header, payload, cfg["psa_name"])
+        ok, _, response_text = _send_webhook(cfg["webhook_url"], auth_header, payload, cfg["psa_name"])
+
+        # Best-effort linkage for inbound sync: keep PSA ticket id on insight metadata.
+        ticket_id = _extract_ticket_id(response_text)
+        if ok and ticket_id and insight.get("id"):
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE operational_insights
+                        SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                        WHERE id = %s
+                        """,
+                        (json.dumps({"psa_ticket_id": str(ticket_id)}), insight["id"]),
+                    )
+                conn.commit()
+            except Exception as exc:
+                log.debug("PSA: failed to persist returned ticket id: %s", exc)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
 
-def _send_webhook(url: str, auth_header: str, payload: dict, label: str) -> None:
+def _send_webhook(url: str, auth_header: str, payload: dict, label: str) -> tuple[bool, Optional[int], Optional[str]]:
     """Fire a single outbound HTTP POST. Retries once on failure."""
     try:
         import httpx
     except ImportError:
         log.warning("PSA: httpx not installed — cannot fire webhook '%s'", label)
-        return
+        return False, None, None
 
     headers = {"Content-Type": "application/json"}
     if ":" in auth_header:
@@ -135,14 +156,31 @@ def _send_webhook(url: str, auth_header: str, payload: dict, label: str) -> None
                 resp = client.post(url, content=body, headers=headers)
             if 200 <= resp.status_code < 300:
                 log.info("PSA webhook '%s' fired successfully (HTTP %d)", label, resp.status_code)
+                return True, resp.status_code, resp.text
             else:
                 log.warning("PSA webhook '%s' returned HTTP %d", label, resp.status_code)
-            return
+                return False, resp.status_code, resp.text
         except Exception as exc:
             if attempt == 0:
                 log.warning("PSA webhook '%s' attempt 1 failed: %s — retrying", label, exc)
             else:
                 log.error("PSA webhook '%s' failed after 2 attempts: %s", label, exc)
+    return False, None, None
+
+
+def _extract_ticket_id(response_text: Optional[str]) -> Optional[str]:
+    if not response_text:
+        return None
+    try:
+        payload = json.loads(response_text)
+        if isinstance(payload, dict):
+            for key in ("ticket_id", "id", "ticketId", "ticket"):
+                val = payload.get(key)
+                if val is not None:
+                    return str(val)
+    except Exception:
+        return None
+    return None
 
 
 

@@ -4104,9 +4104,34 @@ CREATE TABLE IF NOT EXISTS psa_webhook_config (
     min_severity    TEXT NOT NULL DEFAULT 'high',
     insight_types   TEXT[] NOT NULL DEFAULT '{}',
     region_ids      TEXT[] NOT NULL DEFAULT '{}',
+    inbound_enabled BOOLEAN NOT NULL DEFAULT false,
+    inbound_token   TEXT,
+    status_map      JSONB NOT NULL DEFAULT '{}'::jsonb,
     enabled         BOOLEAN NOT NULL DEFAULT true,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- -------------------------------------------------------------------------
+-- Operational maintenance windows (v2.17.0)
+-- Separate from migration planner recurring maintenance_windows table.
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ops_maintenance_windows (
+    id                      SERIAL PRIMARY KEY,
+    title                   TEXT NOT NULL,
+    starts_at               TIMESTAMPTZ NOT NULL,
+    ends_at                 TIMESTAMPTZ NOT NULL,
+    scope                   JSONB,
+    suppress_clea           BOOLEAN NOT NULL DEFAULT true,
+    suppress_sla_defense    BOOLEAN NOT NULL DEFAULT true,
+    suppress_notifications  BOOLEAN NOT NULL DEFAULT false,
+    created_by              TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_ops_maintenance_window_order CHECK (ends_at > starts_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ops_maintenance_active
+    ON ops_maintenance_windows(starts_at, ends_at);
 
 -- -------------------------------------------------------------------------
 -- RBAC: intelligence + sla permissions (v1.85.0)
@@ -4192,11 +4217,12 @@ ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO system_settings (key, value, description)
 VALUES
-  ('health_score.weight.snapshot_compliance', '25', 'Max points for snapshot compliance component'),
-  ('health_score.weight.quota_headroom',      '20', 'Max points for quota headroom component'),
-  ('health_score.weight.drift',               '20', 'Max points for drift component'),
-  ('health_score.weight.sla_tier',            '20', 'Max points for SLA tier component'),
-  ('health_score.weight.tickets',             '15', 'Max points for tickets component')
+    ('health_score.weight.snapshot_compliance', '22', 'Max points for snapshot compliance component'),
+    ('health_score.weight.quota_headroom',      '18', 'Max points for quota headroom component'),
+    ('health_score.weight.drift',               '18', 'Max points for drift component'),
+    ('health_score.weight.sla_tier',            '17', 'Max points for SLA tier component'),
+    ('health_score.weight.tickets',             '10', 'Max points for tickets component'),
+    ('health_score.weight.security_posture',    '15', 'Max points for security posture component')
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO system_settings (key, value, description) VALUES
@@ -4877,6 +4903,7 @@ CREATE TABLE IF NOT EXISTS tenant_health_scores (
     drift                   SMALLINT    NOT NULL DEFAULT 0,
     sla_tier                SMALLINT    NOT NULL DEFAULT 0,
     tickets                 SMALLINT    NOT NULL DEFAULT 0,
+    security_posture        SMALLINT    NOT NULL DEFAULT 0,
     details                 JSONB       NOT NULL DEFAULT '{}',
     PRIMARY KEY (project_id, computed_at)
 );
@@ -4894,6 +4921,7 @@ CREATE OR REPLACE VIEW tenant_health_scores_latest AS
         drift,
         sla_tier,
         tickets,
+        security_posture,
         details
     FROM tenant_health_scores
     ORDER BY project_id, computed_at DESC;

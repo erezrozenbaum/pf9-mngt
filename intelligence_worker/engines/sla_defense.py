@@ -55,6 +55,44 @@ def _threat_type_for_insight(insight_type: str) -> str:
 class SlaDefenseEngine(BaseEngine):
     """Generate and maintain records in sla_defense_alerts."""
 
+    def _maintenance_window_for_project(self, project_id: str) -> str | None:
+        cache = getattr(self, "_maintenance_cache", None)
+        if cache is None:
+            cache = {}
+            self._maintenance_cache = cache
+        if project_id in cache:
+            return cache[project_id]
+
+        row = None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT title
+                    FROM ops_maintenance_windows
+                    WHERE suppress_sla_defense = true
+                      AND starts_at <= NOW()
+                      AND ends_at > NOW()
+                      AND (
+                            scope IS NULL
+                            OR EXISTS (
+                                SELECT 1
+                                FROM jsonb_array_elements_text(COALESCE(scope->'project_ids', '[]'::jsonb)) p(v)
+                                WHERE p.v = %s
+                            )
+                      )
+                    ORDER BY starts_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                )
+                row = cur.fetchone()
+        except Exception:
+            row = None
+        title = row.get("title") if row else None
+        cache[project_id] = title
+        return title
+
     def _process_candidate_row(self, row: dict[str, Any], triggered_keys: set[tuple[str, str]]) -> bool:
         project_id = row["project_id"]
         insight_id = row["insight_id"]
@@ -64,6 +102,15 @@ class SlaDefenseEngine(BaseEngine):
         rto_hours = row.get("rto_hours")
 
         threat_type = _threat_type_for_insight(insight_type)
+        window_title = self._maintenance_window_for_project(project_id)
+        if window_title is not None:
+            log.info(
+                "SlaDefenseEngine: suppressed during maintenance window project=%s title=%r",
+                project_id,
+                window_title,
+            )
+            return False
+
         score = _threat_score(confidence, runway_days, rto_hours)
         if score < 0.7:
             return False

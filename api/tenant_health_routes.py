@@ -2,13 +2,14 @@
 Tenant Health Score Routes
 ==========================
 Provides a composite 0-100 health score per tenant, broken down into
-five weighted components:
+six weighted components:
 
   snapshot_compliance  (0-25)  — recent successful snapshot runs
   quota_headroom       (0-20)  — CPU/RAM utilisation headroom
   drift                (0-20)  — absence of recent drift events
   sla_tier             (0-20)  — active SLA commitment tier
   tickets              (0-15)  — open support-ticket burden
+    security_posture     (0-15)  — MFA coverage, exposed ports, OS image recency
 
 Scores are pre-computed by the scheduler worker every 4 hours and stored
 in tenant_health_scores.  The API reads the latest stored value; it also
@@ -31,6 +32,7 @@ from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, User
 from db_pool import get_connection
+from shared.health_scoring import compute_security_posture_component
 
 logger = logging.getLogger("pf9.tenant_health")
 
@@ -61,6 +63,7 @@ class HealthScoreWeightsOut(BaseModel):
     drift: int
     sla_tier: int
     tickets: int
+    security_posture: int
     total: int
 
 
@@ -70,6 +73,7 @@ class HealthScoreWeightsIn(BaseModel):
     drift: int
     sla_tier: int
     tickets: int
+    security_posture: int
 
 
 class HealthScoreToggleIn(BaseModel):
@@ -81,11 +85,12 @@ class HealthScoreToggleIn(BaseModel):
 # ---------------------------------------------------------------------------
 
 _DEFAULT_WEIGHTS = {
-    "snapshot_compliance": 25,
-    "quota_headroom": 20,
-    "drift": 20,
-    "sla_tier": 20,
-    "tickets": 15,
+    "snapshot_compliance": 22,
+    "quota_headroom": 18,
+    "drift": 18,
+    "sla_tier": 17,
+    "tickets": 10,
+    "security_posture": 15,
 }
 
 
@@ -234,6 +239,70 @@ def _compute_score(conn, project_id: str, weights: Optional[dict] = None) -> dic
         scores["tickets"] = ticket_score
         details["tickets"] = {"open_by_priority": open_tickets}
 
+        # 6. Security posture (0-15) ───────────────────────────────────────
+        cur.execute(
+            """
+            SELECT
+                COUNT(DISTINCT u.id) AS total_users,
+                COUNT(DISTINCT u.id) FILTER (WHERE um.is_enabled IS TRUE) AS mfa_enabled_users
+            FROM role_assignments ra
+            JOIN users u ON u.id = ra.user_id
+            LEFT JOIN user_mfa um ON um.username = u.name
+            WHERE ra.project_id = %s
+              AND ra.user_id IS NOT NULL
+            """,
+            (project_id,),
+        )
+        mfa_row = cur.fetchone() or {}
+
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT s.id) AS exposed_vm_count
+            FROM servers s
+            JOIN ports p ON p.device_id = s.id
+            JOIN security_group_rules sgr
+              ON p.raw_json::jsonb->'security_groups' ? sgr.security_group_id
+            WHERE s.project_id = %s
+              AND sgr.direction = 'ingress'
+              AND COALESCE(sgr.remote_ip_prefix, '0.0.0.0/0') IN ('0.0.0.0/0', '::/0')
+              AND (
+                    sgr.protocol IS NULL OR LOWER(sgr.protocol) = 'tcp'
+                  )
+              AND (
+                    (COALESCE(sgr.port_range_min, 22) <= 22 AND COALESCE(sgr.port_range_max, 22) >= 22)
+                    OR
+                    (COALESCE(sgr.port_range_min, 3389) <= 3389 AND COALESCE(sgr.port_range_max, 3389) >= 3389)
+                  )
+            """,
+            (project_id,),
+        )
+        exposed_row = cur.fetchone() or {}
+
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS total_vm_count,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(i.updated_at, i.created_at) < NOW() - INTERVAL '180 days'
+                ) AS stale_vm_count
+            FROM servers s
+            LEFT JOIN images i ON i.id = s.image_id
+            WHERE s.project_id = %s
+            """,
+            (project_id,),
+        )
+        image_row = cur.fetchone() or {}
+
+        security_component = compute_security_posture_component(
+            mfa_enabled_users=(mfa_row.get("mfa_enabled_users") or 0),
+            mfa_total_users=(mfa_row.get("total_users") or 0),
+            exposed_vm_count=(exposed_row.get("exposed_vm_count") or 0),
+            stale_vm_count=(image_row.get("stale_vm_count") or 0),
+            total_vm_count=(image_row.get("total_vm_count") or 0),
+        )
+        scores["security_posture"] = security_component["score"]
+        details["security_posture"] = security_component["details"]
+
     # Apply configured weights (scale proportionally to each component's default max)
     scaled = {
         "snapshot_compliance": _scale_component(scores["snapshot_compliance"], _DEFAULT_WEIGHTS["snapshot_compliance"], weights["snapshot_compliance"]),
@@ -241,6 +310,7 @@ def _compute_score(conn, project_id: str, weights: Optional[dict] = None) -> dic
         "drift":               _scale_component(scores["drift"],               _DEFAULT_WEIGHTS["drift"],               weights["drift"]),
         "sla_tier":            _scale_component(scores["sla_tier"],            _DEFAULT_WEIGHTS["sla_tier"],            weights["sla_tier"]),
         "tickets":             _scale_component(scores["tickets"],             _DEFAULT_WEIGHTS["tickets"],             weights["tickets"]),
+        "security_posture":    _scale_component(scores["security_posture"],    _DEFAULT_WEIGHTS["security_posture"],    weights["security_posture"]),
     }
     total = sum(scaled.values())
     return {
@@ -250,6 +320,7 @@ def _compute_score(conn, project_id: str, weights: Optional[dict] = None) -> dic
         "drift":               scaled["drift"],
         "sla_tier":            scaled["sla_tier"],
         "tickets":             scaled["tickets"],
+        "security_posture":    scaled["security_posture"],
         "details": details,
     }
 
@@ -289,9 +360,9 @@ def _store_score(conn, project_id: str, result: dict) -> None:
             """
             INSERT INTO tenant_health_scores
                 (project_id, computed_at, score,
-                 snapshot_compliance, quota_headroom, drift, sla_tier, tickets,
+                 snapshot_compliance, quota_headroom, drift, sla_tier, tickets, security_posture,
                  details)
-            VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (project_id, computed_at) DO NOTHING
             """,
             (
@@ -302,6 +373,7 @@ def _store_score(conn, project_id: str, result: dict) -> None:
                 result["drift"],
                 result["sla_tier"],
                 result["tickets"],
+                result["security_posture"],
                 json.dumps(result["details"]),
             ),
         )
@@ -331,7 +403,8 @@ async def get_tenant_health_score(
             cur.execute(
                 """
                 SELECT project_id, computed_at, score,
-                       snapshot_compliance, quota_headroom, drift, sla_tier, tickets,
+                      snapshot_compliance, quota_headroom, drift, sla_tier, tickets,
+                      security_posture,
                        details
                 FROM   tenant_health_scores
                 WHERE  project_id = %s
@@ -360,6 +433,7 @@ async def get_tenant_health_score(
             "drift": row["drift"],
             "sla_tier": row["sla_tier"],
             "tickets": row["tickets"],
+            "security_posture": row.get("security_posture", 0),
         },
         details=row["details"] or {},
     )
@@ -398,6 +472,7 @@ async def recalculate_tenant_health_score(
             "drift": result["drift"],
             "sla_tier": result["sla_tier"],
             "tickets": result["tickets"],
+            "security_posture": result["security_posture"],
         },
         details=result["details"],
     )
@@ -460,6 +535,7 @@ async def get_health_score_weights(
         drift=w["drift"],
         sla_tier=w["sla_tier"],
         tickets=w["tickets"],
+        security_posture=w["security_posture"],
         total=sum(w.values()),
     )
 
@@ -470,7 +546,14 @@ async def update_health_score_weights(
     current_user: User = Depends(require_permission("tenants", "write")),
 ):
     """Update health score component weights. Only superadmin role should use this."""
-    total = body.snapshot_compliance + body.quota_headroom + body.drift + body.sla_tier + body.tickets
+    total = (
+        body.snapshot_compliance
+        + body.quota_headroom
+        + body.drift
+        + body.sla_tier
+        + body.tickets
+        + body.security_posture
+    )
     if total < 1:
         raise HTTPException(status_code=422, detail="Weights must sum to at least 1")
 
@@ -480,6 +563,7 @@ async def update_health_score_weights(
         ("health_score.weight.drift",               body.drift),
         ("health_score.weight.sla_tier",            body.sla_tier),
         ("health_score.weight.tickets",             body.tickets),
+        ("health_score.weight.security_posture",    body.security_posture),
     ]
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -494,10 +578,10 @@ async def update_health_score_weights(
         w = _get_health_score_weights(conn)
 
     logger.info(
-        "Health score weights updated by %s: snap=%d quota=%d drift=%d sla=%d tickets=%d",
+        "Health score weights updated by %s: snap=%d quota=%d drift=%d sla=%d tickets=%d security=%d",
         current_user.username,
         body.snapshot_compliance, body.quota_headroom, body.drift,
-        body.sla_tier, body.tickets,
+        body.sla_tier, body.tickets, body.security_posture,
     )
     return HealthScoreWeightsOut(
         snapshot_compliance=w["snapshot_compliance"],
@@ -505,6 +589,7 @@ async def update_health_score_weights(
         drift=w["drift"],
         sla_tier=w["sla_tier"],
         tickets=w["tickets"],
+        security_posture=w["security_posture"],
         total=sum(w.values()),
     )
 

@@ -1,6 +1,8 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.16.5 — Metrics collector now preserves last known good cache on empty scrape cycles (stale-cache fallback + metadata), and Helm security tests enforce that exporter ports `9177`/`9388` are allowed only on `pf9-scheduler-worker` egress.
+> **Version**: v2.17.0 — PSA bi-directional sync: inbound webhook (`POST /api/psa/inbound/{config_id}`), inbound token rotation (`GET /api/psa/configs/{id}/inbound-token`), status mapping (`status_map`), and returned PSA `ticket_id` linkage into insight metadata.
+> Previous: v2.17.0 — Operational maintenance windows (`ops_maintenance_windows`) for CLEA/SLA suppression and six-component tenant health scoring with `security_posture`.
+> Previous: v2.16.5 — Metrics collector now preserves last known good cache on empty scrape cycles (stale-cache fallback + metadata), and Helm security tests enforce that exporter ports `9177`/`9388` are allowed only on `pf9-scheduler-worker` egress.
 > Previous: v2.16.4 — Scheduler exporter egress ports (`9177`/`9388`) are now applied in the correct `pf9-scheduler-worker` NetworkPolicy block, fixing rollout-time policy placement and restoring intended hypervisor exporter access; collector timeout/error detail improvements from v2.16.3 remain in effect.
 > Previous: v2.15.0 — Smart query LLM fallback for `GET /api/search/smart` when regex templates do not match (`matched_via: regex|llm`, 2s timeout, `COPILOT_ENABLED` gate); event-bus realtime anomaly quick-check for `vm.cpu_spike`/`vm.ram_spike`/`quota.sudden_jump` with Redis baseline stats (`pf9:stats:{entity_type}:{entity_id}`), 3-sigma threshold detection, `anomaly.realtime` event emission, and `REALTIME_ANOMALY_ENABLED` toggle.
 > Previous: v2.14.0 — CLEA condition DSL (eq/neq/in/contains operators + metadata.* dot-paths, validation on POST/PUT, `GET /condition-schema`); tenant rightsizing request-change accepts optional `notes` body field; "Request Resize" modal in tenant UI with "Requested ✓" state.
@@ -6035,7 +6037,7 @@ Requires Admin or Superadmin role.
 
 ---
 
-## PSA Webhook Endpoints (v1.90.0)
+## PSA Webhook Endpoints (v2.17.0)
 
 Requires Admin or Superadmin role for write operations.
 
@@ -6046,14 +6048,20 @@ Requires Admin or Superadmin role for write operations.
 | `PUT` | `/api/psa/configs/{id}` | Update config. Same body as POST. |
 | `DELETE` | `/api/psa/configs/{id}` | Delete config. |
 | `POST` | `/api/psa/configs/{id}/test-fire` | Send a synthetic test webhook payload to the config URL. Returns `{"status": "ok"|"error", "http_status": 200, "body": "..."}`. |
+| `GET` | `/api/psa/configs/{id}/inbound-token` | Generate or rotate inbound PSA token and enable inbound sync for this config. Returns plaintext token once. |
+| `POST` | `/api/psa/inbound/{id}` | PSA callback endpoint for ticket status updates. Requires `X-PSA-Token` header. |
 
 **Field notes**:
 - `webhook_url` — Must start with `http://` or `https://`. Validated at create/update time.
 - `auth_header` — Stored Fernet-encrypted. Never returned in plaintext. Accepts `Bearer <token>`, `Token <value>`, or `Key: Value` format.
-- `min_severity` — One of `info`, `medium`, `high`, `critical`.
+- `min_severity` — One of `low`, `medium`, `high`, `critical`.
 - `filter_types` — Optional JSON array of insight type strings. Empty = all types allowed.
 - `filter_regions` — Optional JSON array of region IDs. Empty = all regions allowed.
 - Webhooks fire automatically from the intelligence worker when a **new** high/critical insight is created and conditions match the config filters.
+- `inbound_enabled` — Enables inbound ticket status callbacks for this config.
+- `status_map` — Optional map of PSA statuses to insight statuses, e.g. `{ "Completed": "resolved", "Cancelled": "dismissed" }`.
+- `inbound_webhook_url` — Computed callback URL for this config.
+- `inbound_token` — Stored encrypted at rest and validated via `X-PSA-Token` on inbound callbacks.
 
 ### PSA Webhook Payload
 

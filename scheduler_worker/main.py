@@ -35,6 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import requests as _requests_mod
+from shared.health_scoring import compute_security_posture_component
 
 # ---------------------------------------------------------------------------
 # Worker observability — Redis metrics (B10.1)
@@ -765,8 +766,14 @@ def _compute_all_tenant_health_scores() -> None:
             return
 
         # Load configurable component weights from system_settings
-        _DEFAULT_WEIGHTS = {"snapshot_compliance": 25, "quota_headroom": 20,
-                            "drift": 20, "sla_tier": 20, "tickets": 15}
+        _DEFAULT_WEIGHTS = {
+            "snapshot_compliance": 22,
+            "quota_headroom": 18,
+            "drift": 18,
+            "sla_tier": 17,
+            "tickets": 10,
+            "security_posture": 15,
+        }
         weights = dict(_DEFAULT_WEIGHTS)
         try:
             cur.execute("SELECT key, value FROM system_settings WHERE key LIKE 'health_score.weight.%'")
@@ -887,6 +894,70 @@ def _compute_all_tenant_health_scores() -> None:
                 scores["tickets"] = ticket_score
                 details["tickets"] = {"open_by_priority": open_tix}
 
+                # --- security posture (0-15) ---
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(DISTINCT u.id) AS total_users,
+                        COUNT(DISTINCT u.id) FILTER (WHERE um.is_enabled IS TRUE) AS mfa_enabled_users
+                    FROM role_assignments ra
+                    JOIN users u ON u.id = ra.user_id
+                    LEFT JOIN user_mfa um ON um.username = u.name
+                    WHERE ra.project_id = %s
+                      AND ra.user_id IS NOT NULL
+                    """,
+                    (project_id,),
+                )
+                mfa_row = cur.fetchone() or (0, 0)
+
+                cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT s.id) AS exposed_vm_count
+                    FROM servers s
+                    JOIN ports p ON p.device_id = s.id
+                    JOIN security_group_rules sgr
+                      ON p.raw_json::jsonb->'security_groups' ? sgr.security_group_id
+                    WHERE s.project_id = %s
+                      AND sgr.direction = 'ingress'
+                      AND COALESCE(sgr.remote_ip_prefix, '0.0.0.0/0') IN ('0.0.0.0/0', '::/0')
+                      AND (
+                            sgr.protocol IS NULL OR LOWER(sgr.protocol) = 'tcp'
+                          )
+                      AND (
+                            (COALESCE(sgr.port_range_min, 22) <= 22 AND COALESCE(sgr.port_range_max, 22) >= 22)
+                            OR
+                            (COALESCE(sgr.port_range_min, 3389) <= 3389 AND COALESCE(sgr.port_range_max, 3389) >= 3389)
+                          )
+                    """,
+                    (project_id,),
+                )
+                exposed_row = cur.fetchone() or (0,)
+
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS total_vm_count,
+                        COUNT(*) FILTER (
+                            WHERE COALESCE(i.updated_at, i.created_at) < NOW() - INTERVAL '180 days'
+                        ) AS stale_vm_count
+                    FROM servers s
+                    LEFT JOIN images i ON i.id = s.image_id
+                    WHERE s.project_id = %s
+                    """,
+                    (project_id,),
+                )
+                image_row = cur.fetchone() or (0, 0)
+
+                security_component = compute_security_posture_component(
+                    mfa_enabled_users=(mfa_row[1] or 0),
+                    mfa_total_users=(mfa_row[0] or 0),
+                    exposed_vm_count=(exposed_row[0] or 0),
+                    stale_vm_count=(image_row[1] or 0),
+                    total_vm_count=(image_row[0] or 0),
+                )
+                scores["security_posture"] = security_component["score"]
+                details["security_posture"] = security_component["details"]
+
                 # Apply configured weights (scale proportionally to each default max)
                 def _scale(raw, default_max, cfg_weight):
                     return round(raw / default_max * cfg_weight) if default_max else 0
@@ -897,6 +968,7 @@ def _compute_all_tenant_health_scores() -> None:
                     "drift":               _scale(scores["drift"],               _DEFAULT_WEIGHTS["drift"],               weights["drift"]),
                     "sla_tier":            _scale(scores["sla_tier"],            _DEFAULT_WEIGHTS["sla_tier"],            weights["sla_tier"]),
                     "tickets":             _scale(scores["tickets"],             _DEFAULT_WEIGHTS["tickets"],             weights["tickets"]),
+                    "security_posture":    _scale(scores["security_posture"],    _DEFAULT_WEIGHTS["security_posture"],    weights["security_posture"]),
                 }
                 total_score = sum(scaled.values())
 
@@ -904,15 +976,15 @@ def _compute_all_tenant_health_scores() -> None:
                     """
                     INSERT INTO tenant_health_scores
                         (project_id, computed_at, score,
-                         snapshot_compliance, quota_headroom, drift, sla_tier, tickets,
+                         snapshot_compliance, quota_headroom, drift, sla_tier, tickets, security_posture,
                          details)
-                    VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (project_id, computed_at) DO NOTHING
                     """,
                     (
                         project_id, total_score,
                         scaled["snapshot_compliance"], scaled["quota_headroom"],
-                        scaled["drift"], scaled["sla_tier"], scaled["tickets"],
+                        scaled["drift"], scaled["sla_tier"], scaled["tickets"], scaled["security_posture"],
                         json.dumps(details),
                     ),
                 )

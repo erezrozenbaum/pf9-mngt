@@ -841,7 +841,9 @@ $provisioningMigrations = @(
     @{File="db\migrate_v1_99_5_sla_uptime_precision.sql"; Desc="SLA uptime precision fix v1.99.5: widen uptime_actual_pct DECIMAL(5,3) -> DECIMAL(6,3) to accommodate 100% uptime"},
     @{File="db\migrate_v2_0_0_vjailbreak_webhook.sql"; Desc="vJailbreak webhook feedback v2.0.0: migration_webhook_events table, webhook_secret on migration_projects, migration_status/failure_reason/migrated_at on migration_vms"},
     @{File="db\migrate_v2_3_2_wave_timeline.sql";       Desc="Wave timeline v2.3.2: started_at/completed_at on migration_waves; migrations_completed on sla_compliance_monthly"},
-    @{File="db\migrate_v2_4_0_notification_dlq.sql";     Desc="Notification DLQ v2.4.0: notification_retry_queue table + indexes + pf9_notification_svc grants"}
+    @{File="db\migrate_v2_4_0_notification_dlq.sql";     Desc="Notification DLQ v2.4.0: notification_retry_queue table + indexes + pf9_notification_svc grants"},
+    @{File="db\migrate_v2_17_0_maintenance_health.sql";  Desc="v2.17.0: ops maintenance windows + tenant health security_posture component"},
+    @{File="db\migrate_v2_17_1_psa_inbound.sql";         Desc="v2.17.1: PSA inbound sync columns and intelligence role access"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

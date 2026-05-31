@@ -1,5 +1,12 @@
 import sys
 from pathlib import Path
+import types
+
+psycopg2_stub = types.ModuleType("psycopg2")
+psycopg2_stub.extras = types.ModuleType("psycopg2.extras")
+psycopg2_stub.extras.RealDictCursor = object
+sys.modules.setdefault("psycopg2", psycopg2_stub)
+sys.modules.setdefault("psycopg2.extras", psycopg2_stub.extras)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "intelligence_worker"))
 
@@ -101,3 +108,30 @@ def test_run_resolves_stale_open_alerts():
 
     assert conn.committed is True
     assert any("UPDATE sla_defense_alerts" in sql for sql, _ in conn.cursor_obj.executed)
+
+
+def test_process_candidate_row_skips_when_project_in_maintenance(monkeypatch):
+    conn = _FakeConn()
+    engine = SlaDefenseEngine(conn)
+    triggered = set()
+
+    monkeypatch.setattr(engine, "_maintenance_window_for_project", lambda _pid: "planned change")
+
+    fired = engine._process_candidate_row(
+        {
+            "project_id": "p1",
+            "sla_id": 11,
+            "insight_id": 22,
+            "insight_type": "capacity_quota",
+            "runway_days": 0.05,
+            "confidence": 0.9,
+            "rto_hours": 2,
+            "project_name": "Project 1",
+            "tier": "gold",
+        },
+        triggered,
+    )
+
+    assert fired is False
+    assert triggered == set()
+    assert not any("INSERT INTO sla_defense_alerts" in sql for sql, _ in conn.cursor_obj.executed)

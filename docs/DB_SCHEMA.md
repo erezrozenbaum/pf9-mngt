@@ -1028,24 +1028,48 @@ CREATE TABLE msp_labor_rates (
 **Seeded types** (8 rows): `waste_idle_vm`, `waste_orphan_volume`, `waste_orphan_snapshot`, `waste_orphan_fip`, `capacity_storage`, `risk_snapshot_gap`, `leakage_overconsumption`, `leakage_ghost`.
 
 ### psa_webhook_config
-Outbound PSA/ITSM webhook configuration. Auth header is Fernet-encrypted at rest.
+Outbound + inbound PSA/ITSM webhook configuration. Auth header and inbound token are Fernet-encrypted at rest.
 
 ```sql
 CREATE TABLE psa_webhook_config (
     id              BIGSERIAL PRIMARY KEY,
-    name            TEXT NOT NULL,
+    psa_name        TEXT NOT NULL,
     webhook_url     TEXT NOT NULL,          -- must start with http:// or https://
     auth_header     TEXT,                   -- Fernet-encrypted "Bearer ..." or "Key: Value"
-    min_severity    TEXT NOT NULL DEFAULT 'high',  -- info|medium|high|critical
-    filter_types    JSONB NOT NULL DEFAULT '[]',   -- [] = all types allowed
-    filter_regions  JSONB NOT NULL DEFAULT '[]',   -- [] = all regions allowed
+    min_severity    TEXT NOT NULL DEFAULT 'high',  -- low|medium|high|critical
+    insight_types   TEXT[] NOT NULL DEFAULT '{}',  -- {} = all insight types allowed
+    region_ids      TEXT[] NOT NULL DEFAULT '{}',  -- {} = all regions allowed
+    inbound_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    inbound_token   TEXT,                          -- Fernet-encrypted inbound callback token
+    status_map      JSONB NOT NULL DEFAULT '{}'::jsonb,
     enabled         BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
 
-**Webhook firing rules**: Triggered from `intelligence_worker/engines/base.py` `upsert_insight()` on new inserts (`xmax=0`) when severity is `high` or `critical`. Per-config `min_severity`, `filter_types`, and `filter_regions` conditions are all applied before firing.
+**Webhook firing rules**: Triggered from `intelligence_worker/engines/base.py` `upsert_insight()` on new inserts (`xmax=0`) when severity is `high` or `critical`. Per-config `min_severity`, `insight_types`, and `region_ids` conditions are all applied before firing.
+
+**Inbound sync rules**: `POST /api/psa/inbound/{config_id}` validates `X-PSA-Token` against `inbound_token`, maps external status values through `status_map`, and updates matching insights linked by `metadata.psa_ticket_id`.
+
+### ops_maintenance_windows
+Operational maintenance suppression windows used by CLEA and SLA defense.
+
+```sql
+CREATE TABLE ops_maintenance_windows (
+    id                      BIGSERIAL PRIMARY KEY,
+    title                   TEXT NOT NULL,
+    starts_at               TIMESTAMPTZ NOT NULL,
+    ends_at                 TIMESTAMPTZ NOT NULL,
+    scope                   JSONB,   -- NULL = platform-wide; optional project_ids/region_ids arrays
+    suppress_clea           BOOLEAN NOT NULL DEFAULT TRUE,
+    suppress_sla_defense    BOOLEAN NOT NULL DEFAULT TRUE,
+    suppress_notifications  BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by              TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_ops_maintenance_window_order CHECK (ends_at > starts_at)
+);
+```
 
 ---
 
@@ -1142,7 +1166,7 @@ CREATE TABLE IF NOT EXISTS operational_events (
 
 ---
 
-## tenant_health_scores (v1.99.0)
+## tenant_health_scores (v2.17.0)
 
 Stores the per-tenant composite health score computed by `scheduler_worker` every 4 hours (configurable via `HEALTH_SCORE_INTERVAL_SECONDS`). Each run appends a new row; the companion view `tenant_health_scores_latest` returns the most-recent row per tenant.
 
@@ -1151,11 +1175,12 @@ CREATE TABLE tenant_health_scores (
     project_id              TEXT        NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     computed_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     score                   SMALLINT    NOT NULL CHECK (score BETWEEN 0 AND 100),
-    snapshot_compliance     SMALLINT    NOT NULL DEFAULT 0,  -- 0-25
-    quota_headroom          SMALLINT    NOT NULL DEFAULT 0,  -- 0-20
-    drift                   SMALLINT    NOT NULL DEFAULT 0,  -- 0-20
-    sla_tier                SMALLINT    NOT NULL DEFAULT 0,  -- 0-20
-    tickets                 SMALLINT    NOT NULL DEFAULT 0,  -- 0-15
+    snapshot_compliance     SMALLINT    NOT NULL DEFAULT 0,  -- 0-22
+    quota_headroom          SMALLINT    NOT NULL DEFAULT 0,  -- 0-18
+    drift                   SMALLINT    NOT NULL DEFAULT 0,  -- 0-18
+    sla_tier                SMALLINT    NOT NULL DEFAULT 0,  -- 0-17
+    tickets                 SMALLINT    NOT NULL DEFAULT 0,  -- 0-10
+    security_posture        SMALLINT    NOT NULL DEFAULT 0,  -- 0-15
     details                 JSONB       NOT NULL DEFAULT '{}',
     PRIMARY KEY (project_id, computed_at)
 );
@@ -1165,11 +1190,12 @@ CREATE TABLE tenant_health_scores (
 
 | Component | Max | Criteria |
 |---|---|---|
-| `snapshot_compliance` | 25 | ≥1 successful snapshot in last 7 days = 25; else 0 |
-| `quota_headroom` | 20 | Peak utilization <60%=20, <80%=15, <90%=8, ≥90%=0; no data=10 |
-| `drift` | 20 | Drift events (30d): 0=20, 1-2=15, 3-5=8, >5=0 |
-| `sla_tier` | 20 | Gold=20, Silver=15, Bronze=10, other=5 |
-| `tickets` | 15 | No open=15, critical/high open=0, ≤2 low=8, >2 low=4 |
+| `snapshot_compliance` | 22 | ≥1 successful snapshot in last 7 days = full component; else 0 |
+| `quota_headroom` | 18 | Peak utilization thresholds scale to configured component max |
+| `drift` | 18 | Drift events (30d) reduce score by tiered penalties |
+| `sla_tier` | 17 | Higher SLA tiers increase baseline component score |
+| `tickets` | 10 | Open critical/high tickets drive strongest penalty |
+| `security_posture` | 15 | Composite of MFA coverage, exposed SSH/RDP footprint, and stale OS image ratio |
 
 **Grading**: A≥90, B≥75, C≥60, D≥40, F<40.
 

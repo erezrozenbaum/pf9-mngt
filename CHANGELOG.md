@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.17.0] - 2026-05-31
+
+### Added
+
+- **PSA inbound ticket sync** (`api/psa_routes.py`, `db/migrate_v2_17_1_psa_inbound.sql`): Added bi-directional PSA lifecycle support with `POST /api/psa/inbound/{config_id}` callback handling, inbound token validation (`X-PSA-Token`), configurable `status_map` translation to insight statuses, and `GET /api/psa/configs/{id}/inbound-token` token rotation endpoint.
+- **PSA schema extension for inbound flow** (`db/init.sql`, `db/migrate_v2_17_1_psa_inbound.sql`): `psa_webhook_config` now includes `inbound_enabled`, `inbound_token` (encrypted), and `status_map` (JSONB).
+- **PSA ticket linkage for sync-back matching** (`intelligence_worker/engines/base.py`, `api/psa_routes.py`): Outbound webhook response payloads are parsed for `ticket_id`-style fields and persisted into insight metadata as `psa_ticket_id` for inbound status correlation.
+
+### Changed
+
+- **Windows deployment migration parity** (`deployment.ps1`): Added `db/migrate_v2_17_0_maintenance_health.sql` and `db/migrate_v2_17_1_psa_inbound.sql` to the explicit migration list so local Windows deployments apply the same schema upgrades as Linux (`run_migration.py`) flows.
+- **Roadmap status update (G8/G9/G10)** (`_plans/NEXT_PRIORITY_FEATURES.md`): Updated feature statuses and v2.17 checklist progress after implementing maintenance suppression/security posture backend work and PSA inbound sync.
+
 ## [2.16.5] - 2026-05-31
 
 ### Fixed

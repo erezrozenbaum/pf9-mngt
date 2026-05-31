@@ -252,6 +252,7 @@ def build_infra_context(redact: bool = False) -> str:
                 cur.execute("""
                     SELECT ths.project_id,
                            ths.score,
+                          ths.security_posture,
                            p.name AS project_name,
                            prev.score AS prev_score
                     FROM tenant_health_scores ths
@@ -282,7 +283,9 @@ def build_infra_context(redact: bool = False) -> str:
                         if r["prev_score"] is not None:
                             delta = r["score"] - r["prev_score"]
                             trend = f" ({'↓' if delta < 0 else '↑'}{abs(delta)})"
-                        lines.append(f"  {pn}={r['score']}{trend}")
+                        sec = r.get("security_posture")
+                        sec_txt = f" sec={sec}" if sec is not None else ""
+                        lines.append(f"  {pn}={r['score']}{trend}{sec_txt}")
                         shown.add(r["project_id"])
                     for r in hs_rows:
                         if r["project_id"] in shown:
@@ -291,7 +294,9 @@ def build_infra_context(redact: bool = False) -> str:
                             pn = r["project_name"] or r["project_id"]
                             if redact:
                                 pn = pn[:3] + "***"
-                            lines.append(f"  {pn}={r['score']} (↓{r['prev_score'] - r['score']} this cycle — declining)")
+                            sec = r.get("security_posture")
+                            sec_txt = f" sec={sec}" if sec is not None else ""
+                            lines.append(f"  {pn}={r['score']}{sec_txt} (↓{r['prev_score'] - r['score']} this cycle — declining)")
                     sections.append("TENANT HEALTH SCORES (worst/declining):\n" + "\n".join(lines))
             except Exception:
                 pass

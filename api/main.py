@@ -137,6 +137,7 @@ from tenant_health_routes import router as tenant_health_router
 from snapshot_chain_routes import router as snapshot_chain_router
 from rightsizing_routes import router as rightsizing_router
 from platform_health_routes import router as platform_health_router
+from maintenance_routes import router as maintenance_router
 
 # CLEA — Closed-Loop Event Automation
 from clea_routes import router as clea_router
@@ -444,6 +445,7 @@ app.include_router(tenant_health_router)
 app.include_router(snapshot_chain_router)
 app.include_router(rightsizing_router)
 app.include_router(platform_health_router)
+app.include_router(maintenance_router)
 app.include_router(clea_router)
 app.include_router(sse_router)
 app.include_router(node_logs_router)
