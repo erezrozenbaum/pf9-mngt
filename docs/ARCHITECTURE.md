@@ -1936,13 +1936,16 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
-## v2.17.0 Changes
+## v2.17.1 Changes
 
 ### PSA bi-directional lifecycle sync (`api/psa_routes.py`, `intelligence_worker/engines/base.py`)
 The PSA integration now supports a full round-trip ticket lifecycle. Outbound webhook responses are parsed for ticket identifiers and stored in `operational_insights.metadata.psa_ticket_id`. A new inbound callback endpoint (`POST /api/psa/inbound/{config_id}`) validates `X-PSA-Token`, maps external statuses through per-config `status_map`, and updates insight status/state metadata directly. Token lifecycle management is exposed through `GET /api/psa/configs/{id}/inbound-token`, and config responses now expose `inbound_enabled` + computed `inbound_webhook_url`.
 
 ### Deployment migration parity (`deployment.ps1`)
 Windows deployment now applies the same v2.17 schema upgrades as Linux migration flows by explicitly including `migrate_v2_17_0_maintenance_health.sql` and `migrate_v2_17_1_psa_inbound.sql` in the PowerShell migration list.
+
+### Scheduler image packaging hotfix (`scheduler_worker/Dockerfile`)
+The scheduler container now includes the repository `shared/` package, fixing startup failures caused by `from shared.health_scoring import compute_security_posture_component` when running the worker in Kubernetes.
 
 ### Maintenance-window-aware automation (`api/maintenance_routes.py`, `api/clea_routes.py`, `intelligence_worker/engines/sla_defense.py`)
 Automation pipelines now account for planned maintenance windows via `ops_maintenance_windows`. CLEA evaluation and SLA defense alert generation both consult active window scope before acting, reducing false-positive automation and proactive-alert noise during planned operational change windows.

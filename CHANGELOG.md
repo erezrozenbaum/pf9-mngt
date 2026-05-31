@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.17.0] - 2026-05-31
+## [2.17.1] - 2026-05-31
 
 ### Added
 
@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Windows deployment migration parity** (`deployment.ps1`): Added `db/migrate_v2_17_0_maintenance_health.sql` and `db/migrate_v2_17_1_psa_inbound.sql` to the explicit migration list so local Windows deployments apply the same schema upgrades as Linux (`run_migration.py`) flows.
 - **Roadmap status update (G8/G9/G10)** (`_plans/NEXT_PRIORITY_FEATURES.md`): Updated feature statuses and v2.17 checklist progress after implementing maintenance suppression/security posture backend work and PSA inbound sync.
+
+### Fixed
+
+- **Scheduler worker startup on Kubernetes** (`scheduler_worker/Dockerfile`): Added `COPY shared/ ./shared/` so `shared.health_scoring` imports resolve in `pf9-scheduler-worker` images. Fixes CrashLoopBackOff with `ModuleNotFoundError: No module named 'shared'` after v2.17.0 rollout.
 
 ## [2.16.5] - 2026-05-31
 

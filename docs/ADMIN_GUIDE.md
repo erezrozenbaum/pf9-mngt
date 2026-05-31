@@ -834,12 +834,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
-### v2.17.0 — PSA bi-directional sync + release parity
+### v2.17.1 — Scheduler image hotfix + release parity
 
 - **PSA inbound status sync** (`api/psa_routes.py`): Added `POST /api/psa/inbound/{config_id}` to receive PSA lifecycle callbacks (`ticket_id`, `status`, optional resolution metadata), validate `X-PSA-Token`, map external status via per-config `status_map`, and update the matching `operational_insights` row by `metadata->>'psa_ticket_id'`.
 - **Inbound token rotation** (`api/psa_routes.py`): Added `GET /api/psa/configs/{id}/inbound-token` to generate/rotate encrypted inbound tokens and enable inbound sync per config. `GET /api/psa/configs` now includes `inbound_enabled`, `status_map`, and computed `inbound_webhook_url`.
 - **Outbound-to-inbound linkage** (`intelligence_worker/engines/base.py`, `api/psa_routes.py`): Outbound webhook responses are parsed for ticket IDs and persisted as `metadata.psa_ticket_id` on insights to support deterministic sync-back matching.
 - **Migration parity** (`deployment.ps1`): Windows deployment migration list now includes `db/migrate_v2_17_0_maintenance_health.sql` and `db/migrate_v2_17_1_psa_inbound.sql` to match Linux `run_migration.py` rollout behavior.
+- **Scheduler worker container packaging fix** (`scheduler_worker/Dockerfile`): Added `COPY shared/ ./shared/` so scheduler startup can import `shared.health_scoring` in Kubernetes/Helm environments.
 
 ### v2.17.0 — Maintenance suppression + security posture scoring
 

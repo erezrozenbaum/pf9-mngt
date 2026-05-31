@@ -1166,7 +1166,7 @@ CREATE TABLE IF NOT EXISTS operational_events (
 
 ---
 
-## tenant_health_scores (v2.17.0)
+## tenant_health_scores (v2.17.1)
 
 Stores the per-tenant composite health score computed by `scheduler_worker` every 4 hours (configurable via `HEALTH_SCORE_INTERVAL_SECONDS`). Each run appends a new row; the companion view `tenant_health_scores_latest` returns the most-recent row per tenant.
 
