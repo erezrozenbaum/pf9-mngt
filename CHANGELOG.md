@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.16.3] - 2026-05-31
+
+### Fixed
+
+- **Scheduler worker egress for PF9 exporter scraping** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): Added missing `pf9-scheduler-worker` NetworkPolicy egress rules for TCP `9177` (libvirt-exporter) and `9388` (node-exporter). This restores scheduler metrics collection against PF9 hypervisor exporter endpoints that was timing out in Kubernetes despite healthy pods.
+- **Host/VM metrics collector error visibility** (`host_metrics_collector.py`): Improved failure logs for exporter polling to include explicit timeout messages (`timeout after 10s`) and exception class + repr for non-timeout errors. This removes ambiguous blank error output and makes network/configuration diagnosis actionable.
+
 ## [2.16.2] - 2026-05-28
 
 ### Added

@@ -1936,6 +1936,14 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.16.3 Changes
+
+### Scheduler exporter connectivity in Kubernetes (`k8s/helm/pf9-mngt/templates/network-policies.yaml`)
+The scheduler worker NetworkPolicy now includes egress rules for TCP `9177` and `9388` to allow polling PF9 hypervisor libvirt/node exporters. Without these rules, exporter scraping timed out even when pods were healthy and cluster services were stable.
+
+### Metrics collector diagnostics (`host_metrics_collector.py`)
+Exporter scraping failures now emit explicit timeout messages and exception type details. The previous generic `...: {e}` logging could produce empty-looking output for timeout paths, obscuring root cause analysis.
+
 ## v2.16.2 Changes
 
 ### Drift auto-ticket suppression rules (`db_writer.py`)

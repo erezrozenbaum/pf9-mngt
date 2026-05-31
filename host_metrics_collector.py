@@ -178,8 +178,11 @@ class HostMetricsCollector:
                 else:
                     print(f"HTTP {response.status} from {host}")
                     return None
+        except asyncio.TimeoutError:
+            print(f"Failed to collect host metrics from {host}: timeout after 10s")
+            return None
         except Exception as e:
-            print(f"Failed to collect host metrics from {host}: {e}")
+            print(f"Failed to collect host metrics from {host}: {type(e).__name__}: {e!r}")
             return None
 
     async def collect_vm_metrics(self, session, host):
@@ -196,8 +199,11 @@ class HostMetricsCollector:
                 else:
                     print(f"HTTP {response.status} from {host}:9177")
                     return []
+        except asyncio.TimeoutError:
+            print(f"Failed to collect VM metrics from {host}: timeout after 10s")
+            return []
         except Exception as e:
-            print(f"Failed to collect VM metrics from {host}: {e}")
+            print(f"Failed to collect VM metrics from {host}: {type(e).__name__}: {e!r}")
             return []
 
     async def resolve_vm_ips(self, session, vm_list, host):
