@@ -834,6 +834,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
+### v2.18.0 — AI incident triage + QBR AI intervention reporting
+
+- **Proactive AI brief generation** (`api/ai_triage.py`, `api/event_bus.py`): high-severity operational events can now trigger an automatic AI incident brief (analysis, recommendation, risk, optional runbook suggestion) when Copilot triage is enabled.
+- **Copilot triage endpoints** (`api/ai_triage_routes.py`): Added brief list/summary/dismiss/execute API surface under `/api/copilot/briefs*` for operator workflows and dashboard widgets.
+- **SSE triage stream events** (`api/sse_routes.py`): Live SSE stream now emits AI brief updates via `event: incident_brief` from Redis channel `pf9:incident_briefs`.
+- **QBR AI metrics and interventions** (`api/qbr_routes.py`): QBR payloads now include `ai_triage_count`, `ai_executed_count`, and executed AI-brief interventions as resolved operational value entries.
+- **Schema + deployment parity** (`db/migrate_v2_18_0_incident_briefs.sql`, `db/migrate_v2_18_0_copilot_triage_config.sql`, `deployment.ps1`): Added incident brief table/config columns and ensured Windows migration list includes both v2.18 migrations.
+
 ### v2.17.1 — Scheduler image hotfix + release parity
 
 - **PSA inbound status sync** (`api/psa_routes.py`): Added `POST /api/psa/inbound/{config_id}` to receive PSA lifecycle callbacks (`ticket_id`, `status`, optional resolution metadata), validate `X-PSA-Token`, map external status via per-config `status_map`, and update the matching `operational_insights` row by `metadata->>'psa_ticket_id'`.

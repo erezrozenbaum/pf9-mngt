@@ -45,7 +45,7 @@ logger = logging.getLogger("pf9.sse")
 router = APIRouter(prefix="/api", tags=["events"])
 
 _REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-_CHANNEL = "pf9:live_events"
+_CHANNELS = ("pf9:live_events", "pf9:incident_briefs")
 _HEARTBEAT_S = 25  # seconds between keepalive comments
 
 
@@ -56,7 +56,7 @@ _HEARTBEAT_S = 25  # seconds between keepalive comments
 async def _sse_generator(request: Request) -> AsyncGenerator[str, None]:
     """
     Async generator that:
-      1. Opens a Redis pub/sub subscription on ``pf9:live_events``.
+    1. Opens a Redis pub/sub subscription on live-events + incident-brief channels.
       2. Yields SSE ``data:`` lines for every message received.
       3. Yields ``: keepalive`` comments every 25 s to prevent proxy timeouts.
       4. Exits cleanly when the client disconnects or an error occurs.
@@ -78,8 +78,8 @@ async def _sse_generator(request: Request) -> AsyncGenerator[str, None]:
     pubsub = client.pubsub()
 
     try:
-        await pubsub.subscribe(_CHANNEL)
-        logger.debug("sse: client connected, subscribed to %s", _CHANNEL)
+        await pubsub.subscribe(*_CHANNELS)
+        logger.debug("sse: client connected, subscribed to %s", ", ".join(_CHANNELS))
 
         while True:
             # Check for client disconnect on each iteration
@@ -95,7 +95,11 @@ async def _sse_generator(request: Request) -> AsyncGenerator[str, None]:
             )
 
             if msg and msg.get("type") == "message":
-                yield f"data: {msg['data']}\n\n"
+                channel = msg.get("channel")
+                if channel == "pf9:incident_briefs":
+                    yield f"event: incident_brief\ndata: {msg['data']}\n\n"
+                else:
+                    yield f"data: {msg['data']}\n\n"
             else:
                 # No message in HEARTBEAT_S seconds — send keepalive comment
                 yield ": keepalive\n\n"
@@ -106,7 +110,7 @@ async def _sse_generator(request: Request) -> AsyncGenerator[str, None]:
         logger.warning("sse: unexpected stream error: %s", exc)
     finally:
         try:
-            await pubsub.unsubscribe(_CHANNEL)
+            await pubsub.unsubscribe(*_CHANNELS)
             await client.aclose()
         except Exception:
             pass

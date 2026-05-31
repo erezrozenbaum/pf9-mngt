@@ -186,6 +186,37 @@ def _build_qbr_data(
             cur.execute("SELECT insight_type, hours_saved, rate_per_hour FROM msp_labor_rates")
             rates = {r["insight_type"]: r for r in cur.fetchall()}
 
+        # AI triage briefs in the date window for this tenant
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*)::int AS generated_count,
+                    COUNT(*) FILTER (WHERE executed_runbook_id IS NOT NULL)::int AS executed_count
+                FROM incident_briefs
+                WHERE project_id = %s
+                  AND generated_at >= %s
+                  AND generated_at <= %s
+                """,
+                (tenant_id, from_date, to_date),
+            )
+            ai_counts_row = cur.fetchone() or {"generated_count": 0, "executed_count": 0}
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, event_type, runbook_name, risk_level, generated_at
+                FROM incident_briefs
+                WHERE project_id = %s
+                  AND executed_runbook_id IS NOT NULL
+                  AND generated_at >= %s
+                  AND generated_at <= %s
+                ORDER BY generated_at DESC
+                """,
+                (tenant_id, from_date, to_date),
+            )
+            ai_executed_briefs = [dict(r) for r in cur.fetchall()]
+
         # Resolved insights within the date window for this tenant
         region_filter = ""
         params: list = [tenant_id, from_date, to_date]
@@ -313,6 +344,25 @@ def _build_qbr_data(
         reverse=True,
     )
 
+    ai_triage_count = int(ai_counts_row.get("generated_count") or 0)
+    ai_executed_count = int(ai_counts_row.get("executed_count") or 0)
+    if ai_executed_count > 0:
+        ai_rate = rates.get("ai_triage") or {"hours_saved": 0.5, "rate_per_hour": 150.0}
+        ai_hours = round(float(ai_rate["hours_saved"]) * ai_executed_count, 2)
+        ai_cost = round(float(ai_rate["rate_per_hour"]) * ai_hours, 2)
+        interventions.append(
+            {
+                "type": "ai_triage",
+                "count": ai_executed_count,
+                "hours_saved": ai_hours,
+                "cost_avoided": ai_cost,
+            }
+        )
+        interventions = sorted(interventions, key=lambda x: x["cost_avoided"], reverse=True)
+
+        total_hours_saved = round(total_hours_saved + ai_hours, 2)
+        total_cost_avoided = round(total_cost_avoided + ai_cost, 2)
+
     return {
         "tenant_id":         tenant_id,
         "tenant_name":       tenant_name,
@@ -323,6 +373,18 @@ def _build_qbr_data(
         "total_hours_saved": round(total_hours_saved, 2),
         "total_cost_avoided":round(total_cost_avoided, 2),
         "interventions":     interventions,
+        "ai_triage_count":   ai_triage_count,
+        "ai_executed_count": ai_executed_count,
+        "ai_triage_interventions": [
+            {
+                "id": b["id"],
+                "event_type": b["event_type"],
+                "runbook_name": b.get("runbook_name"),
+                "risk_level": b.get("risk_level"),
+                "generated_at": b["generated_at"].isoformat() if b.get("generated_at") else None,
+            }
+            for b in ai_executed_briefs
+        ],
         "open_items":        [
             {
                 "id":         r["id"],

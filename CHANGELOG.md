@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.18.0] - 2026-05-31
+
+### Added
+
+- **AI incident triage engine** (`api/ai_triage.py`, `api/event_bus.py`): Added proactive AI brief generation from operational events with backend/severity guards, per-hour rate limiting, structured JSON normalization with free-text fallback, DB persistence, Redis publish (`pf9:incident_briefs`), and optional email notification hooks.
+- **AI triage API endpoints** (`api/ai_triage_routes.py`, `api/main.py`): Added `/api/copilot/briefs` list/summary/dismiss/execute endpoints and registered router in API bootstrap.
+- **AI triage schema and config migrations** (`db/migrate_v2_18_0_incident_briefs.sql`, `db/migrate_v2_18_0_copilot_triage_config.sql`, `db/init.sql`): Added `incident_briefs` table/indexes and `copilot_config.ai_triage_*` runtime controls for fresh installs and migration-based upgrades.
+- **AI triage unit tests** (`tests/test_ai_triage.py`, `tests/test_qbr_ai_triage.py`): Added focused tests for triage engine guardrails/fallback/publish flow, brief route actions, and QBR AI metrics integration.
+
+### Changed
+
+- **QBR AI intervention integration** (`api/qbr_routes.py`): QBR payload now includes `ai_triage_count`, `ai_executed_count`, and `ai_triage_interventions`; executed incident briefs are included as resolved interventions with ROI contribution.
+- **SSE channel expansion for triage** (`api/sse_routes.py`): SSE stream now subscribes to both `pf9:live_events` and `pf9:incident_briefs`, emitting triage entries as `event: incident_brief`.
+- **Windows migration parity for v2.18.0** (`deployment.ps1`): Added both v2.18 migration files to the explicit Windows migration list.
+
 ## [2.17.1] - 2026-05-31
 
 ### Added

@@ -117,6 +117,10 @@ class ConfigUpdate(BaseModel):
     anthropic_model: str | None = None
     redact_sensitive: bool | None = None
     system_prompt: str | None = None
+    ai_triage_enabled: bool | None = None
+    ai_triage_min_severity: str | None = None
+    ai_triage_max_per_hour: int | None = None
+    ai_triage_notify_email: bool | None = None
 
 
 class TestConnectionRequest(BaseModel):
@@ -166,6 +170,10 @@ def _get_config() -> dict:
         "redact_sensitive": DEFAULT_REDACT,
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
         "max_history_per_user": 200,
+        "ai_triage_enabled": False,
+        "ai_triage_min_severity": "critical",
+        "ai_triage_max_per_hour": 10,
+        "ai_triage_notify_email": False,
     }
 
 
@@ -511,6 +519,19 @@ async def update_config(body: ConfigUpdate, request: Request):
         updates["redact_sensitive"] = body.redact_sensitive
     if body.system_prompt is not None:
         updates["system_prompt"] = body.system_prompt
+    if body.ai_triage_enabled is not None:
+        updates["ai_triage_enabled"] = body.ai_triage_enabled
+    if body.ai_triage_min_severity is not None:
+        sev = body.ai_triage_min_severity.strip().lower()
+        if sev not in ("info", "warning", "high", "critical"):
+            raise HTTPException(400, "ai_triage_min_severity must be one of: info, warning, high, critical")
+        updates["ai_triage_min_severity"] = sev
+    if body.ai_triage_max_per_hour is not None:
+        if body.ai_triage_max_per_hour < 1 or body.ai_triage_max_per_hour > 200:
+            raise HTTPException(400, "ai_triage_max_per_hour must be between 1 and 200")
+        updates["ai_triage_max_per_hour"] = body.ai_triage_max_per_hour
+    if body.ai_triage_notify_email is not None:
+        updates["ai_triage_notify_email"] = body.ai_triage_notify_email
 
     if not updates:
         raise HTTPException(400, "No fields to update")

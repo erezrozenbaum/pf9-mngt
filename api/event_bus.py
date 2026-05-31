@@ -214,6 +214,21 @@ def _write_event(
             except Exception:
                 logger.debug("event_bus: clea evaluation failed for %r", event_type, exc_info=True)
 
+            try:
+                from ai_triage import evaluate_ai_triage  # lazy import
+
+                evaluate_ai_triage(
+                    event_id=event_id,
+                    event_type=event_type,
+                    severity=severity,
+                    entity_name=entity_name,
+                    project_id=project_id,
+                    project_name=project_name,
+                    metadata=metadata,
+                )
+            except Exception:
+                logger.debug("event_bus: ai triage evaluation failed for %r", event_type, exc_info=True)
+
             # Realtime anomaly fast-path: evaluate only supported signal events
             # against precomputed Redis stats and upsert an insight immediately.
             try:

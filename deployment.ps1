@@ -843,7 +843,9 @@ $provisioningMigrations = @(
     @{File="db\migrate_v2_3_2_wave_timeline.sql";       Desc="Wave timeline v2.3.2: started_at/completed_at on migration_waves; migrations_completed on sla_compliance_monthly"},
     @{File="db\migrate_v2_4_0_notification_dlq.sql";     Desc="Notification DLQ v2.4.0: notification_retry_queue table + indexes + pf9_notification_svc grants"},
     @{File="db\migrate_v2_17_0_maintenance_health.sql";  Desc="v2.17.0: ops maintenance windows + tenant health security_posture component"},
-    @{File="db\migrate_v2_17_1_psa_inbound.sql";         Desc="v2.17.1: PSA inbound sync columns and intelligence role access"}
+    @{File="db\migrate_v2_17_1_psa_inbound.sql";         Desc="v2.17.1: PSA inbound sync columns and intelligence role access"},
+    @{File="db\migrate_v2_18_0_incident_briefs.sql";     Desc="v2.18.0: AI incident triage incident_briefs table + indexes"},
+    @{File="db\migrate_v2_18_0_copilot_triage_config.sql"; Desc="v2.18.0: Copilot AI triage config columns"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

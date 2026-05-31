@@ -1936,6 +1936,17 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.18.0 Changes
+
+### AI incident triage pipeline (`api/ai_triage.py`, `api/event_bus.py`, `api/ai_triage_routes.py`)
+Operational events can now trigger proactive AI-generated incident briefs. The event bus evaluates triage eligibility (config enabled, severity threshold, backend support, and per-hour rate limits), calls Copilot LLM backends with event + infra context, stores structured brief records in `incident_briefs`, and exposes operator actions via `/api/copilot/briefs`, `/api/copilot/briefs/summary`, `/api/copilot/briefs/{id}/dismiss`, and `/api/copilot/briefs/{id}/execute`.
+
+### Realtime delivery and business reporting integration (`api/sse_routes.py`, `api/qbr_routes.py`)
+SSE now multiplexes both `pf9:live_events` and `pf9:incident_briefs`, emitting triage updates as `event: incident_brief` for frontend differentiation. QBR generation now includes AI triage activity with `ai_triage_count`, `ai_executed_count`, and executed-brief intervention entries so AI-driven actions are visible in review-period value reporting.
+
+### Schema and migration updates (`db/migrate_v2_18_0_incident_briefs.sql`, `db/migrate_v2_18_0_copilot_triage_config.sql`, `deployment.ps1`)
+`incident_briefs` was added to baseline schema + migration flow, and `copilot_config` gained `ai_triage_enabled`, `ai_triage_min_severity`, `ai_triage_max_per_hour`, and `ai_triage_notify_email`. Windows deployment migration lists now include both v2.18.0 migrations to preserve Linux/Windows schema parity.
+
 ## v2.17.1 Changes
 
 ### PSA bi-directional lifecycle sync (`api/psa_routes.py`, `intelligence_worker/engines/base.py`)
