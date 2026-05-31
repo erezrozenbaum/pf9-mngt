@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.16.5] - 2026-05-31
+
+### Fixed
+
+- **Exporter egress least-privilege correction** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): Removed unintended `9177`/`9388` egress rules from non-scheduler policies and kept PF9 hypervisor exporter access scoped to `pf9-scheduler-worker` only.
+
+### Changed
+
+- **Stale-cache fallback for metrics collection** (`host_metrics_collector.py`): When a scrape cycle returns no fresh host/VM data, the collector now preserves the last known good cache instead of overwriting it with empty data. Cache metadata now includes `stale`, `stale_reason`, `last_attempt`, `last_successful_update`, and `consecutive_empty_cycles`.
+- **NetworkPolicy CI guardrail** (`tests/test_k8s_helm_security.py`): Added a Helm render test that fails if exporter ports `9177`/`9388` appear in any NetworkPolicy other than `pf9-scheduler-worker`.
+
 ## [2.16.4] - 2026-05-31
 
 ### Fixed

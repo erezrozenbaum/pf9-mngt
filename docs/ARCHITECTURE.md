@@ -1936,6 +1936,14 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.16.5 Changes
+
+### Stale-cache resilience in scheduler metrics (`host_metrics_collector.py`)
+Metrics cache writes now preserve last known good host/VM data when a scrape cycle returns no data, marking the cache as stale and recording collection attempt/success metadata. This prevents temporary exporter/network failures from collapsing observability views to empty datasets.
+
+### Exporter egress policy guardrail (`k8s/helm/pf9-mngt/templates/network-policies.yaml`, `tests/test_k8s_helm_security.py`)
+Exporter ports `9177`/`9388` are intentionally scoped to `pf9-scheduler-worker` egress only, and a Helm security test now enforces that scope at render time to prevent accidental widening in future edits.
+
 ## v2.16.4 Changes
 
 ### Scheduler NetworkPolicy placement correction (`k8s/helm/pf9-mngt/templates/network-policies.yaml`)

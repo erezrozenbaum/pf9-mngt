@@ -849,6 +849,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 - **CLEA condition DSL & validation** (`api/clea_routes.py`): Policy `condition_expr` now supports a rich operator format. Top-level keys (`severity`, `entity_type`, `entity_id`, `project_id`, `region_id`, `category`) accept `eq`, `neq`, and `in` (list) operators. Arbitrary `metadata.*` dot-path keys additionally support `contains` (substring check). Example: `{"severity": {"op": "in", "value": ["critical", "high"]}, "metadata.runway_days": {"op": "eq", "value": 3}}`. Backward-compatible: plain shorthand (`{"severity": "critical"}`) continues to work. Validation is enforced on create/update — invalid expressions return `422` with a per-key error list. New `GET /api/admin/clea/condition-schema` endpoint exposes the full schema for the UI.
 - **Tenant resize request notes** (`tenant_portal/rightsizing_routes.py`, `tenant-ui/`): The "Request Resize" button in the tenant Cost Optimisation view now opens a modal where tenants can attach optional notes (up to 500 chars) for the support team. Notes are appended to the ticket description auto-created in the admin portal. After submission the button transitions to a disabled "Requested ✓" state and the recommendation card remains visible (previously it disappeared immediately).
 
+### v2.16.5 — Observability hardening: stale cache + policy guardrail
+
+- **Stale-cache fallback** (`host_metrics_collector.py`): Metrics collection no longer replaces cache with empty payloads on transient scrape failures. Last known good data is retained and marked stale with attempt/success timestamps.
+- **Policy least-privilege cleanup** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): Exporter egress ports `9177`/`9388` are now restricted to `pf9-scheduler-worker` only.
+- **Helm CI guardrail** (`tests/test_k8s_helm_security.py`): Added a render-time security test that fails when exporter ports are exposed in non-scheduler policies.
+
 ### v2.16.4 — Scheduler policy placement hotfix
 
 - **Scheduler NetworkPolicy correction** (`k8s/helm/pf9-mngt/templates/network-policies.yaml`): Ensured PF9 exporter ports `9177` and `9388` are included in the `pf9-scheduler-worker` egress block (not only in unrelated policy sections), so scheduler metrics collection can reach hypervisor exporters after rollout.

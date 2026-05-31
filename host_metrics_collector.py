@@ -77,6 +77,7 @@ class HostMetricsCollector:
         self._prev_cpu_totals: Dict[str, Dict[str, float]] = {}  # host -> {"idle": seconds, "total": seconds}
         # Store previous VM vcpu_time for delta-based VM CPU calculation
         self._prev_vm_cpu_totals: Dict[str, Dict] = {}  # domain_id -> {"vcpu_time": seconds, "wall_time": datetime}
+        self._consecutive_empty_cycles = 0
         # Load persisted CPU state from disk (so single-run / restart can compute deltas)
         self._load_cpu_state()
         
@@ -116,6 +117,17 @@ class HostMetricsCollector:
                 json.dump(state, f, indent=2)
         except Exception as e:
             print(f"Warning: Could not save CPU state: {e}")
+
+    def _load_existing_cache(self):
+        """Load previously saved cache, returning None on any parse/read error."""
+        try:
+            if not os.path.exists(self.cache_file):
+                return None
+            with open(self.cache_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not read existing cache for stale fallback: {e}")
+            return None
 
     def _build_hostname_map(self):
         """Build IP-to-hostname map from Platform9 API or .env PF9_HOST_MAP"""
@@ -680,6 +692,14 @@ class HostMetricsCollector:
 
     def save_cache(self, hosts_data, vms_data):
         """Save metrics to cache file"""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        has_fresh_data = bool(hosts_data) or bool(vms_data)
+
+        if has_fresh_data:
+            self._consecutive_empty_cycles = 0
+        else:
+            self._consecutive_empty_cycles += 1
+
         # Calculate VM statistics
         total_vms = len(vms_data)
         vm_stats = {}
@@ -698,7 +718,12 @@ class HostMetricsCollector:
             "summary": {
                 "total_vms": total_vms,
                 "total_hosts": len(hosts_data),
-                "last_update": datetime.now(timezone.utc).isoformat(),
+                "last_update": now_iso,
+                "last_attempt": now_iso,
+                "last_successful_update": now_iso if has_fresh_data else None,
+                "stale": not has_fresh_data,
+                "stale_reason": None if has_fresh_data else "collector_empty_cycle",
+                "consecutive_empty_cycles": self._consecutive_empty_cycles,
                 "vm_stats": vm_stats,
                 "host_stats": {
                     "avg_cpu": round(sum(h.get('cpu_usage_percent', 0) for h in hosts_data) / max(len(hosts_data), 1), 1),
@@ -709,8 +734,33 @@ class HostMetricsCollector:
                     "used_storage_gb": round(sum(h.get('storage_used_gb', 0) for h in hosts_data), 1)
                 }
             },
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": now_iso
         }
+
+        # Keep last known good data when collection returns nothing.
+        if not has_fresh_data:
+            previous_cache = self._load_existing_cache()
+            prev_summary = previous_cache.get("summary", {}) if isinstance(previous_cache, dict) else {}
+            prev_hosts = previous_cache.get("hosts", []) if isinstance(previous_cache, dict) else []
+            prev_vms = previous_cache.get("vms", []) if isinstance(previous_cache, dict) else []
+            prev_has_data = bool(prev_hosts) or bool(prev_vms)
+
+            if prev_has_data:
+                previous_cache["summary"] = dict(prev_summary)
+                previous_cache["summary"]["stale"] = True
+                previous_cache["summary"]["stale_reason"] = "collector_empty_cycle"
+                previous_cache["summary"]["last_attempt"] = now_iso
+                previous_cache["summary"]["consecutive_empty_cycles"] = self._consecutive_empty_cycles
+                previous_cache["summary"]["last_successful_update"] = (
+                    prev_summary.get("last_successful_update")
+                    or prev_summary.get("last_update")
+                )
+                previous_cache["timestamp"] = now_iso
+                cache_data = previous_cache
+                print(
+                    "! No fresh metrics this cycle; preserved last known good cache "
+                    f"({len(prev_hosts)} hosts, {len(prev_vms)} VMs)"
+                )
         
         with open(self.cache_file, 'w') as f:
             json.dump(cache_data, f, indent=2)
@@ -718,7 +768,11 @@ class HostMetricsCollector:
         # Persist CPU state for delta calculations across restarts
         self._save_cpu_state()
         
-        print(f"+ Cache updated: {len(hosts_data)} hosts, {total_vms} VMs")
+        summary = cache_data.get("summary", {})
+        print(
+            "+ Cache updated: "
+            f"{summary.get('total_hosts', 0)} hosts, {summary.get('total_vms', 0)} VMs"
+        )
 
     async def run_once(self):
         """Run one collection cycle"""

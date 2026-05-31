@@ -659,6 +659,26 @@ class TestNetworkPolicies:
             f"pf9-notification-worker policy has no SMTP egress port (587/465/25), got: {ports}"
         )
 
+    @skip_no_helm
+    def test_exporter_ports_only_allowed_for_scheduler_worker(self, chart_netpol_enabled):
+        """Ports 9177/9388 must only be exposed in scheduler-worker egress policy."""
+        policies = _by_kind(chart_netpol_enabled, "NetworkPolicy")
+        holders = []
+        for pol in policies:
+            ports = self._egress_ports(pol)
+            if 9177 in ports or 9388 in ports:
+                holders.append(pol["metadata"]["name"])
+
+        assert "pf9-scheduler-worker" in holders, (
+            "pf9-scheduler-worker must allow exporter egress ports 9177/9388"
+        )
+
+        unexpected = sorted([n for n in holders if n != "pf9-scheduler-worker"])
+        assert not unexpected, (
+            "Exporter egress ports 9177/9388 must be limited to pf9-scheduler-worker only; "
+            f"found in: {unexpected}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helm lint (always run — no cluster needed)
