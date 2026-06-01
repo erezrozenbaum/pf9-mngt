@@ -331,15 +331,25 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
         if (scopeTenant) smartParams.set("scope_tenant", scopeTenant);
         if (scopeDomain) smartParams.set("scope_domain", scopeDomain);
 
-        const [searchRes, intentRes, smartRes] = await Promise.all([
+        const [searchSettled, intentSettled, smartSettled] = await Promise.allSettled([
           apiFetch<SearchResult>(`/api/search?${params}`),
           apiFetch<IntentResult>(`/api/search/intent?q=${encodeURIComponent(q.trim())}`),
           apiFetch<SmartQueryResult>(`/api/search/smart?${smartParams}`),
         ]);
 
-        setResults(searchRes);
-        setIntents(intentRes);
-        setSmartResult(smartRes.matched ? smartRes : null);
+        // Apply results individually — one endpoint failure should not block others
+        if (searchSettled.status === "fulfilled") {
+          setResults(searchSettled.value);
+        } else {
+          setError(`Search unavailable: ${(searchSettled.reason as Error).message}`);
+          setResults(null);
+        }
+        if (intentSettled.status === "fulfilled") {
+          setIntents(intentSettled.value);
+        }
+        if (smartSettled.status === "fulfilled") {
+          setSmartResult(smartSettled.value.matched ? smartSettled.value : null);
+        }
         setPage(offset / LIMIT);
       } catch (e: any) {
         setError(e.message);
@@ -434,11 +444,19 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
       icon: "🖥️",
       queries: [
         chip("How many VMs?"),
+        chip("Show running VMs"),
         chip("Show powered off VMs"),
         chip("VMs in error state"),
+        chip("Recently created VMs"),
+        chip("Oldest VMs"),
+        chip("Largest VMs"),
         chip("Hypervisor capacity"),
+        chip("Down hypervisors"),
+        chip("How many hypervisors?"),
         chip("Show all flavors"),
+        chip("Total capacity"),
         chipT("VMs on host …", "VMs on host "),
+        chipT("VMs in project …", "VMs in project "),
         chip("Image overview"),
       ],
     },
@@ -451,6 +469,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
         chip("VMs per project"),
         chip("How many projects?"),
         chip("Domain overview"),
+        chip("Top resource consumers"),
       ],
     },
     {
@@ -458,8 +477,11 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
       icon: "💾",
       queries: [
         chip("Volume summary"),
+        chip("How many volumes?"),
         chip("Orphan volumes"),
+        chip("Largest volumes"),
         chip("Snapshot overview"),
+        chip("Snapshot policies"),
       ],
     },
     {
@@ -468,6 +490,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
       queries: [
         chip("Network overview"),
         chip("Floating IP overview"),
+        chip("Free floating IPs"),
         chip("Router overview"),
       ],
     },
@@ -478,6 +501,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
         chipT("Roles for …", "Roles for "),
         chip("All role assignments"),
         chip("Security group overview"),
+        chip("User list"),
       ],
     },
     {
@@ -486,6 +510,8 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
       queries: [
         chip("Recent activity"),
         chip("Drift summary"),
+        chip("Backup history"),
+        chip("Metering summary"),
         chip("Efficiency overview"),
         chip("Platform overview"),
       ],

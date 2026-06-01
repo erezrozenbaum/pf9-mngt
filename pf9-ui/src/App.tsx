@@ -3319,7 +3319,45 @@ const App: React.FC = () => {
     "clea_policies",
     "node_logs",
     "admin_settings",
+    "audit",
+    "system_logs",
+    "api_metrics",
   ].includes(activeTab);
+
+  const detailsPanelSelectionTabs = new Set([
+    "servers",
+    "snapshots",
+    "networks",
+    "subnets",
+    "volumes",
+    "domains",
+    "hypervisors",
+    "users",
+  ]);
+
+  const hasSelectedDetailsItem =
+    (activeTab === "servers" && !!selectedServer) ||
+    (activeTab === "snapshots" && !!selectedSnapshot) ||
+    (activeTab === "networks" && !!selectedNetwork) ||
+    (activeTab === "subnets" && !!selectedSubnet) ||
+    (activeTab === "volumes" && !!selectedVolume) ||
+    (activeTab === "domains" && !!selectedDomainItem) ||
+    (activeTab === "hypervisors" && !!selectedHypervisor) ||
+    (activeTab === "users" && !!selectedUserItem);
+
+  const shouldShowDetailsPlaceholder =
+    detailsPanelSelectionTabs.has(activeTab) && !hasSelectedDetailsItem;
+
+  const detailsPlaceholderLabel: Record<string, string> = {
+    servers: "VM",
+    snapshots: "Snapshot",
+    networks: "Network",
+    subnets: "Subnet",
+    volumes: "Volume",
+    domains: "Domain",
+    hypervisors: "Hypervisor",
+    users: "User",
+  };
 
   // -----------------------------------------------------------------------
   // Render
@@ -7173,19 +7211,15 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* Empty states for details */}
-          {!selectedServer &&
-            activeTab === "servers" &&
-            !selectedSnapshot &&
-            !selectedNetwork &&
-            !selectedSubnet &&
-            !selectedVolume &&
-            selectedResourceHistory.length === 0 && (
-              <div>
-                <h2>Details</h2>
-                <p>Click a row in the table to see details.</p>
-              </div>
-            )}
+          {/* Empty state for inventory detail tabs */}
+          {shouldShowDetailsPlaceholder && (
+            <div>
+              <h2>Details</h2>
+              <p>
+                Select a {detailsPlaceholderLabel[activeTab] || "resource"} from the table to view details.
+              </p>
+            </div>
+          )}
           
           {/* Empty state for history tab only */}
           {activeTab === "history" && 

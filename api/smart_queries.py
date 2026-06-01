@@ -1296,6 +1296,633 @@ _register(SmartQuery(
 ))
 
 
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  27. RUNNING / ACTIVE VMs                                │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="running_vms",
+    title="Running / Active VMs",
+    pattern=re.compile(
+        r"\b(?:running|active|on|powered.?on|live)\b.*\b(?:vm|vms|server|servers|instance|instances)\b"
+        r"|\b(?:vm|vms|server|servers|instance|instances)\b.*\b(?:running|active|on|powered.?on|live)\b"
+        r"|\bhow\s+many\b.*\b(?:running|active|on|powered.?on)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT s.name, p.name AS project, d.name AS domain,
+               s.status, s.vm_state, s.hypervisor_hostname AS host, s.created_at
+        FROM servers s
+        LEFT JOIN projects p ON p.id = s.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE s.status = 'ACTIVE'
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+        ORDER BY s.name
+    """,
+    formatter=_fmt_table(
+        "Running / Active VMs",
+        lambda rows, _: f"{len(rows):,} VM(s) currently running",
+        [
+            {"key": "name",    "label": "VM Name"},
+            {"key": "project", "label": "Project"},
+            {"key": "domain",  "label": "Domain"},
+            {"key": "host",    "label": "Hypervisor"},
+            {"key": "created_at", "label": "Created"},
+        ],
+    ),
+    description="Lists all running / ACTIVE VMs",
+    category="infrastructure",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  28. VMs IN A SPECIFIC PROJECT                           │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="vms_in_project",
+    title="VMs in Project",
+    pattern=re.compile(
+        r"\b(?:vm|vms|server|servers|instance|instances)\b.*\b(?:in|of|belonging\s+to)\s+(?:project\s+|tenant\s+)?(?P<tenant>[A-Za-z0-9_. -]{2,40})",
+        re.I,
+    ),
+    sql="""
+        SELECT s.name, s.status, s.vm_state,
+               s.hypervisor_hostname AS host, s.created_at
+        FROM servers s
+        LEFT JOIN projects p ON p.id = s.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE lower(p.name) LIKE lower(%(tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+        ORDER BY s.name
+    """,
+    formatter=_fmt_table(
+        "VMs in Project",
+        lambda rows, p: (
+            f"{len(rows):,} VM(s) in project \"{p.get('tenant','?')}\""
+            if rows else f"No VMs found in project \"{p.get('tenant','?')}\""
+        ),
+        [
+            {"key": "name",   "label": "VM Name"},
+            {"key": "status", "label": "Status"},
+            {"key": "vm_state","label":"State"},
+            {"key": "host",   "label": "Hypervisor"},
+            {"key": "created_at", "label": "Created"},
+        ],
+    ),
+    description="List VMs belonging to a specific project/tenant",
+    category="infrastructure",
+    param_keys=["tenant"],
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  29. DOWN / OFFLINE HYPERVISORS                          │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="down_hypervisors",
+    title="Down / Offline Hypervisors",
+    pattern=re.compile(
+        r"\b(?:down|offline|failed|unreachable|dead)\b.*\b(?:hypervisor|hypervisors|host|hosts|compute|node|nodes)\b"
+        r"|\b(?:hypervisor|hypervisors|host|hosts|compute|node)\b.*\b(?:down|offline|failed|unreachable|dead)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT hostname, hypervisor_type, state, status, vcpus,
+               memory_mb, local_gb, last_seen_at
+        FROM hypervisors
+        WHERE state != 'up' OR status != 'enabled'
+        ORDER BY hostname
+    """,
+    formatter=_fmt_table(
+        "Down / Offline Hypervisors",
+        lambda rows, _: (
+            f"{len(rows)} hypervisor(s) not healthy" if rows else "All hypervisors are up ✅"
+        ),
+        [
+            {"key": "hostname",       "label": "Host"},
+            {"key": "state",          "label": "State"},
+            {"key": "status",         "label": "Status"},
+            {"key": "hypervisor_type","label": "Type"},
+            {"key": "last_seen_at",   "label": "Last Seen"},
+        ],
+    ),
+    description="Hypervisors that are down, disabled, or offline",
+    category="infrastructure",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  30. TOTAL PLATFORM CAPACITY (CPU / RAM / DISK)          │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="total_capacity",
+    title="Total Platform Capacity",
+    pattern=re.compile(
+        r"\b(?:total|overall|aggregate|combined)\b.*\b(?:capacity|cpu|vcpu|ram|memory|storage|disk|resources)\b"
+        r"|\b(?:how\s+much)\b.*\b(?:capacity|cpu|vcpu|ram|memory|storage|disk)\b"
+        r"|\b(?:cpu|vcpu|ram|memory|storage|disk)\b.*\b(?:capacity|total|available|how\s+much)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT
+            count(*) AS hypervisors,
+            sum(vcpus) AS total_vcpus,
+            sum(memory_mb) AS total_ram_mb,
+            sum(local_gb) AS total_disk_gb,
+            sum(vcpus) FILTER (WHERE state='up' AND status='enabled') AS available_vcpus,
+            sum(memory_mb) FILTER (WHERE state='up' AND status='enabled') AS available_ram_mb
+        FROM hypervisors
+    """,
+    formatter=_fmt_kv(
+        "Total Platform Capacity",
+        lambda row, _: (
+            f"{row.get('total_vcpus',0):,} vCPUs · "
+            f"{(row.get('total_ram_mb') or 0)//1024:,} GB RAM · "
+            f"{row.get('total_disk_gb',0):,} GB disk · "
+            f"{row.get('hypervisors',0)} hypervisors"
+        ),
+    ),
+    description="Aggregate CPU, RAM and disk capacity across all hypervisors",
+    category="capacity",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  31. LARGEST VMs (by flavour spec)                       │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="largest_vms",
+    title="Largest VMs",
+    pattern=re.compile(
+        r"\b(?:largest|biggest|most\s+resource|heavy|fat|top)\b.*\b(?:vm|vms|server|servers|instance|instances)\b"
+        r"|\b(?:vm|vms|server|servers|instance|instances)\b.*\b(?:largest|biggest|most\s+resource|heavy|top)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT s.name, p.name AS project,
+               f.name AS flavor, f.vcpus, f.ram_mb, f.disk_gb,
+               s.status, s.hypervisor_hostname AS host
+        FROM servers s
+        LEFT JOIN projects p ON p.id = s.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        LEFT JOIN flavors f ON f.id = s.flavor_id
+        WHERE f.vcpus IS NOT NULL
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+        ORDER BY f.vcpus DESC, f.ram_mb DESC
+        LIMIT 25
+    """,
+    formatter=_fmt_table(
+        "Largest VMs (by vCPUs)",
+        lambda rows, _: f"Top {len(rows)} VMs by vCPU count",
+        [
+            {"key": "name",    "label": "VM"},
+            {"key": "flavor",  "label": "Flavor"},
+            {"key": "vcpus",   "label": "vCPUs"},
+            {"key": "ram_mb",  "label": "RAM (MB)"},
+            {"key": "disk_gb", "label": "Disk (GB)"},
+            {"key": "project", "label": "Project"},
+            {"key": "status",  "label": "Status"},
+        ],
+    ),
+    description="Top 25 VMs sorted by CPU size",
+    category="infrastructure",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  32. OLDEST VMs                                          │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="oldest_vms",
+    title="Oldest VMs",
+    pattern=re.compile(
+        r"\b(?:oldest|longest\s+running|longest.?lived|veteran)\b.*\b(?:vm|vms|server|servers|instance|instances)\b"
+        r"|\b(?:vm|vms|server|servers|instance|instances)\b.*\b(?:oldest|longest\s+running|created\s+first)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT s.name, p.name AS project, s.status,
+               s.created_at, s.hypervisor_hostname AS host
+        FROM servers s
+        LEFT JOIN projects p ON p.id = s.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE s.created_at IS NOT NULL
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+        ORDER BY s.created_at ASC
+        LIMIT 25
+    """,
+    formatter=_fmt_table(
+        "Oldest VMs",
+        lambda rows, _: f"Top {len(rows)} oldest VMs",
+        [
+            {"key": "name",       "label": "VM"},
+            {"key": "project",    "label": "Project"},
+            {"key": "status",     "label": "Status"},
+            {"key": "created_at", "label": "Created"},
+            {"key": "host",       "label": "Hypervisor"},
+        ],
+    ),
+    description="VMs sorted by creation date (oldest first)",
+    category="infrastructure",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  33. NEWEST / RECENTLY CREATED VMs                       │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="newest_vms",
+    title="Recently Created VMs",
+    pattern=re.compile(
+        r"\b(?:newest|latest|recent|last\s+created|new)\b.*\b(?:vm|vms|server|servers|instance|instances)\b"
+        r"|\b(?:vm|vms|server|servers|instance|instances)\b.*\b(?:newest|latest|recently\s+created|created\s+recently)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT s.name, p.name AS project, s.status,
+               s.created_at, s.hypervisor_hostname AS host
+        FROM servers s
+        LEFT JOIN projects p ON p.id = s.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE s.created_at IS NOT NULL
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+        ORDER BY s.created_at DESC
+        LIMIT 25
+    """,
+    formatter=_fmt_table(
+        "Recently Created VMs",
+        lambda rows, _: f"Last {len(rows)} created VMs",
+        [
+            {"key": "name",       "label": "VM"},
+            {"key": "project",    "label": "Project"},
+            {"key": "status",     "label": "Status"},
+            {"key": "created_at", "label": "Created"},
+            {"key": "host",       "label": "Hypervisor"},
+        ],
+    ),
+    description="Most recently created VMs",
+    category="infrastructure",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  34. USER LIST                                           │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="user_list",
+    title="User List",
+    pattern=re.compile(
+        r"\b(?:user|users)\b.*\b(?:list|all|overview|summary)\b"
+        r"|\b(?:list|show|all)\b.*\b(?:user|users)\b"
+        r"|\bhow\s+many\b.*\b(?:user|users)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT u.username, u.email, u.full_name,
+               u.enabled, u.default_project, u.created_at,
+               (SELECT string_agg(DISTINCT role, ', ') FROM user_roles WHERE username = u.username) AS roles
+        FROM ldap_users u
+        WHERE (%(scope_tenant)s IS NULL OR u.default_project = %(scope_tenant)s)
+        ORDER BY u.username
+        LIMIT 100
+    """,
+    formatter=_fmt_table(
+        "User List",
+        lambda rows, _: f"{len(rows)} user(s) (top 100)",
+        [
+            {"key": "username",        "label": "Username"},
+            {"key": "email",           "label": "Email"},
+            {"key": "full_name",       "label": "Full Name"},
+            {"key": "roles",           "label": "Roles"},
+            {"key": "enabled",         "label": "Enabled"},
+            {"key": "default_project", "label": "Default Project"},
+        ],
+    ),
+    description="All users with roles and status",
+    category="security",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  35. UNASSIGNED / FREE FLOATING IPs                      │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="free_floating_ips",
+    title="Free / Unassigned Floating IPs",
+    pattern=re.compile(
+        r"\b(?:unassigned|free|unused|idle|available)\b.*\b(?:floating.?ip|fip|public.?ip|external.?ip)\b"
+        r"|\b(?:floating.?ip|fip|public.?ip)\b.*\b(?:unassigned|free|unused|idle|available|not\s+used)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT floating_ip, p.name AS project, last_seen_at
+        FROM floating_ips f
+        LEFT JOIN projects p ON p.id = f.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE f.port_id IS NULL
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+        ORDER BY f.floating_ip
+    """,
+    formatter=_fmt_table(
+        "Free / Unassigned Floating IPs",
+        lambda rows, _: (
+            f"{len(rows)} floating IP(s) not attached to any port"
+            if rows else "All floating IPs are assigned ✅"
+        ),
+        [
+            {"key": "floating_ip",  "label": "Floating IP"},
+            {"key": "project",      "label": "Project"},
+            {"key": "last_seen_at", "label": "Last Seen"},
+        ],
+    ),
+    description="Floating IPs not associated with any port/VM",
+    category="operations",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  36. BACKUP HISTORY / STATUS                             │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="backup_history",
+    title="Backup History",
+    pattern=re.compile(
+        r"\b(?:backup|backups)\b.*\b(?:history|status|recent|latest|last|list|overview)\b"
+        r"|\b(?:recent|latest|last)\b.*\b(?:backup|backups)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT bh.backup_type, bh.status, bh.started_at, bh.finished_at,
+               bh.file_size_mb, bh.error_message
+        FROM backup_history bh
+        ORDER BY bh.started_at DESC
+        LIMIT 20
+    """,
+    formatter=_fmt_table(
+        "Backup History (latest 20)",
+        lambda rows, _: (
+            f"{sum(1 for r in rows if r.get('status')=='success'):,} succeeded, "
+            f"{sum(1 for r in rows if r.get('status')!='success'):,} failed"
+            if rows else "No backup records found"
+        ),
+        [
+            {"key": "backup_type",   "label": "Type"},
+            {"key": "status",        "label": "Status"},
+            {"key": "started_at",    "label": "Started"},
+            {"key": "finished_at",   "label": "Finished"},
+            {"key": "file_size_mb",  "label": "Size (MB)"},
+            {"key": "error_message", "label": "Error"},
+        ],
+    ),
+    description="Recent database backup jobs and their outcomes",
+    category="operations",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  37. SNAPSHOT POLICIES                                   │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="snapshot_policies",
+    title="Snapshot Policies",
+    pattern=re.compile(
+        r"\b(?:snapshot.?polic|snapshot.?rule|snapshot.?schedule|snapshot.?config)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT name, description, is_global, is_active, priority,
+               array_length(policies, 1) AS policy_count,
+               created_by, updated_at
+        FROM snapshot_policy_sets
+        ORDER BY priority ASC, name
+    """,
+    formatter=_fmt_table(
+        "Snapshot Policies",
+        lambda rows, _: (
+            f"{len(rows)} policy set(s), "
+            f"{sum(1 for r in rows if r.get('is_active')):,} active"
+        ),
+        [
+            {"key": "name",         "label": "Name"},
+            {"key": "is_global",    "label": "Global"},
+            {"key": "is_active",    "label": "Active"},
+            {"key": "priority",     "label": "Priority"},
+            {"key": "policy_count", "label": "Policies"},
+            {"key": "created_by",   "label": "Created By"},
+        ],
+    ),
+    description="All snapshot policy sets with status",
+    category="operations",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  38. TOP RESOURCE CONSUMERS (by VM count)                │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="top_consumers",
+    title="Top Resource Consumers",
+    pattern=re.compile(
+        r"\b(?:top|biggest|largest|most)\b.*\b(?:consumer|consumers|user|users|project|tenant)\b.*\b(?:resource|cpu|ram|vm|vms)\b"
+        r"|\b(?:resource|cpu|ram|vm|vms)\b.*\b(?:consumer|consumers|user|users|by\s+project|by\s+tenant)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT p.name AS project, d.name AS domain,
+               count(s.id) AS vm_count,
+               COALESCE(sum(f.vcpus), 0) AS total_vcpus,
+               COALESCE(sum(f.ram_mb), 0) AS total_ram_mb,
+               COALESCE(sum(f.disk_gb), 0) AS total_disk_gb
+        FROM projects p
+        LEFT JOIN domains d ON d.id = p.domain_id
+        LEFT JOIN servers s ON s.project_id = p.id
+        LEFT JOIN flavors f ON f.id = s.flavor_id
+        WHERE (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+        GROUP BY p.name, d.name
+        HAVING count(s.id) > 0
+        ORDER BY total_vcpus DESC, vm_count DESC
+        LIMIT 25
+    """,
+    formatter=_fmt_table(
+        "Top Resource Consumers",
+        lambda rows, _: f"Top {len(rows)} projects by resource usage",
+        [
+            {"key": "project",      "label": "Project"},
+            {"key": "domain",       "label": "Domain"},
+            {"key": "vm_count",     "label": "VMs"},
+            {"key": "total_vcpus",  "label": "Total vCPUs"},
+            {"key": "total_ram_mb", "label": "Total RAM (MB)"},
+            {"key": "total_disk_gb","label": "Total Disk (GB)"},
+        ],
+    ),
+    description="Projects ranked by compute resource consumption",
+    category="quota",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  39. VOLUME COUNT                                        │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="volume_count",
+    title="Total Volume Count",
+    pattern=re.compile(
+        r"\bhow\s+many\b.*\b(?:volume|volumes|disk|disks)\b"
+        r"|\b(?:count|total|number)\s+(?:of\s+)?(?:volume|volumes|disk|disks)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT count(*) AS count,
+               COALESCE(sum(size_gb), 0) AS total_gb
+        FROM volumes v
+        LEFT JOIN projects p ON p.id = v.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+    """,
+    formatter=lambda rows, params: {
+        "card_type": "number",
+        "title": "Total Volumes",
+        "value": _clean_rows(rows)[0].get("count", 0) if rows else 0,
+        "unit": "volumes",
+        "summary": (
+            f"{_clean_rows(rows)[0].get('count', 0):,} volumes, "
+            f"{_clean_rows(rows)[0].get('total_gb', 0):,} GB total"
+        ) if rows else "0 volumes",
+    },
+    description="Count of all volumes and total storage",
+    category="infrastructure",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  40. HYPERVISOR COUNT                                    │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="hypervisor_count",
+    title="Total Hypervisor Count",
+    pattern=re.compile(
+        r"\bhow\s+many\b.*\b(?:hypervisor|hypervisors|host|hosts|compute.?node|compute.?nodes)\b"
+        r"|\b(?:count|total|number)\s+(?:of\s+)?(?:hypervisor|hypervisors|host|hosts|compute.?node)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT count(*) AS count,
+               count(*) FILTER (WHERE state='up' AND status='enabled') AS healthy
+        FROM hypervisors
+    """,
+    formatter=lambda rows, params: {
+        "card_type": "number",
+        "title": "Total Hypervisors",
+        "value": _clean_rows(rows)[0].get("count", 0) if rows else 0,
+        "unit": "hypervisors",
+        "summary": (
+            f"{_clean_rows(rows)[0].get('count', 0):,} hypervisors, "
+            f"{_clean_rows(rows)[0].get('healthy', 0):,} healthy"
+        ) if rows else "0 hypervisors",
+    },
+    description="Count of hypervisors and healthy subset",
+    category="infrastructure",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  41. LARGE / THICK VOLUMES                               │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="large_volumes",
+    title="Largest Volumes",
+    pattern=re.compile(
+        r"\b(?:largest|biggest|large|fat|heavy|top)\b.*\b(?:volume|volumes|disk|disks|storage)\b"
+        r"|\b(?:volume|volumes|disk)\b.*\b(?:largest|biggest|large|top|most\s+space)\b",
+        re.I,
+    ),
+    sql="""
+        SELECT v.name, v.size_gb, v.status, v.volume_type,
+               p.name AS project, v.created_at
+        FROM volumes v
+        LEFT JOIN projects p ON p.id = v.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE v.size_gb IS NOT NULL
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+        ORDER BY v.size_gb DESC
+        LIMIT 25
+    """,
+    formatter=_fmt_table(
+        "Largest Volumes",
+        lambda rows, _: f"Top {len(rows)} volumes by size",
+        [
+            {"key": "name",        "label": "Volume"},
+            {"key": "size_gb",     "label": "Size (GB)"},
+            {"key": "status",      "label": "Status"},
+            {"key": "volume_type", "label": "Type"},
+            {"key": "project",     "label": "Project"},
+            {"key": "created_at",  "label": "Created"},
+        ],
+    ),
+    description="Largest volumes by disk size",
+    category="infrastructure",
+))
+
+
+# ┌──────────────────────────────────────────────────────────┐
+# │  42. METERING / USAGE SUMMARY                            │
+# └──────────────────────────────────────────────────────────┘
+_register(SmartQuery(
+    id="metering_summary",
+    title="Metering / Usage Summary",
+    pattern=re.compile(
+        r"\b(?:metering|billing|chargeback|usage\.?summary|resource.?usage)\b"
+        r"|\b(?:show|get)\b.*\b(?:usage|metering|billing|chargeback)\b",
+        re.I,
+    ),
+    sql="""
+        WITH latest AS (
+            SELECT DISTINCT ON (project_id)
+                project_name, domain,
+                vcpus_used, ram_used_mb, instances_used,
+                volumes_used, storage_used_gb, collected_at
+            FROM metering_quotas
+            ORDER BY project_id, collected_at DESC
+        )
+        SELECT project_name, domain, instances_used, vcpus_used,
+               ram_used_mb, volumes_used, storage_used_gb, collected_at
+        FROM latest
+        WHERE (%(scope_tenant)s IS NULL OR project_name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR domain = %(scope_domain)s)
+        ORDER BY instances_used DESC
+        LIMIT 50
+    """,
+    formatter=_fmt_table(
+        "Resource Usage Summary",
+        lambda rows, _: (
+            f"{len(rows)} project(s) · "
+            f"{sum(r.get('instances_used',0) for r in rows):,} VMs · "
+            f"{sum(r.get('vcpus_used',0) for r in rows):,} vCPUs"
+            if rows else "No metering data collected yet"
+        ),
+        [
+            {"key": "project_name",    "label": "Project"},
+            {"key": "domain",          "label": "Domain"},
+            {"key": "instances_used",  "label": "VMs"},
+            {"key": "vcpus_used",      "label": "vCPUs"},
+            {"key": "ram_used_mb",     "label": "RAM (MB)"},
+            {"key": "volumes_used",    "label": "Volumes"},
+            {"key": "storage_used_gb", "label": "Storage (GB)"},
+            {"key": "collected_at",    "label": "As Of"},
+        ],
+    ),
+    description="Per-project resource usage from metering data",
+    category="quota",
+))
+
+
 # ── Execution engine ─────────────────────────────────────────
 
 def execute_smart_query(

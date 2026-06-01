@@ -1936,6 +1936,17 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.19.0 Changes
+
+### Ops Search resiliency and coverage (`pf9-ui/src/components/OpsSearch.tsx`, `api/smart_queries.py`)
+Ops Search now handles partial endpoint failures without dropping full-text search results and includes expanded smart-query templates that cover common infrastructure, capacity, backup, and metering questions.
+
+### Snapshot policy edit fix (`pf9-ui/src/components/SnapshotPolicyManager.tsx`)
+Snapshot policy rows now wire the Edit action to open the policy form in edit mode for the selected policy.
+
+### Details panel UX consistency (`pf9-ui/src/App.tsx`)
+Inventory detail views now keep the right panel empty by default with contextual selection guidance, and non-detail operational tabs (`audit`, `system_logs`, `api_metrics`) no longer render the unused right panel.
+
 ## v2.18.1 Changes
 
 ### Frontend visibility for AI triage (`pf9-ui/src/hooks/useEventStream.ts`, `pf9-ui/src/App.tsx`)

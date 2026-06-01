@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.7.0  
-**Last Updated**: May 24, 2026  
+**Version**: 2.19.0  
+**Last Updated**: June 1, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -833,6 +833,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.19.0 — Ops Search resilience and inventory UX polish
+
+- **Ops Search partial-failure handling** (`pf9-ui/src/components/OpsSearch.tsx`): Search now settles endpoint requests independently, so full-text results still render when an intent or smart-query request intermittently fails.
+- **Expanded built-in smart queries** (`api/smart_queries.py`): Added new query templates for running/down workloads, capacity and utilization overviews, user and networking inventory checks, backup/snapshot visibility, and metering summaries.
+- **Snapshot policy Edit fix** (`pf9-ui/src/components/SnapshotPolicyManager.tsx`): Policy Edit action now correctly opens the form in edit mode for the selected policy.
+- **Details panel behavior + layout cleanup** (`pf9-ui/src/App.tsx`): Inventory details panels now show contextual “select an item” guidance by default, and non-detail operational tabs (`audit`, `system_logs`, `api_metrics`) no longer render an unused right panel.
 
 ### v2.18.1 — AI triage visibility and controls in UI
 

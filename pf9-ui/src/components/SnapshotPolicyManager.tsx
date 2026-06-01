@@ -225,7 +225,15 @@ const SnapshotPolicyManager: FC = () => {
                         </div>
                       </div>
                       <div className="policy-actions">
-                        <button className="btn btn-sm btn-secondary">Edit</button>
+                        <button
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => {
+                            setEditingPolicy(policy);
+                            setShowCreatePolicy(true);
+                          }}
+                        >
+                          Edit
+                        </button>
                         <button
                           className="btn btn-sm btn-danger"
                           onClick={() => handleDeletePolicy(policy.id)}

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.19.0] - 2026-06-01
+
+### Added
+
+- **Expanded smart query coverage for Ops Search** (`api/smart_queries.py`): Added 16 new built-in smart query templates for common operator questions including running/oldest/newest/largest VMs, down hypervisors, total capacity, users list, free floating IPs, backup history, snapshot policies, top consumers, volume/hypervisor counts, large volumes, and metering summary.
+
+### Changed
+
+- **Ops Search partial-failure resilience** (`pf9-ui/src/components/OpsSearch.tsx`): Search now uses per-endpoint settlement so one failed backend call (for example intermittent 503 on intent/smart endpoints) does not block full-text results.
+- **Ops Search discoverability chips** (`pf9-ui/src/components/OpsSearch.tsx`): Example chips expanded to cover the new smart templates across infrastructure, projects, storage, networking, security, and operations categories.
+- **Inventory details-panel empty state behavior** (`pf9-ui/src/App.tsx`): Selection-driven tabs now keep the right details panel empty by default and show contextual guidance until a row is explicitly selected.
+
+### Fixed
+
+- **Snapshot policy edit action wiring** (`pf9-ui/src/components/SnapshotPolicyManager.tsx`): The policy row Edit button now opens the existing policy form in edit mode.
+- **Right-panel visibility on non-detail tabs** (`pf9-ui/src/App.tsx`): Removed the unused right details panel from `audit`, `system_logs`, and `api_metrics` views.
+
 ## [2.18.1] - 2026-05-31
 
 ### Changed
