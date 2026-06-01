@@ -1657,8 +1657,12 @@ _register(SmartQuery(
         re.I,
     ),
     sql="""
-        SELECT bh.backup_type, bh.status, bh.started_at, bh.finished_at,
-               bh.file_size_mb, bh.error_message
+         SELECT bh.backup_type,
+             bh.status,
+             bh.started_at,
+             bh.completed_at AS finished_at,
+             ROUND(COALESCE(bh.file_size_bytes, 0) / 1048576.0, 2) AS file_size_mb,
+             bh.error_message
         FROM backup_history bh
         ORDER BY bh.started_at DESC
         LIMIT 20

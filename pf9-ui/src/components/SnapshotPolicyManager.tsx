@@ -62,6 +62,27 @@ interface SnapshotRun {
   trigger_source: string;
 }
 
+const POLICY_OPTIONS = [
+  {
+    key: 'daily_5',
+    label: 'Daily',
+    description: 'Runs once per day.',
+    defaultRetention: 5,
+  },
+  {
+    key: 'monthly_1st',
+    label: 'Monthly (1st)',
+    description: 'Runs on the 1st day of each month.',
+    defaultRetention: 1,
+  },
+  {
+    key: 'monthly_15th',
+    label: 'Monthly (15th)',
+    description: 'Runs on the 15th day of each month.',
+    defaultRetention: 1,
+  },
+] as const;
+
 const SnapshotPolicyManager: FC = () => {
   const [activeTab, setActiveTab] = useState<'policies' | 'assignments' | 'runs' | 'compliance'>('policies');
   const [policySets, setPolicySets] = useState<PolicySet[]>([]);
@@ -396,20 +417,85 @@ interface PolicyFormProps {
 }
 
 const PolicyForm: React.FC<PolicyFormProps> = ({ policy, onSave, onCancel }) => {
-  const [formData, setFormData] = useState<Partial<PolicySet>>(
-    policy || {
+  const buildInitialFormData = (currentPolicy: PolicySet | null): Partial<PolicySet> => {
+    if (currentPolicy) {
+      return {
+        ...currentPolicy,
+        policies: [...currentPolicy.policies],
+        retention_map: { ...currentPolicy.retention_map },
+      };
+    }
+
+    return {
       name: '',
       description: '',
       is_global: true,
-      policies: [],
-      retention_map: {},
+      policies: ['daily_5'],
+      retention_map: { daily_5: 5 },
       priority: 0,
       is_active: true,
-    }
+    };
+  };
+
+  const [formData, setFormData] = useState<Partial<PolicySet>>(
+    buildInitialFormData(policy)
   );
+
+  useEffect(() => {
+    setFormData(buildInitialFormData(policy));
+  }, [policy]);
+
+  const selectedPolicies = formData.policies || [];
+  const retentionMap = formData.retention_map || {};
+
+  const togglePolicy = (policyKey: string, checked: boolean) => {
+    const nextPolicies = checked
+      ? [...selectedPolicies, policyKey]
+      : selectedPolicies.filter((policyName) => policyName !== policyKey);
+
+    const nextRetentionMap = { ...retentionMap };
+
+    if (checked) {
+      const option = POLICY_OPTIONS.find((item) => item.key === policyKey);
+      nextRetentionMap[policyKey] = nextRetentionMap[policyKey] || option?.defaultRetention || 1;
+    } else {
+      delete nextRetentionMap[policyKey];
+    }
+
+    setFormData({
+      ...formData,
+      policies: nextPolicies,
+      retention_map: nextRetentionMap,
+    });
+  };
+
+  const updateRetention = (policyKey: string, value: string) => {
+    const retention = Math.max(1, Number.parseInt(value || '1', 10) || 1);
+    setFormData({
+      ...formData,
+      retention_map: {
+        ...retentionMap,
+        [policyKey]: retention,
+      },
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (selectedPolicies.length === 0) {
+      alert('Select at least one snapshot policy cadence.');
+      return;
+    }
+
+    const payload = {
+      ...formData,
+      policies: selectedPolicies,
+      retention_map: selectedPolicies.reduce<Record<string, number>>((acc, policyKey) => {
+        acc[policyKey] = Math.max(1, Number(retentionMap[policyKey] || 1));
+        return acc;
+      }, {}),
+    };
 
     const method = policy ? 'PATCH' : 'POST';
     const url = policy
@@ -420,7 +506,7 @@ const PolicyForm: React.FC<PolicyFormProps> = ({ policy, onSave, onCancel }) => 
       await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
       onSave();
     } catch (err) {
@@ -458,6 +544,79 @@ const PolicyForm: React.FC<PolicyFormProps> = ({ policy, onSave, onCancel }) => 
           Global Policy (applies to all tenants)
         </label>
       </div>
+
+      <div className="form-group">
+        <label>Snapshot Cadence *</label>
+        <div style={{ display: 'grid', gap: '12px' }}>
+          {POLICY_OPTIONS.map((option) => {
+            const checked = selectedPolicies.includes(option.key);
+            return (
+              <label
+                key={option.key}
+                style={{
+                  display: 'grid',
+                  gap: '8px',
+                  padding: '12px',
+                  border: '1px solid var(--color-border, #d1d5db)',
+                  borderRadius: '8px',
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => togglePolicy(option.key, e.target.checked)}
+                  />
+                  <strong>{option.label}</strong>
+                  <span style={{ color: 'var(--color-text-secondary, #64748b)', fontSize: '0.875rem' }}>
+                    {option.description}
+                  </span>
+                </span>
+                {checked && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '24px' }}>
+                    <span>Keep last</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={retentionMap[option.key] || option.defaultRetention}
+                      onChange={(e) => updateRetention(option.key, e.target.value)}
+                      style={{ width: '84px' }}
+                    />
+                    <span>snapshots</span>
+                  </span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+        <small style={{ color: 'var(--color-text-secondary, #64748b)' }}>
+          Current scheduler supports fixed cadences. Higher-frequency policies such as 3 snapshots per day require backend scheduler changes.
+        </small>
+      </div>
+
+      <div className="form-group">
+        <label>Priority</label>
+        <input
+          type="number"
+          min={0}
+          max={1000}
+          value={formData.priority ?? 0}
+          onChange={e => setFormData({ ...formData, priority: Number.parseInt(e.target.value || '0', 10) || 0 })}
+        />
+      </div>
+
+      {policy && (
+        <div className="form-group">
+          <label>
+            <input
+              type="checkbox"
+              checked={formData.is_active ?? true}
+              onChange={e => setFormData({ ...formData, is_active: e.target.checked })}
+            />
+            Policy active
+          </label>
+        </div>
+      )}
 
       <div className="form-actions">
         <button type="submit" className="btn btn-primary">

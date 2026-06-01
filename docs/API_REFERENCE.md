@@ -1,6 +1,7 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.19.0 — Ops Search reliability + query depth release: smart search now degrades gracefully when a secondary endpoint fails, built-in smart-query coverage is expanded for common operator questions, snapshot policy Edit wiring is fixed, and inventory-style details panels keep an explicit empty state until row selection.
+> **Version**: v2.19.1 — Hotfix release: Backup History smart queries now match the live `backup_history` schema, and snapshot policy editing exposes cadence selection, retention counts, priority, and active-state controls in the UI.
+> Previous: v2.19.0 — Ops Search reliability + query depth release: smart search now degrades gracefully when a secondary endpoint fails, built-in smart-query coverage is expanded for common operator questions, snapshot policy Edit wiring is fixed, and inventory-style details panels keep an explicit empty state until row selection.
 > Previous: v2.18.1 — AI triage visibility release: notification bell now shows explicit AI incident brief entries from SSE `incident_brief` events, and Copilot settings now expose triage controls (`ai_triage_enabled`, `ai_triage_min_severity`, `ai_triage_max_per_hour`, `ai_triage_notify_email`).
 > Previous: v2.17.1 — Scheduler image hotfix: `shared/` package is now included in the scheduler-worker container image to prevent startup crashes (`ModuleNotFoundError: shared`).
 > Previous: v2.17.0 — PSA bi-directional sync: inbound webhook (`POST /api/psa/inbound/{config_id}`), inbound token rotation (`GET /api/psa/configs/{id}/inbound-token`), status mapping (`status_map`), and returned PSA `ticket_id` linkage into insight metadata.

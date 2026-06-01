@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.19.1] - 2026-06-01
+
+### Fixed
+
+- **Backup history smart query schema mismatch** (`api/smart_queries.py`): The Ops Search `backup_history` query now uses `completed_at` and derives size from `file_size_bytes`, matching the real `backup_history` table schema and preventing `column bh.finished_at does not exist` runtime failures.
+- **Snapshot policy editor completeness** (`pf9-ui/src/components/SnapshotPolicyManager.tsx`): The policy form now edits the actual snapshot cadence set, retention counts, priority, and active state instead of only name/description metadata.
+
 ## [2.19.0] - 2026-06-01
 
 ### Added

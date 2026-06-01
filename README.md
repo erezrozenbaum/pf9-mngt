@@ -37,7 +37,7 @@
 • **🎮 Demo mode** — full product experience without Platform9  
 • **🤖 AI Incident Triage** — proactive AI-generated briefs surface high-severity incidents before operators notice them  
 
-[![Version](https://img.shields.io/badge/version-2.19.0-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-2.19.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -288,6 +288,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v2.19.1** — **Ops Search Backup Hotfix + Real Snapshot Policy Editing**: fixed the Backup History smart query against the real `backup_history` schema, and expanded Snapshot Policy editing so operators can actually change enabled cadences, retention counts, priority, and active state from the UI. (June 2026)
 - **v2.19** — **Ops Search Reliability + Inventory UX**: Ops Search now tolerates partial backend failures (no full-screen 503 when one endpoint fails), includes significantly expanded smart-query coverage for common operations questions, and provides richer example chips. Snapshot Policy Edit now opens correctly, and inventory-style tabs keep the details panel empty by default with contextual “select an item” guidance. (June 2026)
 - **v2.18** — **AI Incident Triage**: high-severity operational events now automatically trigger an AI-generated incident brief — structured analysis, risk level, runbook suggestion, and operator actions (dismiss or execute). Briefs are delivered in real time via SSE to the notification bell, surfaced in the Copilot settings panel, and factored into QBR AI intervention metrics. Proactive, not reactive. (May 2026)
 - **v2.12** — **KVM Node Log Viewer**: SSH-based log fetching from KVM nodes (`/var/log/pf9/`) via paramiko; `NODE_LOG_SOURCE=ssh` env var; credentials from `pf9-ssh-credentials` K8s secret; NetworkPolicy egress for port 22; PF9 hostagent log format timestamp parsing. (May 2026)

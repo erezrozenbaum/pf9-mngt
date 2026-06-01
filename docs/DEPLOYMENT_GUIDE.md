@@ -1,6 +1,6 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.19.0
+**Version**: 2.19.1
 **Last Updated**: June 1, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  

@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.19.0  
+**Version**: 2.19.1  
 **Last Updated**: June 1, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.19.1 — Backup history hotfix and usable snapshot policy editing
+
+- **Backup History smart query fix** (`api/smart_queries.py`): The built-in Ops Search backup-history question now uses `backup_history.completed_at` and computed MB size from `file_size_bytes`, matching the deployed schema and eliminating runtime SQL errors.
+- **Snapshot policy editor controls** (`pf9-ui/src/components/SnapshotPolicyManager.tsx`): Policy editing now includes cadence selection, per-policy retention counts, priority, and active-state controls, so operators can actually change the functional snapshot policy rather than only its label/description.
 
 ### v2.19.0 — Ops Search resilience and inventory UX polish
 
