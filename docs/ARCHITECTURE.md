@@ -1936,15 +1936,18 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.20.0 Changes
+
+### Ops Search smart-query correctness hardening (`api/smart_queries.py`)
+The generic VM count matcher no longer captures running-VM intent queries, and backup-history summaries now classify lifecycle states (`completed`, `running`, `pending`, `failed`) correctly.
+
+### Snapshot policy contract/validation consistency (`api/snapshot_management.py`, `pf9-ui/src/components/SnapshotPolicyManager.tsx`)
+Policy validation now enforces scope and retention-map integrity in create/update paths; UI edit mode no longer attempts unsupported scope mutation and sends backend-aligned patch fields.
+
+### Executive insights analytics (`api/sla_routes.py`, `pf9-ui/src/components/ExecutiveDashboard.tsx`)
+Added a portfolio executive insights data path and UI visualizations for top churned tenants, top new connections, sales-owner analysis, churn reasons, and order-progress style lifecycle buckets with domain/sales filters.
+
 ## v2.19.1 Changes
-
-### Backup history smart query schema correction (`api/smart_queries.py`)
-The backup-history smart query now uses `completed_at` from `backup_history` and derives MB size from `file_size_bytes`, matching the persisted schema used by the backup subsystem.
-
-### Snapshot policy editor completeness (`pf9-ui/src/components/SnapshotPolicyManager.tsx`)
-Snapshot policy editing now exposes the actual cadence list, per-policy retention counts, priority, and active-state fields already supported by the backend API.
-
-## v2.19.0 Changes
 
 ### Ops Search resiliency and coverage (`pf9-ui/src/components/OpsSearch.tsx`, `api/smart_queries.py`)
 Ops Search now handles partial endpoint failures without dropping full-text search results and includes expanded smart-query templates that cover common infrastructure, capacity, backup, and metering questions.

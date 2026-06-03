@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.20.0] - 2026-06-03
+
+### Added
+
+- **Executive insights analytics endpoint** (`api/sla_routes.py`): Added `GET /api/sla/portfolio/executive-insights` with domain/sales-owner filters, top churned tenants, top new connections, sales-owner analysis, churn reason aggregation, and an order-progress lens with `cloudall`/`internetall` style lifecycle buckets.
+- **Executive dashboard analytics views** (`pf9-ui/src/components/ExecutiveDashboard.tsx`): Added filterable sections for Top 10 churned, Top 10 new connections, sales-owner performance, churn-reason summary, and order-progress visualization driven by trusted metering/billing/lifecycle data.
+- **Regression tests for smart-query and policy validation** (`tests/test_smart_query_regressions.py`, `tests/test_snapshot_policy_validation.py`): Added focused tests to prevent reintroduction of query-precedence mistakes, backup status misclassification, and snapshot policy validation drift.
+
+### Changed
+
+- **Snapshot policy API defaults and validation strictness** (`api/snapshot_management.py`): Policy-set creation now defaults to global scope, and update flow validates merged final state for scope and retention consistency before persisting.
+
+### Fixed
+
+- **Ops Search smart-query precedence** (`api/smart_queries.py`): Generic VM count matching no longer captures running-VM intent, allowing the `running_vms` query to answer correctly.
+- **Backup history smart-query status summary** (`api/smart_queries.py`): Summary now uses real lifecycle statuses (`completed`, `running`, `pending`, `failed`) instead of incorrectly treating non-`success` values as failures.
+- **Snapshot policy editor contract mismatch** (`pf9-ui/src/components/SnapshotPolicyManager.tsx`): Removed scope mutation from edit mode and restricted PATCH payload to backend-supported fields, preventing silent no-op updates.
+
 ## [2.19.1] - 2026-06-01
 
 ### Fixed

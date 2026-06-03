@@ -106,6 +106,56 @@ interface SlaDefenseAlertsResponse {
   count: number;
 }
 
+interface ExecutiveInsightTenantRow {
+  tenant_id: string;
+  tenant_name: string;
+  domain_name: string;
+  sales_person_id: string;
+  prev_vms: number;
+  cur_vms: number;
+  prev_cost: number;
+  cur_cost: number;
+  churn_reason?: string;
+}
+
+interface ExecutiveSalesRow {
+  sales_person_id: string;
+  tenant_count: number;
+  churned_count: number;
+  new_count: number;
+  current_vms: number;
+  current_cost: number;
+}
+
+interface ExecutiveOrderProgressRow {
+  stage: string;
+  event_count: number;
+  tenant_count: number;
+}
+
+interface ExecutiveInsightsResponse {
+  month: string;
+  previous_month: string;
+  filters: {
+    domain: string | null;
+    sales_person: string | null;
+    top_n: number;
+    available_domains: string[];
+    available_sales_people: string[];
+  };
+  summary: {
+    total_tenants: number;
+    active_tenants: number;
+    top_churned_count: number;
+    top_new_count: number;
+  };
+  top_churned: ExecutiveInsightTenantRow[];
+  top_new_connections: ExecutiveInsightTenantRow[];
+  sales_person_analysis: ExecutiveSalesRow[];
+  churn_reasons: { reason: string; count: number }[];
+  order_progress: ExecutiveOrderProgressRow[];
+}
+
 interface Props {
   userRole: string;
 }
@@ -301,12 +351,15 @@ const PERIOD_OPTIONS: { key: Period; label: string; days?: number; months?: numb
 export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
   const [data, setData]         = useState<ExecutiveSummaryResponse | null>(null);
   const [metering, setMetering] = useState<FleetMeteringResponse | null>(null);
+  const [insights, setInsights] = useState<ExecutiveInsightsResponse | null>(null);
   const [slaDefense, setSlaDefense] = useState<SlaDefenseSummaryResponse | null>(null);
   const [slaDefenseAlerts, setSlaDefenseAlerts] = useState<SlaDefenseAlertItem[]>([]);
   const [actionBusyId, setActionBusyId] = useState<number | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
   const [period, setPeriod]     = useState<Period>("6m");
+  const [selectedDomain, setSelectedDomain] = useState("");
+  const [selectedSalesPerson, setSelectedSalesPerson] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -316,14 +369,22 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
       const params = new URLSearchParams();
       if (pd.days)   params.set("days",   String(pd.days));
       else           params.set("months", String(pd.months));
-      const [summaryResp, meteringResp, slaDefenseResp, slaDefenseAlertsResp] = await Promise.all([
+
+      const insightParams = new URLSearchParams();
+      insightParams.set("top_n", "10");
+      if (selectedDomain) insightParams.set("domain", selectedDomain);
+      if (selectedSalesPerson) insightParams.set("sales_person", selectedSalesPerson);
+
+      const [summaryResp, meteringResp, insightsResp, slaDefenseResp, slaDefenseAlertsResp] = await Promise.all([
         apiFetch<ExecutiveSummaryResponse>("/api/sla/portfolio/executive-summary"),
         apiFetch<FleetMeteringResponse>(`/api/sla/portfolio/fleet-metering?${params}`),
+        apiFetch<ExecutiveInsightsResponse>(`/api/sla/portfolio/executive-insights?${insightParams}`),
         apiFetch<SlaDefenseSummaryResponse>("/api/admin/sla/defense/alerts/summary"),
         apiFetch<SlaDefenseAlertsResponse>("/api/admin/sla/defense/alerts?status=open&limit=8"),
       ]);
       setData(summaryResp);
       setMetering(meteringResp);
+      setInsights(insightsResp);
       setSlaDefense(slaDefenseResp);
       setSlaDefenseAlerts(slaDefenseAlertsResp.items ?? []);
     } catch (err: unknown) {
@@ -331,7 +392,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [period]);
+  }, [period, selectedDomain, selectedSalesPerson]);
 
   const handleSlaDefenseAction = useCallback(async (alertId: number, action: "resolve" | "dismiss") => {
     setActionBusyId(alertId);
@@ -352,6 +413,7 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
 
   const s    = data?.summary;
   const m    = metering;
+  const ei   = insights;
   const mttr = s ? mttrStatus(s.avg_mttr_hours, s.avg_mttr_commitment_hours) : null;
 
   const trendLabels = m?.monthly_trend.map((t) => t.month.slice(0, 7)) ?? [];
@@ -648,6 +710,188 @@ export default function ExecutiveDashboard({ userRole: _userRole }: Props) {
                   </tbody>
                 </table>
               </div>
+            </section>
+          )}
+
+          {/* ----------------------------------------------------------------
+              Executive Insights: Churn / New / Sales / Order Progress
+          ---------------------------------------------------------------- */}
+          {ei && (
+            <section style={{ marginBottom: "1.5rem" }}>
+              <h3 style={{ fontSize: "0.95rem", color: "#94a3b8", marginBottom: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                📌 Executive Insights — Trusted Data Paths
+              </h3>
+
+              <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.85rem" }}>
+                <select
+                  value={selectedDomain}
+                  onChange={(e) => setSelectedDomain(e.target.value)}
+                  style={{
+                    background: "var(--pf9-card-bg, #1e293b)",
+                    border: "1px solid #334155",
+                    borderRadius: "6px",
+                    color: "#e2e8f0",
+                    padding: "0.35rem 0.55rem",
+                    fontSize: "0.82rem",
+                  }}
+                >
+                  <option value="">All orgs</option>
+                  {(ei.filters.available_domains || []).map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedSalesPerson}
+                  onChange={(e) => setSelectedSalesPerson(e.target.value)}
+                  style={{
+                    background: "var(--pf9-card-bg, #1e293b)",
+                    border: "1px solid #334155",
+                    borderRadius: "6px",
+                    color: "#e2e8f0",
+                    padding: "0.35rem 0.55rem",
+                    fontSize: "0.82rem",
+                  }}
+                >
+                  <option value="">All sales owners</option>
+                  {(ei.filters.available_sales_people || []).map((sp) => (
+                    <option key={sp} value={sp}>{sp}</option>
+                  ))}
+                </select>
+
+                {(selectedDomain || selectedSalesPerson) && (
+                  <button
+                    className="pf9-btn pf9-btn-sm"
+                    onClick={() => {
+                      setSelectedDomain("");
+                      setSelectedSalesPerson("");
+                    }}
+                  >
+                    Clear Filters
+                  </button>
+                )}
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem", marginBottom: "1rem" }}>
+                <KpiCard label="Active Tenants" value={ei.summary.active_tenants} accent="#22c55e" sub={`of ${ei.summary.total_tenants} total`} />
+                <KpiCard label="Churned (Top Set)" value={ei.summary.top_churned_count} accent={ei.summary.top_churned_count > 0 ? "#ef4444" : "#22c55e"} sub={`vs ${ei.previous_month}`} />
+                <KpiCard label="New Connections" value={ei.summary.top_new_count} accent={ei.summary.top_new_count > 0 ? "#38bdf8" : "#94a3b8"} sub={`in ${ei.month}`} />
+              </div>
+
+              <div style={{ display: "grid", gap: "1rem", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+                <div style={{ background: "var(--pf9-card-bg, #1e293b)", borderRadius: "8px", padding: "0.85rem" }}>
+                  <div style={{ fontSize: "0.84rem", color: "#94a3b8", marginBottom: "0.55rem", fontWeight: 600 }}>Top 10 Churned Tenants</div>
+                  <div style={{ overflowX: "auto", maxHeight: 260 }}>
+                    <table className="pf9-table" style={{ marginBottom: 0 }}>
+                      <thead>
+                        <tr>
+                          <th>Tenant</th>
+                          <th style={{ textAlign: "right" }}>Prev VMs</th>
+                          <th>Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ei.top_churned.length === 0 ? (
+                          <tr><td colSpan={3} style={{ color: "#94a3b8" }}>No churn detected in selected slice.</td></tr>
+                        ) : ei.top_churned.map((r) => (
+                          <tr key={r.tenant_id}>
+                            <td>{r.tenant_name}</td>
+                            <td style={{ textAlign: "right" }}>{r.prev_vms}</td>
+                            <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.churn_reason || ""}>
+                              {r.churn_reason || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div style={{ background: "var(--pf9-card-bg, #1e293b)", borderRadius: "8px", padding: "0.85rem" }}>
+                  <div style={{ fontSize: "0.84rem", color: "#94a3b8", marginBottom: "0.55rem", fontWeight: 600 }}>Top 10 New Connections</div>
+                  <div style={{ overflowX: "auto", maxHeight: 260 }}>
+                    <table className="pf9-table" style={{ marginBottom: 0 }}>
+                      <thead>
+                        <tr>
+                          <th>Tenant</th>
+                          <th style={{ textAlign: "right" }}>Current VMs</th>
+                          <th>Sales</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ei.top_new_connections.length === 0 ? (
+                          <tr><td colSpan={3} style={{ color: "#94a3b8" }}>No new connections in selected slice.</td></tr>
+                        ) : ei.top_new_connections.map((r) => (
+                          <tr key={r.tenant_id}>
+                            <td>{r.tenant_name}</td>
+                            <td style={{ textAlign: "right" }}>{r.cur_vms}</td>
+                            <td>{r.sales_person_id || "Unassigned"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div style={{ background: "var(--pf9-card-bg, #1e293b)", borderRadius: "8px", padding: "0.85rem" }}>
+                  <div style={{ fontSize: "0.84rem", color: "#94a3b8", marginBottom: "0.55rem", fontWeight: 600 }}>Sales Owner Analysis</div>
+                  <div style={{ overflowX: "auto", maxHeight: 260 }}>
+                    <table className="pf9-table" style={{ marginBottom: 0 }}>
+                      <thead>
+                        <tr>
+                          <th>Sales Owner</th>
+                          <th style={{ textAlign: "right" }}>Tenants</th>
+                          <th style={{ textAlign: "right" }}>New</th>
+                          <th style={{ textAlign: "right" }}>Churn</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ei.sales_person_analysis.length === 0 ? (
+                          <tr><td colSpan={4} style={{ color: "#94a3b8" }}>No sales ownership data.</td></tr>
+                        ) : ei.sales_person_analysis.map((r) => (
+                          <tr key={r.sales_person_id}>
+                            <td>{r.sales_person_id}</td>
+                            <td style={{ textAlign: "right" }}>{r.tenant_count}</td>
+                            <td style={{ textAlign: "right", color: "#38bdf8", fontWeight: 600 }}>{r.new_count}</td>
+                            <td style={{ textAlign: "right", color: r.churned_count > 0 ? "#ef4444" : "#94a3b8", fontWeight: 600 }}>{r.churned_count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div style={{ background: "var(--pf9-card-bg, #1e293b)", borderRadius: "8px", padding: "0.85rem" }}>
+                  <div style={{ fontSize: "0.84rem", color: "#94a3b8", marginBottom: "0.55rem", fontWeight: 600 }}>
+                    Alternate Lens: CloudAll / InternetAll / Order Progress
+                  </div>
+                  <div style={{ display: "grid", gap: "0.45rem" }}>
+                    {ei.order_progress.length === 0 ? (
+                      <div style={{ color: "#94a3b8", fontSize: "0.82rem" }}>No lifecycle events in the last 30 days.</div>
+                    ) : ei.order_progress.map((row) => {
+                      const max = Math.max(...ei.order_progress.map((x) => x.event_count), 1);
+                      const width = `${Math.round((row.event_count / max) * 100)}%`;
+                      return (
+                        <div key={row.stage}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", marginBottom: "2px" }}>
+                            <span>{row.stage}</span>
+                            <span>{row.event_count} events · {row.tenant_count} tenants</span>
+                          </div>
+                          <div style={{ height: "8px", background: "#334155", borderRadius: "4px", overflow: "hidden" }}>
+                            <div style={{ width, height: "100%", background: row.stage === "churned" ? "#ef4444" : row.stage === "completed" ? "#22c55e" : "#38bdf8" }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {ei.churn_reasons.length > 0 && (
+                <div style={{ marginTop: "0.75rem", fontSize: "0.8rem", color: "#94a3b8" }}>
+                  Top churn reasons: {ei.churn_reasons.slice(0, 5).map((r) => `${r.reason} (${r.count})`).join(" · ")}
+                </div>
+              )}
             </section>
           )}
 

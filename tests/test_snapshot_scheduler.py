@@ -165,13 +165,13 @@ class TestSnapshotPolicySetCreate:
         )
         assert obj.description == "My policy"
 
-    def test_is_global_defaults_false(self):
+    def test_is_global_defaults_true(self):
         obj = SnapshotPolicySetCreate(
             name="P",
             policies=["daily_5"],
             retention_map={"daily_5": 5},
         )
-        assert obj.is_global is False
+        assert obj.is_global is True
 
     def test_priority_default_zero(self):
         obj = SnapshotPolicySetCreate(

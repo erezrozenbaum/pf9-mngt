@@ -5,7 +5,7 @@ Handles snapshot policy sets, assignments, exclusions, runs, and records
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
-from pydantic import BaseModel, Field, field_validator, ValidationInfo
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationInfo
 from fastapi import HTTPException, status, Depends
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -27,7 +27,7 @@ class SnapshotPolicySetCreate(BaseModel):
     """Request model for creating a snapshot policy set"""
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
-    is_global: bool = False
+    is_global: bool = True
     tenant_id: Optional[str] = None
     tenant_name: Optional[str] = None
     policies: List[str] = Field(..., min_length=1)  # ["daily_5", "weekly_4"]
@@ -48,6 +48,16 @@ class SnapshotPolicySetCreate(BaseModel):
                     raise ValueError(f"retention_map must include all policies. Missing: {policy}")
         return v
 
+    @model_validator(mode='after')
+    def validate_scope_and_retention(self):
+        _validate_policy_consistency(
+            is_global=self.is_global,
+            tenant_id=self.tenant_id,
+            policies=self.policies,
+            retention_map=self.retention_map,
+        )
+        return self
+
 
 class SnapshotPolicySetUpdate(BaseModel):
     """Request model for updating a snapshot policy set"""
@@ -57,6 +67,20 @@ class SnapshotPolicySetUpdate(BaseModel):
     retention_map: Optional[Dict[str, int]] = None
     priority: Optional[int] = Field(None, ge=0, le=1000)
     is_active: Optional[bool] = None
+    is_global: Optional[bool] = None
+    tenant_id: Optional[str] = None
+    tenant_name: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_partial_retention_when_both_present(self):
+        if self.policies is not None and self.retention_map is not None:
+            _validate_policy_consistency(
+                is_global=True,
+                tenant_id="",
+                policies=self.policies,
+                retention_map=self.retention_map,
+            )
+        return self
 
 
 class SnapshotAssignmentCreate(BaseModel):
@@ -147,6 +171,29 @@ def _safe_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _validate_policy_consistency(
+    *,
+    is_global: bool,
+    tenant_id: Optional[str],
+    policies: List[str],
+    retention_map: Dict[str, int],
+) -> None:
+    """Validate policy scope and retention key/value consistency."""
+    if not is_global and not (tenant_id or "").strip():
+        raise ValueError("tenant_id is required when is_global is false")
+
+    missing = [p for p in policies if p not in retention_map]
+    extra = [k for k in retention_map.keys() if k not in set(policies)]
+    if missing:
+        raise ValueError(f"retention_map must include all selected policies. Missing: {', '.join(missing)}")
+    if extra:
+        raise ValueError(f"retention_map contains unknown policy keys: {', '.join(extra)}")
+
+    invalid = [k for k, v in retention_map.items() if _safe_int(v) is None or int(v) < 1]
+    if invalid:
+        raise ValueError(f"retention_map values must be integers >= 1 for: {', '.join(invalid)}")
 
 
 def _build_compliance_from_volumes(
@@ -603,6 +650,36 @@ def setup_snapshot_routes(app):
             with get_connection() as conn:
                 cur = conn.cursor(cursor_factory=RealDictCursor)
 
+                cur.execute("""
+                    SELECT id, is_global, tenant_id, tenant_name, policies, retention_map
+                    FROM snapshot_policy_sets
+                    WHERE id = %s
+                """, (policy_set_id,))
+                existing = cur.fetchone()
+                if not existing:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Policy set {policy_set_id} not found"
+                    )
+
+                merged_is_global = updates.is_global if updates.is_global is not None else bool(existing.get("is_global"))
+                merged_tenant_id = updates.tenant_id if updates.tenant_id is not None else existing.get("tenant_id")
+                merged_policies = updates.policies if updates.policies is not None else list(existing.get("policies") or [])
+                merged_retention = updates.retention_map if updates.retention_map is not None else dict(existing.get("retention_map") or {})
+
+                try:
+                    _validate_policy_consistency(
+                        is_global=bool(merged_is_global),
+                        tenant_id=merged_tenant_id,
+                        policies=list(merged_policies),
+                        retention_map=dict(merged_retention),
+                    )
+                except ValueError as ve:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=str(ve),
+                    )
+
                 # Build dynamic UPDATE query
                 update_fields = []
                 params = []
@@ -625,6 +702,15 @@ def setup_snapshot_routes(app):
                 if updates.is_active is not None:
                     update_fields.append("is_active = %s")
                     params.append(updates.is_active)
+                if updates.is_global is not None:
+                    update_fields.append("is_global = %s")
+                    params.append(updates.is_global)
+                if updates.tenant_id is not None:
+                    update_fields.append("tenant_id = %s")
+                    params.append(updates.tenant_id)
+                if updates.tenant_name is not None:
+                    update_fields.append("tenant_name = %s")
+                    params.append(updates.tenant_name)
 
                 if not update_fields:
                     raise HTTPException(
@@ -649,12 +735,6 @@ def setup_snapshot_routes(app):
 
                 cur.execute(query, params)
                 result = cur.fetchone()
-
-                if not result:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Policy set {policy_set_id} not found"
-                    )
 
                 return result
 

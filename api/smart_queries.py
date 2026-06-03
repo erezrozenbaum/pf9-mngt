@@ -111,6 +111,45 @@ def _fmt_number(title: str, key: str = "count", unit: str = ""):
     return _inner
 
 
+def _fmt_backup_history(rows: List[Dict], _params: Dict[str, Any]) -> Dict[str, Any]:
+    """Formatter for backup history rows with lifecycle-aware status buckets."""
+    clean = _clean_rows(rows)
+
+    def _status(v: Any) -> str:
+        return str(v or "").strip().lower()
+
+    completed = sum(1 for r in clean if _status(r.get("status")) in ("completed", "success"))
+    running = sum(1 for r in clean if _status(r.get("status")) == "running")
+    pending = sum(1 for r in clean if _status(r.get("status")) == "pending")
+    failed = sum(1 for r in clean if _status(r.get("status")) in ("failed", "error", "cancelled", "canceled"))
+
+    # Any unknown status values are counted under "failed" to avoid under-reporting non-success outcomes.
+    unknown = len(clean) - completed - running - pending - failed
+    failed += max(unknown, 0)
+
+    summary = (
+        f"{completed:,} completed, {running:,} running, {pending:,} pending, {failed:,} failed"
+        if clean
+        else "No backup records found"
+    )
+
+    return {
+        "card_type": "table",
+        "title": "Backup History (latest 20)",
+        "summary": summary,
+        "columns": [
+            {"key": "backup_type", "label": "Type"},
+            {"key": "status", "label": "Status"},
+            {"key": "started_at", "label": "Started"},
+            {"key": "finished_at", "label": "Finished"},
+            {"key": "file_size_mb", "label": "Size (MB)"},
+            {"key": "error_message", "label": "Error"},
+        ],
+        "rows": clean,
+        "total": len(clean),
+    }
+
+
 def _clean_rows(rows: List[Dict]) -> List[Dict]:
     """Make DB rows JSON-safe."""
     out = []
@@ -388,8 +427,10 @@ _register(SmartQuery(
     id="vm_count",
     title="Total VM Count",
     pattern=re.compile(
+        r"^(?!.*\b(?:running|active|powered.?on|live)\b)(?:"
         r"\bhow\s+many\b.*\b(?:vm|vms|server|servers|instance|instances)\b"
-        r"|\b(?:count|total|number)\s+(?:of\s+)?(?:vm|vms|server|servers|instance|instances)\b",
+        r"|\b(?:count|total|number)\s+(?:of\s+)?(?:vm|vms|server|servers|instance|instances)\b"
+        r")$",
         re.I,
     ),
     sql="""
@@ -1667,22 +1708,7 @@ _register(SmartQuery(
         ORDER BY bh.started_at DESC
         LIMIT 20
     """,
-    formatter=_fmt_table(
-        "Backup History (latest 20)",
-        lambda rows, _: (
-            f"{sum(1 for r in rows if r.get('status')=='success'):,} succeeded, "
-            f"{sum(1 for r in rows if r.get('status')!='success'):,} failed"
-            if rows else "No backup records found"
-        ),
-        [
-            {"key": "backup_type",   "label": "Type"},
-            {"key": "status",        "label": "Status"},
-            {"key": "started_at",    "label": "Started"},
-            {"key": "finished_at",   "label": "Finished"},
-            {"key": "file_size_mb",  "label": "Size (MB)"},
-            {"key": "error_message", "label": "Error"},
-        ],
-    ),
+    formatter=_fmt_backup_history,
     description="Recent database backup jobs and their outcomes",
     category="operations",
 ))

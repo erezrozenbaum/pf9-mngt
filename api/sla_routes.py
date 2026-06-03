@@ -12,7 +12,7 @@ RBAC
 from __future__ import annotations
 
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
@@ -1102,5 +1102,356 @@ def get_portfolio_fleet_metering(
         "quota_health":      quota_health,
         "monthly_trend":     [_trend_row(r) for r in trend_rows],
         "top_growing_tenants": [_growth_row(r) for r in growth_rows],
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/sla/portfolio/executive-insights — churn/new/sales/order-progress
+# ---------------------------------------------------------------------------
+
+@router.get("/portfolio/executive-insights")
+def get_portfolio_executive_insights(
+    month: Optional[str] = Query(
+        None,
+        description="Target month in YYYY-MM or YYYY-MM-DD format. Defaults to current month.",
+        pattern=r"^\d{4}-\d{2}(-\d{2})?$",
+    ),
+    domain: Optional[str] = Query(None, description="Filter by domain/org name (case-insensitive)."),
+    sales_person: Optional[str] = Query(None, description="Filter by sales person id/name."),
+    top_n: int = Query(10, ge=1, le=50),
+    _user: User = Depends(require_permission("sla", "read")),
+):
+    """Executive analytics built from trusted portfolio metering + billing + lifecycle data.
+
+    Definitions:
+      - churned tenant: had VMs previous month, has 0 VMs in selected month.
+      - new connection: had 0 VMs previous month, has >0 VMs in selected month.
+    """
+    from datetime import date
+
+    today = date.today()
+    if month:
+        try:
+            parts = month.split("-")
+            month_start = date(int(parts[0]), int(parts[1]), 1)
+        except (ValueError, IndexError):
+            month_start = today.replace(day=1)
+    else:
+        month_start = today.replace(day=1)
+
+    if month_start.month == 1:
+        prev_month = month_start.replace(year=month_start.year - 1, month=12, day=1)
+    else:
+        prev_month = month_start.replace(month=month_start.month - 1, day=1)
+
+    filter_params = {
+        "month": month_start,
+        "prev_month": prev_month,
+        "domain": domain,
+        "sales_person": sales_person,
+        "top_n": top_n,
+    }
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Base cohort for selected filters.
+            cur.execute(
+                """
+                WITH cur AS (
+                    SELECT tenant_id, vm_count, estimated_cost
+                    FROM portfolio_metering_monthly
+                    WHERE month = %(month)s
+                ),
+                prev AS (
+                    SELECT tenant_id, vm_count, estimated_cost
+                    FROM portfolio_metering_monthly
+                    WHERE month = %(prev_month)s
+                ),
+                base AS (
+                    SELECT
+                        p.id AS tenant_id,
+                        p.name AS tenant_name,
+                        p.domain_id,
+                        d.name AS domain_name,
+                        COALESCE(tbc.sales_person_id, 'Unassigned') AS sales_person_id,
+                        COALESCE(cur.vm_count, 0) AS cur_vms,
+                        COALESCE(prev.vm_count, 0) AS prev_vms,
+                        COALESCE(cur.estimated_cost, 0) AS cur_cost,
+                        COALESCE(prev.estimated_cost, 0) AS prev_cost
+                    FROM projects p
+                    JOIN domains d ON d.id = p.domain_id
+                    LEFT JOIN tenant_billing_config tbc ON tbc.tenant_id = p.domain_id
+                    LEFT JOIN cur ON cur.tenant_id = p.id
+                    LEFT JOIN prev ON prev.tenant_id = p.id
+                    WHERE (%(domain)s IS NULL OR lower(d.name) = lower(%(domain)s))
+                      AND (
+                            %(sales_person)s IS NULL
+                         OR lower(COALESCE(tbc.sales_person_id, '')) = lower(%(sales_person)s)
+                      )
+                )
+                SELECT
+                    COUNT(*) AS total_tenants,
+                    COUNT(*) FILTER (WHERE prev_vms > 0 AND cur_vms = 0) AS churned_count,
+                    COUNT(*) FILTER (WHERE prev_vms = 0 AND cur_vms > 0) AS new_count,
+                    COUNT(*) FILTER (WHERE cur_vms > 0) AS active_count
+                FROM base
+                """,
+                filter_params,
+            )
+            totals = dict(cur.fetchone() or {})
+
+            cur.execute(
+                """
+                WITH cur AS (
+                    SELECT tenant_id, vm_count, estimated_cost
+                    FROM portfolio_metering_monthly
+                    WHERE month = %(month)s
+                ),
+                prev AS (
+                    SELECT tenant_id, vm_count, estimated_cost
+                    FROM portfolio_metering_monthly
+                    WHERE month = %(prev_month)s
+                ),
+                base AS (
+                    SELECT
+                        p.id AS tenant_id,
+                        p.name AS tenant_name,
+                        p.domain_id,
+                        d.name AS domain_name,
+                        COALESCE(tbc.sales_person_id, 'Unassigned') AS sales_person_id,
+                        COALESCE(cur.vm_count, 0) AS cur_vms,
+                        COALESCE(prev.vm_count, 0) AS prev_vms,
+                        COALESCE(cur.estimated_cost, 0) AS cur_cost,
+                        COALESCE(prev.estimated_cost, 0) AS prev_cost
+                    FROM projects p
+                    JOIN domains d ON d.id = p.domain_id
+                    LEFT JOIN tenant_billing_config tbc ON tbc.tenant_id = p.domain_id
+                    LEFT JOIN cur ON cur.tenant_id = p.id
+                    LEFT JOIN prev ON prev.tenant_id = p.id
+                    WHERE (%(domain)s IS NULL OR lower(d.name) = lower(%(domain)s))
+                      AND (
+                            %(sales_person)s IS NULL
+                         OR lower(COALESCE(tbc.sales_person_id, '')) = lower(%(sales_person)s)
+                      )
+                ),
+                churn_reason AS (
+                    SELECT
+                        p.id AS tenant_id,
+                        MAX(NULLIF(COALESCE(rle.event_data->>'reason', ''), '')) AS reason
+                    FROM projects p
+                    JOIN domains d ON d.id = p.domain_id
+                    LEFT JOIN resource_lifecycle_events rle
+                      ON rle.tenant_id = p.domain_id
+                     AND (
+                            lower(rle.event_type) LIKE '%%churn%%'
+                         OR lower(rle.event_type) LIKE '%%disconnect%%'
+                         OR lower(rle.event_type) LIKE '%%terminate%%'
+                     )
+                     AND rle.created_at >= (%(prev_month)s::date - INTERVAL '90 days')
+                    GROUP BY p.id
+                )
+                SELECT
+                    b.tenant_id,
+                    b.tenant_name,
+                    b.domain_name,
+                    b.sales_person_id,
+                    b.prev_vms,
+                    b.cur_vms,
+                    ROUND((b.prev_cost)::numeric, 2) AS prev_cost,
+                    ROUND((b.cur_cost)::numeric, 2) AS cur_cost,
+                    COALESCE(cr.reason, 'Usage dropped to zero in selected month') AS churn_reason
+                FROM base b
+                LEFT JOIN churn_reason cr ON cr.tenant_id = b.tenant_id
+                WHERE b.prev_vms > 0 AND b.cur_vms = 0
+                ORDER BY b.prev_vms DESC, b.prev_cost DESC, b.tenant_name
+                LIMIT %(top_n)s
+                """,
+                filter_params,
+            )
+            top_churned = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                WITH cur AS (
+                    SELECT tenant_id, vm_count, estimated_cost
+                    FROM portfolio_metering_monthly
+                    WHERE month = %(month)s
+                ),
+                prev AS (
+                    SELECT tenant_id, vm_count, estimated_cost
+                    FROM portfolio_metering_monthly
+                    WHERE month = %(prev_month)s
+                ),
+                base AS (
+                    SELECT
+                        p.id AS tenant_id,
+                        p.name AS tenant_name,
+                        d.name AS domain_name,
+                        COALESCE(tbc.sales_person_id, 'Unassigned') AS sales_person_id,
+                        COALESCE(cur.vm_count, 0) AS cur_vms,
+                        COALESCE(prev.vm_count, 0) AS prev_vms,
+                        COALESCE(cur.estimated_cost, 0) AS cur_cost,
+                        COALESCE(prev.estimated_cost, 0) AS prev_cost
+                    FROM projects p
+                    JOIN domains d ON d.id = p.domain_id
+                    LEFT JOIN tenant_billing_config tbc ON tbc.tenant_id = p.domain_id
+                    LEFT JOIN cur ON cur.tenant_id = p.id
+                    LEFT JOIN prev ON prev.tenant_id = p.id
+                    WHERE (%(domain)s IS NULL OR lower(d.name) = lower(%(domain)s))
+                      AND (
+                            %(sales_person)s IS NULL
+                         OR lower(COALESCE(tbc.sales_person_id, '')) = lower(%(sales_person)s)
+                      )
+                )
+                SELECT
+                    tenant_id,
+                    tenant_name,
+                    domain_name,
+                    sales_person_id,
+                    prev_vms,
+                    cur_vms,
+                    ROUND((prev_cost)::numeric, 2) AS prev_cost,
+                    ROUND((cur_cost)::numeric, 2) AS cur_cost
+                FROM base
+                WHERE prev_vms = 0 AND cur_vms > 0
+                ORDER BY cur_vms DESC, cur_cost DESC, tenant_name
+                LIMIT %(top_n)s
+                """,
+                filter_params,
+            )
+            top_new = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                WITH cur AS (
+                    SELECT tenant_id, vm_count, estimated_cost
+                    FROM portfolio_metering_monthly
+                    WHERE month = %(month)s
+                ),
+                prev AS (
+                    SELECT tenant_id, vm_count, estimated_cost
+                    FROM portfolio_metering_monthly
+                    WHERE month = %(prev_month)s
+                ),
+                base AS (
+                    SELECT
+                        p.id AS tenant_id,
+                        p.name AS tenant_name,
+                        d.name AS domain_name,
+                        COALESCE(tbc.sales_person_id, 'Unassigned') AS sales_person_id,
+                        COALESCE(cur.vm_count, 0) AS cur_vms,
+                        COALESCE(prev.vm_count, 0) AS prev_vms,
+                        COALESCE(cur.estimated_cost, 0) AS cur_cost
+                    FROM projects p
+                    JOIN domains d ON d.id = p.domain_id
+                    LEFT JOIN tenant_billing_config tbc ON tbc.tenant_id = p.domain_id
+                    LEFT JOIN cur ON cur.tenant_id = p.id
+                    LEFT JOIN prev ON prev.tenant_id = p.id
+                    WHERE (%(domain)s IS NULL OR lower(d.name) = lower(%(domain)s))
+                      AND (
+                            %(sales_person)s IS NULL
+                         OR lower(COALESCE(tbc.sales_person_id, '')) = lower(%(sales_person)s)
+                      )
+                )
+                SELECT
+                    sales_person_id,
+                    COUNT(*) AS tenant_count,
+                    COUNT(*) FILTER (WHERE prev_vms > 0 AND cur_vms = 0) AS churned_count,
+                    COUNT(*) FILTER (WHERE prev_vms = 0 AND cur_vms > 0) AS new_count,
+                    COALESCE(SUM(cur_vms), 0) AS current_vms,
+                    ROUND(COALESCE(SUM(cur_cost), 0)::numeric, 2) AS current_cost
+                FROM base
+                GROUP BY sales_person_id
+                ORDER BY churned_count DESC, new_count DESC, current_vms DESC, sales_person_id
+                """,
+                filter_params,
+            )
+            sales_analysis = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                WITH scoped_events AS (
+                    SELECT
+                        CASE
+                            WHEN lower(rle.event_type) LIKE '%%order%%' AND lower(rle.event_type) LIKE '%%progress%%' THEN 'order_progress'
+                            WHEN lower(rle.event_type) LIKE '%%provision%%' OR lower(rle.event_type) LIKE '%%create%%' THEN 'provisioning'
+                            WHEN lower(rle.event_type) LIKE '%%complete%%' OR lower(rle.event_type) LIKE '%%activate%%' THEN 'completed'
+                            WHEN lower(rle.event_type) LIKE '%%churn%%' OR lower(rle.event_type) LIKE '%%disconnect%%' OR lower(rle.event_type) LIKE '%%terminate%%' THEN 'churned'
+                            WHEN lower(rle.event_type) LIKE '%%cloud%%' THEN 'cloudall'
+                            WHEN lower(rle.event_type) LIKE '%%internet%%' THEN 'internetall'
+                            ELSE 'other'
+                        END AS stage,
+                        rle.tenant_id,
+                        COALESCE(NULLIF(rle.event_data->>'reason', ''), 'Unspecified') AS reason
+                    FROM resource_lifecycle_events rle
+                    LEFT JOIN domains d ON d.id = rle.tenant_id
+                    LEFT JOIN tenant_billing_config tbc ON tbc.tenant_id = d.id
+                    WHERE rle.created_at >= (%(month)s::date - INTERVAL '30 days')
+                      AND (%(domain)s IS NULL OR lower(d.name) = lower(%(domain)s))
+                      AND (
+                            %(sales_person)s IS NULL
+                         OR lower(COALESCE(tbc.sales_person_id, '')) = lower(%(sales_person)s)
+                      )
+                )
+                SELECT stage, COUNT(*) AS event_count, COUNT(DISTINCT tenant_id) AS tenant_count
+                FROM scoped_events
+                GROUP BY stage
+                ORDER BY event_count DESC
+                """,
+                filter_params,
+            )
+            order_progress = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT DISTINCT d.name AS domain_name
+                FROM domains d
+                JOIN projects p ON p.domain_id = d.id
+                ORDER BY d.name
+                """
+            )
+            domain_options = [r["domain_name"] for r in cur.fetchall() if r.get("domain_name")]
+
+            cur.execute(
+                """
+                SELECT DISTINCT COALESCE(NULLIF(tbc.sales_person_id, ''), 'Unassigned') AS sales_person_id
+                FROM tenant_billing_config tbc
+                ORDER BY 1
+                """
+            )
+            sales_options = [r["sales_person_id"] for r in cur.fetchall() if r.get("sales_person_id")]
+
+    # Aggregate churn reasons from top churned list for quick charting.
+    churn_reasons: Dict[str, int] = {}
+    for row in top_churned:
+        reason = row.get("churn_reason") or "Unspecified"
+        churn_reasons[reason] = churn_reasons.get(reason, 0) + 1
+
+    churn_reason_items = [
+        {"reason": k, "count": v}
+        for k, v in sorted(churn_reasons.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+
+    return {
+        "month": str(month_start),
+        "previous_month": str(prev_month),
+        "filters": {
+            "domain": domain,
+            "sales_person": sales_person,
+            "top_n": top_n,
+            "available_domains": domain_options,
+            "available_sales_people": sales_options,
+        },
+        "summary": {
+            "total_tenants": int(totals.get("total_tenants") or 0),
+            "active_tenants": int(totals.get("active_count") or 0),
+            "top_churned_count": int(totals.get("churned_count") or 0),
+            "top_new_count": int(totals.get("new_count") or 0),
+        },
+        "top_churned": top_churned,
+        "top_new_connections": top_new,
+        "sales_person_analysis": sales_analysis,
+        "churn_reasons": churn_reason_items,
+        "order_progress": order_progress,
     }
 

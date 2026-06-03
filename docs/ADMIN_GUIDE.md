@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.19.1  
+**Version**: 2.20.0  
 **Last Updated**: June 1, 2026  
 **Audience**: System administrators and platform operators
 
@@ -834,12 +834,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
-### v2.19.1 — Backup history hotfix and usable snapshot policy editing
+### v2.20.0 — Smart query correctness, policy guardrails, and executive insights
 
-- **Backup History smart query fix** (`api/smart_queries.py`): The built-in Ops Search backup-history question now uses `backup_history.completed_at` and computed MB size from `file_size_bytes`, matching the deployed schema and eliminating runtime SQL errors.
-- **Snapshot policy editor controls** (`pf9-ui/src/components/SnapshotPolicyManager.tsx`): Policy editing now includes cadence selection, per-policy retention counts, priority, and active-state controls, so operators can actually change the functional snapshot policy rather than only its label/description.
+- **Ops Search smart-query correctness** (`api/smart_queries.py`): Running-VM intent is no longer overshadowed by generic VM-count matching, and backup-history summaries now map lifecycle status values correctly.
+- **Snapshot policy guardrails** (`api/snapshot_management.py`, `pf9-ui/src/components/SnapshotPolicyManager.tsx`): Added stricter scope/retention validation in backend create+update flows; UI edit mode now hides scope mutation and sends backend-supported fields only.
+- **Executive insights analytics** (`api/sla_routes.py`, `pf9-ui/src/components/ExecutiveDashboard.tsx`): Added churn/new connection rankings, sales-owner analysis, churn-reason rollups, and order-progress-style lifecycle insights with filterable dashboard views.
 
-### v2.19.0 — Ops Search resilience and inventory UX polish
+### v2.19.1 — Ops Search resilience and inventory UX polish
 
 - **Ops Search partial-failure handling** (`pf9-ui/src/components/OpsSearch.tsx`): Search now settles endpoint requests independently, so full-text results still render when an intent or smart-query request intermittently fails.
 - **Expanded built-in smart queries** (`api/smart_queries.py`): Added new query templates for running/down workloads, capacity and utilization overviews, user and networking inventory checks, backup/snapshot visibility, and metering summaries.

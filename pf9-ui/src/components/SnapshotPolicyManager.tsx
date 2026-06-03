@@ -488,14 +488,28 @@ const PolicyForm: React.FC<PolicyFormProps> = ({ policy, onSave, onCancel }) => 
       return;
     }
 
-    const payload = {
-      ...formData,
-      policies: selectedPolicies,
-      retention_map: selectedPolicies.reduce<Record<string, number>>((acc, policyKey) => {
-        acc[policyKey] = Math.max(1, Number(retentionMap[policyKey] || 1));
-        return acc;
-      }, {}),
-    };
+    const normalizedRetentionMap = selectedPolicies.reduce<Record<string, number>>((acc, policyKey) => {
+      acc[policyKey] = Math.max(1, Number(retentionMap[policyKey] || 1));
+      return acc;
+    }, {});
+
+    const payload = policy
+      ? {
+          name: formData.name,
+          description: formData.description,
+          policies: selectedPolicies,
+          retention_map: normalizedRetentionMap,
+          priority: formData.priority ?? 0,
+          is_active: formData.is_active ?? true,
+        }
+      : {
+          name: formData.name,
+          description: formData.description,
+          is_global: formData.is_global ?? true,
+          policies: selectedPolicies,
+          retention_map: normalizedRetentionMap,
+          priority: formData.priority ?? 0,
+        };
 
     const method = policy ? 'PATCH' : 'POST';
     const url = policy
@@ -534,16 +548,26 @@ const PolicyForm: React.FC<PolicyFormProps> = ({ policy, onSave, onCancel }) => 
         />
       </div>
 
-      <div className="form-group">
-        <label>
-          <input
-            type="checkbox"
-            checked={formData.is_global || false}
-            onChange={e => setFormData({ ...formData, is_global: e.target.checked })}
-          />
-          Global Policy (applies to all tenants)
-        </label>
-      </div>
+      {!policy && (
+        <div className="form-group">
+          <label>
+            <input
+              type="checkbox"
+              checked={formData.is_global || false}
+              onChange={e => setFormData({ ...formData, is_global: e.target.checked })}
+            />
+            Global Policy (applies to all tenants)
+          </label>
+        </div>
+      )}
+
+      {policy && (
+        <div className="form-group">
+          <small style={{ color: 'var(--color-text-secondary, #64748b)' }}>
+            Scope cannot be changed after creation. Create a new policy set to change global vs tenant scope.
+          </small>
+        </div>
+      )}
 
       <div className="form-group">
         <label>Snapshot Cadence *</label>
