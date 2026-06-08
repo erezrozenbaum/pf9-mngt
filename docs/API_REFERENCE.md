@@ -1,6 +1,6 @@
 # Platform9 Management API Reference
 
-> **Version**: v2.20.0 — Smart-query correctness + executive analytics release: running-VM intent precedence and backup lifecycle status mapping were hardened for Ops Search; snapshot policy validation/contract consistency was enforced; and a new `GET /api/sla/portfolio/executive-insights` endpoint provides churn/new/sales/order-progress analytics with filters.
+> **Version**: v2.20.2 — Ops Search compatibility hotfix: `user_list` smart query now reads from the real `users` schema (instead of `ldap_users`), restoring answers for user-list queries in Kubernetes environments.
 > Previous: v2.19.1 — Ops Search reliability + query depth release: smart search now degrades gracefully when a secondary endpoint fails, built-in smart-query coverage is expanded for common operator questions, snapshot policy Edit wiring is fixed, and inventory-style details panels keep an explicit empty state until row selection.
 > Previous: v2.18.1 — AI triage visibility release: notification bell now shows explicit AI incident brief entries from SSE `incident_brief` events, and Copilot settings now expose triage controls (`ai_triage_enabled`, `ai_triage_min_severity`, `ai_triage_max_per_hour`, `ai_triage_notify_email`).
 > Previous: v2.17.1 — Scheduler image hotfix: `shared/` package is now included in the scheduler-worker container image to prevent startup crashes (`ModuleNotFoundError: shared`).

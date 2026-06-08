@@ -37,7 +37,7 @@
 • **🎮 Demo mode** — full product experience without Platform9  
 • **🤖 AI Incident Triage** — proactive AI-generated briefs surface high-severity incidents before operators notice them  
 
-[![Version](https://img.shields.io/badge/version-2.20.1-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
+[![Version](https://img.shields.io/badge/version-2.20.2-blue.svg)](CHANGELOG.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/) [![Kubernetes](https://img.shields.io/badge/kubernetes-ready-green.svg)](https://kubernetes.io/)
 
 *Used to model real-world MSP Day-2 operational scenarios.*
 
@@ -288,6 +288,7 @@ Docker host: 4GB RAM, 2 CPU cores, network access to Platform9 endpoints.
 ---
 ## 🆕 Recent Highlights
 
+- **v2.20.2** — **Ops Search User Query Compatibility Fix**: fixed the `user_list` smart query to use the real `users` schema instead of `ldap_users`, restoring answers for user-list questions in Kubernetes deployments where `ldap_users` does not exist. (June 2026)
 - **v2.20.1** — **Copilot Automation Context + Health Recovery Parity**: added a new `CLEA EXECUTIONS` intelligence block in Copilot context for recent automation outcomes, and aligned manual tenant health recalculation with scheduler auto-resolve behavior including `health.score_recovered` event emission. (June 2026)
 - **v2.20.0** — **Smart Query Correctness + Executive Insights**: hardened Ops Search smart-query correctness (running VM precedence + backup lifecycle status mapping), enforced snapshot policy validation and edit-contract consistency, and added executive analytics for churn/new connections, sales-owner analysis, and order-progress insight views. (June 2026)
 - **v2.19** — **Ops Search Reliability + Inventory UX**: Ops Search now tolerates partial backend failures (no full-screen 503 when one endpoint fails), includes significantly expanded smart-query coverage for common operations questions, and provides richer example chips. Snapshot Policy Edit now opens correctly, and inventory-style tabs keep the details panel empty by default with contextual “select an item” guidance. (June 2026)

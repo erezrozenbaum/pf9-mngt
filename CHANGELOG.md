@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.20.2] - 2026-06-08
+
+### Fixed
+
+- **Ops Search user-list query schema mismatch** (`api/smart_queries.py`): Replaced `ldap_users` source usage in the `user_list` smart query with the actual `users` schema (`users`, `projects`, `domains`, `role_assignments`, `roles`, `user_roles`). This fixes runtime failures like `relation "ldap_users" does not exist` and restores answers for user-list style questions.
+
 ## [2.20.1] - 2026-06-08
 
 ### Added

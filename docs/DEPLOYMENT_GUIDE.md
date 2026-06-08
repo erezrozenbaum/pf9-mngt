@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.20.0
-**Last Updated**: June 1, 2026  
+**Version**: 2.20.2
+**Last Updated**: June 8, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative (Production HA)**: See [KUBERNETES_GUIDE.md](KUBERNETES_GUIDE.md) for the Kubernetes deployment guide — Helm chart, ArgoCD GitOps, and Sealed Secrets (v1.82.0+)

@@ -1623,12 +1623,34 @@ _register(SmartQuery(
         re.I,
     ),
     sql="""
-        SELECT u.username, u.email, u.full_name,
-               u.enabled, u.default_project, u.created_at,
-               (SELECT string_agg(DISTINCT role, ', ') FROM user_roles WHERE username = u.username) AS roles
-        FROM ldap_users u
-        WHERE (%(scope_tenant)s IS NULL OR u.default_project = %(scope_tenant)s)
-        ORDER BY u.username
+        SELECT
+            u.name AS username,
+            u.email,
+            COALESCE(u.raw_json->>'full_name', u.name) AS full_name,
+            u.enabled,
+            p.name AS default_project,
+            u.created_at,
+            (
+                SELECT string_agg(DISTINCT role_name, ', ')
+                FROM (
+                    SELECT COALESCE(r.name, ra.role_name) AS role_name
+                    FROM role_assignments ra
+                    LEFT JOIN roles r ON r.id = ra.role_id
+                    WHERE ra.user_id = u.id
+                    UNION
+                    SELECT ur.role AS role_name
+                    FROM user_roles ur
+                    WHERE ur.username = u.name
+                      AND ur.is_active = true
+                ) roles_union
+                WHERE role_name IS NOT NULL
+            ) AS roles
+        FROM users u
+        LEFT JOIN projects p ON p.id = u.default_project_id
+        LEFT JOIN domains d ON d.id = u.domain_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+        ORDER BY u.name
         LIMIT 100
     """,
     formatter=_fmt_table(
