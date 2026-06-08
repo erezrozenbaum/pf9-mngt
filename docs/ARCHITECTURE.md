@@ -1936,6 +1936,11 @@ The frontend `📋 Node Logs` tab (admin-only) provides node/component/level/key
 
 Auth uses `require_authentication` + inline role check (`current_user.role in ("admin", "superadmin")`). This avoids a nested DB `role_permissions` lookup that would fail under PgBouncer transaction-pool mode.
 
+## v2.20.2 Changes
+
+### Ops Search user-list schema compatibility (`api/smart_queries.py`)
+The `user_list` smart query now reads from `users` and related role/project/domain tables instead of `ldap_users`, eliminating runtime failures in Kubernetes deployments where `ldap_users` is not part of the schema.
+
 ## v2.20.0 Changes
 
 ### Ops Search smart-query correctness hardening (`api/smart_queries.py`)

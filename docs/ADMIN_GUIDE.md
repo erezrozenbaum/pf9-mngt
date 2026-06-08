@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.20.1  
+**Version**: 2.20.2  
 **Last Updated**: June 8, 2026  
 **Audience**: System administrators and platform operators
 
@@ -833,6 +833,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.20.2 — Ops Search user-list schema compatibility
+
+- **Ops Search user-list fix** (`api/smart_queries.py`): Updated the `user_list` smart query to read from `users` (plus `projects`, `domains`, `role_assignments`/`roles`, and local `user_roles`) instead of `ldap_users`, preventing `relation "ldap_users" does not exist` failures and restoring user-list answers in Kubernetes environments.
 
 ### v2.20.1 — Copilot automation context and health-score recovery parity
 
