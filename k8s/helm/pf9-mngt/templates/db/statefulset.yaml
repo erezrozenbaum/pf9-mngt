@@ -44,16 +44,24 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.dbCredentials }}
                   key: password
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ .Values.db.user | quote }}, "-d", {{ .Values.db.name | quote }}]
+            # Allow up to 10 minutes for crash recovery / WAL replay on slower persistent storage.
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
           livenessProbe:
             exec:
-              command: ["pg_isready", "-U", {{ .Values.db.user | quote }}]
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ .Values.db.user | quote }}, "-d", {{ .Values.db.name | quote }}]
             initialDelaySeconds: 30
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", {{ .Values.db.user | quote }}]
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ .Values.db.user | quote }}, "-d", {{ .Values.db.name | quote }}]
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3

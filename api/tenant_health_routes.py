@@ -380,6 +380,81 @@ def _store_score(conn, project_id: str, result: dict) -> None:
     conn.commit()
 
 
+def _auto_resolve_health_score_insights(conn, project_id: str, score: int) -> list[str]:
+    """
+    Resolve open health-score insights when a tenant score recovers above
+    hysteresis thresholds.
+
+    Returns a list of resolved insight types.
+    """
+    resolved_types: list[str] = []
+    thresholds = [
+        ("health_score_critical", 45),
+        # Keep both types for backward compatibility with older rows.
+        ("health_score_low", 65),
+        ("health_score_warning", 65),
+    ]
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        for insight_type, recovery_threshold in thresholds:
+            if score <= recovery_threshold:
+                continue
+            cur.execute(
+                """
+                UPDATE operational_insights
+                   SET status = 'resolved',
+                       resolved_at = NOW(),
+                       metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                 WHERE type = %s
+                   AND entity_type = 'project'
+                   AND entity_id = %s
+                   AND status IN ('open', 'acknowledged', 'snoozed')
+                """,
+                (
+                    (
+                        '{"resolved_by":"auto","resolution_note":"Health score recovered"}'
+                    ),
+                    insight_type,
+                    project_id,
+                ),
+            )
+            if cur.rowcount > 0:
+                resolved_types.append(insight_type)
+
+    if resolved_types:
+        conn.commit()
+        try:
+            from event_bus import emit_event  # lazy import to avoid startup cycles
+
+            emit_event(
+                event_type="health.score_recovered",
+                category="intelligence",
+                severity="info",
+                title="Tenant health score recovered",
+                description=(
+                    f"Health score recovered to {score}/100 and auto-resolved "
+                    f"{len(resolved_types)} insight(s)."
+                ),
+                entity_type="project",
+                entity_id=project_id,
+                project_id=project_id,
+                source="api",
+                metadata={
+                    "score": score,
+                    "resolved_types": resolved_types,
+                    "resolution_note": "Health score recovered",
+                },
+            )
+        except Exception:
+            logger.debug(
+                "Failed to emit health.score_recovered event for project=%s",
+                project_id,
+                exc_info=True,
+            )
+
+    return resolved_types
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -456,10 +531,13 @@ async def recalculate_tenant_health_score(
 
         result = _compute_score(conn, project_id, _get_health_score_weights(conn))
         _store_score(conn, project_id, result)
+        resolved = _auto_resolve_health_score_insights(conn, project_id, result["score"])
 
     logger.info(
-        "Health score recalculated: project=%s score=%d",
-        project_id, result["score"],
+        "Health score recalculated: project=%s score=%d auto_resolved=%s",
+        project_id,
+        result["score"],
+        ",".join(resolved) if resolved else "none",
     )
     return HealthScoreOut(
         project_id=project_id,

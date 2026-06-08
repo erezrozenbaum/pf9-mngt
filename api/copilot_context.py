@@ -9,6 +9,7 @@ LLMs), hostnames, IPs, user emails and API keys are masked.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Optional
 
 from db_pool import get_connection
@@ -37,6 +38,199 @@ def redact_hostname(name: Optional[str]) -> str:
         return "host-***"
     parts = name.split(".")
     return parts[0][:3] + "***" if parts else "host-***"
+
+
+def _mask_name(value: Optional[str], redact: bool) -> str:
+    text = value or "?"
+    if redact:
+        return text[:3] + "***"
+    return text
+
+
+def _build_insights_section(cur, redact: bool, limit: int = 10) -> str:
+    cur.execute(
+        """
+        SELECT severity, type, entity_name, entity_id, title, metadata
+        FROM operational_insights
+        WHERE status = 'open'
+        ORDER BY
+            CASE severity
+                WHEN 'critical' THEN 1
+                WHEN 'high'     THEN 2
+                WHEN 'medium'   THEN 3
+                ELSE 4
+            END,
+            detected_at DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return "OPEN INSIGHTS: none currently open."
+
+    sev_counts = Counter(r["severity"] for r in rows)
+    sev_summary = ", ".join(
+        f"{sev_counts.get(s, 0)} {s}"
+        for s in ("critical", "high", "medium", "low")
+        if sev_counts.get(s, 0) > 0
+    )
+    top_lines = []
+    for r in rows[:5]:
+        name = _mask_name(r["entity_name"] or r["entity_id"], redact)
+        meta = r.get("metadata") or {}
+        extra = ""
+        if "runway_days" in meta:
+            extra = f" runway={meta['runway_days']}d"
+        elif "confidence" in meta:
+            extra = f" conf={meta['confidence']}"
+        top_lines.append(
+            f"  [{r['severity'].upper()}] {r['type']} on {name}{extra}: {r['title']}"
+        )
+    return f"OPEN INSIGHTS ({sev_summary}):\n" + "\n".join(top_lines)
+
+
+def _build_health_section(cur, redact: bool) -> str:
+    cur.execute(
+        """
+        SELECT ths.project_id,
+               ths.score,
+               p.name AS project_name,
+               prev.score AS prev_score
+        FROM tenant_health_scores ths
+        JOIN projects p ON p.id = ths.project_id
+        LEFT JOIN LATERAL (
+            SELECT score FROM tenant_health_scores t2
+            WHERE t2.project_id = ths.project_id
+              AND t2.computed_at < ths.computed_at
+            ORDER BY t2.computed_at DESC LIMIT 1
+        ) prev ON true
+        WHERE ths.computed_at = (
+            SELECT MAX(t3.computed_at) FROM tenant_health_scores t3
+            WHERE t3.project_id = ths.project_id
+        )
+        ORDER BY ths.score ASC
+        LIMIT 10
+        """
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return "HEALTH SCORES: no tenant health scores found."
+
+    lines = []
+    shown = set()
+    for r in rows[:3]:
+        name = _mask_name(r["project_name"] or r["project_id"], redact)
+        trend = ""
+        if r["prev_score"] is not None:
+            delta = r["score"] - r["prev_score"]
+            trend = f" ({'down' if delta < 0 else 'up'} {abs(delta)})"
+        lines.append(f"  {name}={r['score']}{trend}")
+        shown.add(r["project_id"])
+
+    for r in rows:
+        if r["project_id"] in shown:
+            continue
+        if r["prev_score"] is not None and (r["prev_score"] - r["score"]) > 10:
+            name = _mask_name(r["project_name"] or r["project_id"], redact)
+            drop = r["prev_score"] - r["score"]
+            lines.append(f"  {name}={r['score']} (down {drop} this cycle)")
+
+    return "HEALTH SCORES (worst/declining):\n" + "\n".join(lines)
+
+
+def _build_recent_anomalies_section(cur, redact: bool) -> str:
+    cur.execute(
+        """
+        SELECT type, entity_name, entity_id, severity
+        FROM operational_insights
+        WHERE type LIKE 'anomaly%'
+          AND detected_at >= NOW() - INTERVAL '24 hours'
+        ORDER BY detected_at DESC
+        LIMIT 8
+        """
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return "RECENT ANOMALIES (24h): none detected."
+
+    lines = []
+    for r in rows:
+        name = _mask_name(r["entity_name"] or r["entity_id"], redact)
+        lines.append(f"  {r['type']} on {name} [{r['severity']}]")
+    return f"RECENT ANOMALIES (24h - {len(rows)} detected):\n" + "\n".join(lines)
+
+
+def _build_sla_risk_section(cur, redact: bool) -> str:
+    cur.execute(
+        """
+        SELECT DISTINCT p.name AS project_name,
+               sc.tier,
+               oi.type AS insight_type,
+               oi.metadata
+        FROM sla_commitments sc
+        JOIN projects p ON p.id = sc.tenant_id
+        JOIN operational_insights oi
+             ON oi.entity_id = sc.tenant_id
+             AND oi.entity_type = 'project'
+             AND oi.type LIKE 'capacity%'
+             AND oi.status = 'open'
+        WHERE sc.effective_to IS NULL
+        ORDER BY sc.tier DESC
+        LIMIT 5
+        """
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return "SLA AT RISK: none currently detected."
+
+    lines = []
+    for r in rows:
+        name = _mask_name(r["project_name"], redact)
+        meta = r.get("metadata") or {}
+        runway = meta.get("runway_days")
+        runway_str = f", runway={runway}d" if runway is not None else ""
+        lines.append(f"  {name} ({r['tier']} SLA): {r['insight_type']}{runway_str}")
+    return "SLA AT RISK (capacity insights on SLA tenants):\n" + "\n".join(lines)
+
+
+def _build_clea_execution_section(cur, redact: bool) -> str:
+    cur.execute(
+        """
+        SELECT ce.approval_status,
+               ce.triggered_at,
+               cp.event_type,
+               cp.runbook_name,
+               oe.project_name,
+               oe.entity_name
+        FROM clea_executions ce
+        JOIN clea_policies cp ON cp.id = ce.policy_id
+        LEFT JOIN operational_events oe ON oe.id = ce.event_id
+        ORDER BY ce.triggered_at DESC
+        LIMIT 8
+        """
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return "CLEA EXECUTIONS: no recent automation executions."
+
+    status_counts = Counter(r["approval_status"] for r in rows)
+    status_summary = ", ".join(
+        f"{status_counts.get(s, 0)} {s}"
+        for s in ("pending", "approved", "rejected", "executed", "skipped")
+        if status_counts.get(s, 0) > 0
+    )
+
+    lines = []
+    for r in rows[:5]:
+        project = _mask_name(r.get("project_name"), redact)
+        entity = _mask_name(r.get("entity_name"), redact)
+        lines.append(
+            f"  [{r['approval_status']}] {r['event_type']} -> {r['runbook_name']} "
+            f"(project={project}, entity={entity})"
+        )
+
+    return f"CLEA EXECUTIONS ({status_summary}):\n" + "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +284,19 @@ def build_infra_context(redact: bool = False) -> str:
                     f"RAM {round((cap['used_mb'] or 0)/1024,1)}/{round((cap['total_mb'] or 0)/1024,1)} GB, "
                     f"Disk {cap['used_gb']}/{cap['total_gb']} GB."
                 )
+
+            # --- Actionable intelligence context (G2) ---------------------
+            for builder in (
+                _build_insights_section,
+                _build_health_section,
+                _build_recent_anomalies_section,
+                _build_sla_risk_section,
+                _build_clea_execution_section,
+            ):
+                try:
+                    sections.append(builder(cur, redact=redact))
+                except Exception:
+                    pass
 
             # --- Host list -------------------------------------------------
             cur.execute("""
@@ -198,174 +405,6 @@ def build_infra_context(redact: bool = False) -> str:
                 sections.append(
                     "RECENT OPERATIONAL EVENTS (warning/critical):\n" + "\n".join(lines)
                 )
-
-            # --- Open operational insights (top 10 by severity) -----------
-            try:
-                cur.execute("""
-                    SELECT severity, type, entity_name, entity_id,
-                           title, metadata
-                    FROM operational_insights
-                    WHERE status = 'open'
-                    ORDER BY
-                        CASE severity
-                            WHEN 'critical' THEN 1
-                            WHEN 'high'     THEN 2
-                            WHEN 'medium'   THEN 3
-                            ELSE 4
-                        END,
-                        detected_at DESC
-                    LIMIT 10
-                """)
-                ins_rows = cur.fetchall()
-                if ins_rows:
-                    from collections import Counter
-                    sev_counts = Counter(r["severity"] for r in ins_rows)
-                    sev_summary = ", ".join(
-                        f"{sev_counts.get(s, 0)} {s}"
-                        for s in ("critical", "high", "medium", "low")
-                        if sev_counts.get(s, 0) > 0
-                    )
-                    top_lines = []
-                    for r in ins_rows[:5]:
-                        name = r["entity_name"] or r["entity_id"] or "?"
-                        if redact:
-                            name = name[:3] + "***"
-                        meta = r["metadata"] or {}
-                        extra = ""
-                        if "runway_days" in meta:
-                            extra = f" runway={meta['runway_days']}d"
-                        elif "confidence" in meta:
-                            extra = f" conf={meta['confidence']}"
-                        top_lines.append(
-                            f"  [{r['severity'].upper()}] {r['type']} on {name}{extra}: {r['title']}"
-                        )
-                    sections.append(
-                        f"OPEN INSIGHTS ({sev_summary}):\n" + "\n".join(top_lines)
-                    )
-                else:
-                    sections.append("OPEN INSIGHTS: none currently open.")
-            except Exception:
-                pass
-
-            # --- Tenant health scores (worst 3 + declining) ----------------
-            try:
-                cur.execute("""
-                    SELECT ths.project_id,
-                           ths.score,
-                          ths.security_posture,
-                           p.name AS project_name,
-                           prev.score AS prev_score
-                    FROM tenant_health_scores ths
-                    JOIN projects p ON p.id = ths.project_id
-                    LEFT JOIN LATERAL (
-                        SELECT score FROM tenant_health_scores t2
-                        WHERE t2.project_id = ths.project_id
-                          AND t2.computed_at < ths.computed_at
-                        ORDER BY t2.computed_at DESC LIMIT 1
-                    ) prev ON true
-                    WHERE ths.computed_at = (
-                        SELECT MAX(t3.computed_at) FROM tenant_health_scores t3
-                        WHERE t3.project_id = ths.project_id
-                    )
-                    ORDER BY ths.score ASC
-                    LIMIT 10
-                """)
-                hs_rows = cur.fetchall()
-                if hs_rows:
-                    lines = []
-                    # worst 3 overall + any declining by >10 pts
-                    shown = set()
-                    for r in hs_rows[:3]:
-                        pn = r["project_name"] or r["project_id"]
-                        if redact:
-                            pn = pn[:3] + "***"
-                        trend = ""
-                        if r["prev_score"] is not None:
-                            delta = r["score"] - r["prev_score"]
-                            trend = f" ({'↓' if delta < 0 else '↑'}{abs(delta)})"
-                        sec = r.get("security_posture")
-                        sec_txt = f" sec={sec}" if sec is not None else ""
-                        lines.append(f"  {pn}={r['score']}{trend}{sec_txt}")
-                        shown.add(r["project_id"])
-                    for r in hs_rows:
-                        if r["project_id"] in shown:
-                            continue
-                        if r["prev_score"] is not None and (r["prev_score"] - r["score"]) >= 10:
-                            pn = r["project_name"] or r["project_id"]
-                            if redact:
-                                pn = pn[:3] + "***"
-                            sec = r.get("security_posture")
-                            sec_txt = f" sec={sec}" if sec is not None else ""
-                            lines.append(f"  {pn}={r['score']}{sec_txt} (↓{r['prev_score'] - r['score']} this cycle — declining)")
-                    sections.append("TENANT HEALTH SCORES (worst/declining):\n" + "\n".join(lines))
-            except Exception:
-                pass
-
-            # --- Recent anomalies (last 24 h) ------------------------------
-            try:
-                cur.execute("""
-                    SELECT type, entity_name, entity_id, severity, detected_at,
-                           metadata
-                    FROM operational_insights
-                    WHERE type LIKE 'anomaly%'
-                      AND detected_at >= NOW() - INTERVAL '24 hours'
-                    ORDER BY detected_at DESC
-                    LIMIT 8
-                """)
-                anoms = cur.fetchall()
-                if anoms:
-                    lines = []
-                    for a in anoms:
-                        name = a["entity_name"] or a["entity_id"] or "?"
-                        if redact:
-                            name = name[:3] + "***"
-                        lines.append(
-                            f"  {a['type']} on {name} [{a['severity']}]"
-                        )
-                    sections.append(
-                        f"RECENT ANOMALIES (24h — {len(anoms)} detected):\n"
-                        + "\n".join(lines)
-                    )
-            except Exception:
-                pass
-
-            # --- SLA at risk (open capacity insights on SLA tenants) -------
-            try:
-                cur.execute("""
-                    SELECT DISTINCT p.name AS project_name,
-                           sc.tier,
-                           oi.type AS insight_type,
-                           oi.metadata
-                    FROM sla_commitments sc
-                    JOIN projects p ON p.id = sc.tenant_id
-                    JOIN operational_insights oi
-                         ON oi.entity_id = sc.tenant_id
-                         AND oi.entity_type = 'project'
-                         AND oi.type LIKE 'capacity%'
-                         AND oi.status = 'open'
-                    WHERE sc.effective_to IS NULL
-                    ORDER BY sc.tier DESC
-                    LIMIT 5
-                """)
-                sla_rows = cur.fetchall()
-                if sla_rows:
-                    lines = []
-                    for r in sla_rows:
-                        pn = r["project_name"] or "?"
-                        if redact:
-                            pn = pn[:3] + "***"
-                        meta = r["metadata"] or {}
-                        runway = meta.get("runway_days")
-                        runway_str = f", runway={runway}d" if runway else ""
-                        lines.append(
-                            f"  {pn} ({r['tier']} SLA): {r['insight_type']}{runway_str}"
-                        )
-                    sections.append(
-                        "SLA AT RISK (capacity insights on SLA tenants):\n"
-                        + "\n".join(lines)
-                    )
-            except Exception:
-                pass
 
     except Exception as exc:
         sections.append(f"[context build error: {exc}]")
