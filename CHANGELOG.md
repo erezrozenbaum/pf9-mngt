@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.20.1] - 2026-06-08
+
+### Added
+
+- **Copilot automation context section** (`api/copilot_context.py`): Added a new `CLEA EXECUTIONS` section to the Copilot system context, summarizing recent automation execution outcomes (pending/approved/rejected/executed/skipped) with top execution lines that include event type, runbook, and project/entity context.
+
+### Changed
+
+- **Health-score recalculation parity** (`api/tenant_health_routes.py`): `POST /api/tenants/{project_id}/health-score/recalculate` now mirrors scheduler auto-resolve behavior by resolving recovered `health_score_critical` and low/warning insights, recording structured auto-resolution metadata, and emitting a `health.score_recovered` operational event.
+
+### Fixed
+
+- **Kubernetes PostgreSQL probe hardening** (`k8s/helm/pf9-mngt/templates/db/statefulset.yaml`): Added `startupProbe` and tightened `pg_isready` checks to localhost + target DB/user for startup, liveness, and readiness probes. This prevents false CrashLoop restarts during slower WAL recovery on persistent storage.
+
+### Tests
+
+- **Copilot and tenant-health regressions** (`tests/test_copilot_context.py`, `tests/test_tenant_health_routes.py`): Added focused tests for CLEA context rendering/redaction and health-score recovery auto-resolve event behavior.
+
 ## [2.20.0] - 2026-06-03
 
 ### Added

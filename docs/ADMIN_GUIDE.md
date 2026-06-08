@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 2.20.0  
-**Last Updated**: June 1, 2026  
+**Version**: 2.20.1  
+**Last Updated**: June 8, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -833,6 +833,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v2.20.1 — Copilot automation context and health-score recovery parity
+
+- **Copilot context enhancement** (`api/copilot_context.py`): Added `CLEA EXECUTIONS` section with status summary and recent execution lines (event type, runbook, project/entity context) to improve operator actionability in Copilot responses.
+- **Manual health recalculation parity** (`api/tenant_health_routes.py`): Recalculate flow now auto-resolves recovered health-score insights (`health_score_critical`, low/warning variants) using hysteresis thresholds, appends resolution metadata, and emits `health.score_recovered` events.
+- **Kubernetes DB startup resiliency** (`k8s/helm/pf9-mngt/templates/db/statefulset.yaml`): Added PostgreSQL `startupProbe` and explicit localhost/db `pg_isready` checks to reduce false liveness-triggered restarts during slow recovery.
+- **Regression coverage** (`tests/test_copilot_context.py`, `tests/test_tenant_health_routes.py`): Added tests for new Copilot section rendering/redaction and auto-resolve recovery behavior.
 
 ### v2.20.0 — Smart query correctness, policy guardrails, and executive insights
 
